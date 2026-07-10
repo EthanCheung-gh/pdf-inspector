@@ -1,0 +1,19 @@
+appId: com.pdfinspector.app
+productName: PDF Inspector
+directories:
+  output: release
+files:
+  - dist/**/*
+  - package.json
+extraResources:
+  - from: sidecar/
+    to: sidecar/
+    filter:
+      - "**/*.py"
+      - requirements.txt
+mac:
+  target: dmg
+win:
+  target: nsis
+linux:
+  target: AppImage
