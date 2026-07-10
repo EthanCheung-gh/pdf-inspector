@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 
 // Set worker path
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+pdfjsLib.GlobalWorkerOptions.workerSrc = './assets/pdf.worker.min.mjs';
 
 interface UsePdfReturn {
   pdfDoc: pdfjsLib.PDFDocumentProxy | null;
@@ -38,7 +38,10 @@ export function usePdf(): UsePdfReturn {
         pdfRef.current.destroy();
       }
       const doc = await pdfjsLib.getDocument(url).promise;
-      if (loadId !== loadIdRef.current) return; // discard stale result
+      if (loadId !== loadIdRef.current) {
+        doc.destroy();
+        return;
+      }
       pdfRef.current = doc;
       setPdfDoc(doc);
     } catch (err) {

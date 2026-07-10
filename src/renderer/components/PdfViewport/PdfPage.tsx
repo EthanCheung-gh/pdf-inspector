@@ -13,7 +13,6 @@ interface PdfPageProps {
 
 export const PdfPage: React.FC<PdfPageProps> = ({ pageNum, isVisible, zoom, renderPage }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const pageData = usePdfStore((s) => s.pageData);
   const metadata = usePdfStore((s) => s.metadata);
 
   // Render current page
