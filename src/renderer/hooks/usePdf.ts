@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Set worker path
-pdfjsLib.GlobalWorkerOptions.workerSrc = './assets/pdf.worker.min.mjs';
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url,
+).toString();
 
 interface UsePdfReturn {
   pdfDoc: pdfjsLib.PDFDocumentProxy | null;
