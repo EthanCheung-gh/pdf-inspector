@@ -1,7 +1,10 @@
 import { app, BrowserWindow } from 'electron';
 import * as path from 'path';
+import { SidecarManager } from './sidecar';
+import { registerIpcHandlers } from './ipc-handlers';
 
 let mainWindow: BrowserWindow | null = null;
+const sidecar = new SidecarManager();
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -24,7 +27,16 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  registerIpcHandlers(sidecar);
+
+  try {
+    await sidecar.start();
+    console.log('[main] Sidecar started');
+  } catch (err) {
+    console.error('[main] Failed to start sidecar:', err);
+  }
+
   createWindow();
 
   app.on('activate', () => {
@@ -34,4 +46,8 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('before-quit', async () => {
+  await sidecar.stop();
 });
