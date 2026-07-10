@@ -8,6 +8,20 @@
 
 **Tech Stack:** Electron 28+, React 18 + TypeScript + Vite, pdfjs-dist, Zustand, CSS Modules, Python 3.10+ / pdfplumber, electron-builder.
 
+## Execution Status
+
+| Task | Status | Implementation commit |
+| --- | --- | --- |
+| 1. Project scaffolding | Complete | `668ad24` |
+| 2. Electron main process | Complete | `2d5106f` |
+| 3. Python JSON-RPC sidecar | Complete | `2273ce6` |
+| 4. pdfplumber extractor + cache | Complete | `6a8fc3d` |
+| 5. Sidecar manager + IPC | Complete | `ec5ecb1` |
+| 6. Preload bridge + renderer IPC | Complete | included in `ec5ecb1` |
+| 7. Zustand store + React entry | Complete | `ab08e89` |
+| 8. PDF.js viewer + worker runtime fixes | Complete | `263e5d5`, `d8f3036` |
+| 9–15 | Pending | — |
+
 ---
 
 ## File Structure
@@ -320,7 +334,7 @@ function createWindow() {
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../../dist/renderer/index.html'));
+    mainWindow.loadFile(path.join(__dirname, '../index.html')); // compiled main is dist/main/index.js, Vite output is dist/index.html
   }
 }
 
@@ -987,7 +1001,7 @@ async function createWindow() {
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../../dist/renderer/index.html'));
+    mainWindow.loadFile(path.join(__dirname, '../index.html')); // compiled main is dist/main/index.js, Vite output is dist/index.html
   }
 }
 
@@ -1347,233 +1361,217 @@ git add -A && git commit -m "feat: add zustand store and react entry point"
 ### Task 8: PDF Viewer (PDF.js Integration)
 
 **Files:**
-- Create: `src/renderer/hooks/usePdf.ts`
-- Create: `src/renderer/components/PdfViewport/PdfViewport.tsx`
-- Create: `src/renderer/components/PdfViewport/PdfViewport.module.css`
-- Create: `src/renderer/components/PdfViewport/PdfPage.tsx`
-- Create: `src/renderer/components/PdfViewport/PdfPage.module.css`
+- Modify: `package.json` — ensure no `vite-plugin-static-copy` dependency exists
+- Modify: `vite.config.ts` — remove `fs` import, remove `copyPdfWorker()` function, remove `copyPdfWorker()` from plugins array; keep `path` import for aliases
+- Modify: `src/renderer/hooks/usePdf.ts` — replace static worker URL string with `new URL(... import.meta.url)` pattern; preserve stale-doc destroy guard
+- Verify: `src/renderer/components/PdfViewport/PdfPage.tsx` — has no `pageData` selector (no changes needed)
+- Already created: `src/renderer/components/PdfViewport/PdfViewport.tsx`, `PdfViewport.module.css`, `PdfPage.module.css` (no changes needed)
 
-- [ ] **Step 1: Create `src/renderer/hooks/usePdf.ts`**
+> **Context:** The manual `copyPdfWorker()` Vite plugin used `fs.copyFileSync` to copy the PDF.js worker to `dist/assets/` at build time. The `new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url)` pattern in `usePdf.ts` is superior — Vite natively emits the worker as a separate chunk during bundling, no plugin needed. This task removes the manual-copy approach and switches to the `new URL()` pattern. No CDN, `?url` suffix, or `vite-plugin-static-copy` is used.
 
-```typescript
-import { useEffect, useRef, useState, useCallback } from 'react';
-import * as pdfjsLib from 'pdfjs-dist';
+- [ ] **Step 1: Ensure `vite-plugin-static-copy` is absent from `package.json`**
 
-// Set worker path
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+Open `package.json`. Confirm the `devDependencies` section has **no** `vite-plugin-static-copy` entry. If it is present, remove that line.
 
-interface UsePdfReturn {
-  pdfDoc: pdfjsLib.PDFDocumentProxy | null;
-  loading: boolean;
-  error: string | null;
-  renderPage: (pageNum: number, canvas: HTMLCanvasElement, scale: number) => Promise<void>;
-  loadPdf: (url: string) => Promise<void>;
-}
-
-export function usePdf(): UsePdfReturn {
-  const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const pdfRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
-
-  const loadPdf = useCallback(async (url: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      if (pdfRef.current) {
-        pdfRef.current.destroy();
-      }
-      const doc = await pdfjsLib.getDocument(url).promise;
-      pdfRef.current = doc;
-      setPdfDoc(doc);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load PDF');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const renderPage = useCallback(async (pageNum: number, canvas: HTMLCanvasElement, scale: number) => {
-    if (!pdfRef.current) return;
-    try {
-      const page = await pdfRef.current.getPage(pageNum);
-      const viewport = page.getViewport({ scale });
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      const ctx = canvas.getContext('2d')!;
-      await page.render({ canvasContext: ctx, viewport }).promise;
-    } catch (err) {
-      console.error('Page render error:', err);
-    }
-  }, []);
-
-  return { pdfDoc, loading, error, renderPage, loadPdf };
-}
-```
-
-- [ ] **Step 2: Create `src/renderer/components/PdfViewport/PdfViewport.tsx`**
-
-```typescript
-import React, { useEffect, useRef, useCallback } from 'react';
-import { usePdfStore } from '../../store/pdf-store';
-import { PdfPage } from './PdfPage';
-import styles from './PdfViewport.module.css';
-
-export const PdfViewport: React.FC = () => {
-  const filePath = usePdfStore((s) => s.filePath);
-  const currentPage = usePdfStore((s) => s.currentPage);
-  const zoom = usePdfStore((s) => s.zoom);
-  const pageCount = usePdfStore((s) => s.pageCount);
-
-  if (!filePath) {
-    return (
-      <div className={styles.emptyState}>
-        <div className={styles.emptyIcon}>📄</div>
-        <p>Open a PDF file to start inspecting</p>
-      </div>
-    );
+**Expected content:**
+```json
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "electron": "^28.3.0",
+    "electron-builder": "^24.13.0",
+    "typescript": "^5.5.0",
+    "vite": "^5.4.0",
+    "vite-plugin-electron": "^0.28.0",
+    "vitest": "^2.0.0"
   }
-
-  return (
-    <div className={styles.viewport}>
-      <div className={styles.pagesContainer}>
-        {Array.from({ length: pageCount }, (_, i) => (
-          <PdfPage
-            key={i + 1}
-            pageNum={i + 1}
-            isVisible={i + 1 === currentPage}
-            filePath={filePath}
-            zoom={zoom}
-          />
-        ))}
-      </div>
-    </div>
-  );
-};
 ```
 
-- [ ] **Step 3: Create `src/renderer/components/PdfViewport/PdfViewport.module.css`**
+- [ ] **Step 2: Clean `vite.config.ts` — remove `fs` import, `copyPdfWorker()` function, and plugin reference**
 
-```css
-.viewport {
-  flex: 1;
-  background: #1a1a2e;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: auto;
-  position: relative;
-}
+Open `vite.config.ts`. Make three changes:
 
-.pagesContainer {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-  padding: 24px;
-}
+**2a. Remove the `fs` import (keep `path` for aliases):**
 
-.emptyState {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  color: #666;
-  font-size: 16px;
-}
+If your file currently has both `import fs from 'node:fs'` and `import path from 'node:path'`, delete the `fs` line.
 
-.emptyIcon {
-  font-size: 48px;
-  margin-bottom: 16px;
-  opacity: 0.4;
+**Before:**
+```typescript
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import electron from 'vite-plugin-electron';
+import fs from 'node:fs';
+import path from 'node:path';
+```
+
+**After (only the `fs` line is removed):**
+```typescript
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import electron from 'vite-plugin-electron';
+import path from 'node:path';
+```
+
+**2b. Remove the entire `copyPdfWorker()` function definition:**
+
+**Before (the function to delete):**
+```typescript
+
+function copyPdfWorker() {
+  return {
+    name: 'copy-pdfjs-worker',
+    closeBundle() {
+      const source = path.resolve(__dirname, 'node_modules/pdfjs-dist/build/pdf.worker.min.mjs');
+      const destinationDir = path.resolve(__dirname, 'dist/assets');
+      fs.mkdirSync(destinationDir, { recursive: true });
+      fs.copyFileSync(source, path.join(destinationDir, 'pdf.worker.min.mjs'));
+    },
+  };
 }
 ```
 
-- [ ] **Step 4: Create `src/renderer/components/PdfViewport/PdfPage.tsx`**
+**After:** (the entire function block is removed; the blank line before it is also removed)
+
+**2c. Remove `copyPdfWorker()` from the `plugins` array:**
+
+**Before (last line of the plugins array):**
+```typescript
+    ]),
+    copyPdfWorker(),
+  ],
+```
+
+**After:**
+```typescript
+    ]),
+  ],
+```
+
+The final `vite.config.ts` after all three sub-steps must match this (the `import path` may use `'node:path'` or `'path'` — both work):
 
 ```typescript
-import React, { useRef, useEffect } from 'react';
-import { usePdf } from '../../hooks/usePdf';
-import { usePdfStore } from '../../store/pdf-store';
-import { OverlayCanvas } from './OverlayCanvas';
-import { InspectorHighlight } from './InspectorHighlight';
-import styles from './PdfPage.module.css';
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import electron from 'vite-plugin-electron';
+import path from 'path';
 
-interface PdfPageProps {
-  pageNum: number;
-  isVisible: boolean;
-  filePath: string;
-  zoom: number;
-}
-
-export const PdfPage: React.FC<PdfPageProps> = ({ pageNum, isVisible, filePath, zoom }) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { renderPage, loadPdf } = usePdf();
-  const pageData = usePdfStore((s) => s.pageData);
-  const metadata = usePdfStore((s) => s.metadata);
-
-  // Load PDF when filePath changes
-  useEffect(() => {
-    if (filePath) {
-      loadPdf(`file://${filePath}`);
+export default defineConfig({
+  plugins: [
+    react(),
+    electron([
+      {
+        entry: 'src/main/index.ts',
+        onstart(args) { args.startup(); },
+        vite: {
+          build: {
+            outDir: 'dist/main',
+            rollupOptions: {
+              external: ['electron']
+            }
+          }
+        }
+      },
+      {
+        entry: 'src/preload/index.ts',
+        onstart(args) { args.reload(); },
+        vite: {
+          build: {
+            outDir: 'dist/preload',
+            rollupOptions: {
+              external: ['electron']
+            }
+          }
+        }
+      }
+    ]),
+  ],
+  resolve: {
+    alias: {
+      '@main': path.resolve(__dirname, 'src/main'),
+      '@preload': path.resolve(__dirname, 'src/preload'),
+      '@renderer': path.resolve(__dirname, 'src/renderer'),
+      '@shared': path.resolve(__dirname, 'src/shared'),
     }
-  }, [filePath]);
-
-  // Render current page
-  useEffect(() => {
-    if (isVisible && canvasRef.current) {
-      renderPage(pageNum, canvasRef.current, zoom);
-    }
-  }, [isVisible, pageNum, zoom, renderPage]);
-
-  if (!isVisible) return null;
-
-  const pageWidth = metadata?.page_w ? metadata.page_w * zoom : 612 * zoom;
-  const pageHeight = metadata?.page_h ? metadata.page_h * zoom : 792 * zoom;
-
-  return (
-    <div className={styles.pageContainer} style={{ width: pageWidth, height: pageHeight }}>
-      <canvas ref={canvasRef} className={styles.canvas} />
-      <OverlayCanvas
-        pageNum={pageNum}
-        pageWidth={pageWidth}
-        pageHeight={pageHeight}
-        pdfWidth={metadata?.page_w || 612}
-        pdfHeight={metadata?.page_h || 792}
-        zoom={zoom}
-      />
-      <InspectorHighlight pageNum={pageNum} />
-    </div>
-  );
-};
+  },
+  root: '.',
+  base: './'
+});
 ```
 
-- [ ] **Step 5: Create `src/renderer/components/PdfViewport/PdfPage.module.css`**
+- [ ] **Step 3: Update `src/renderer/hooks/usePdf.ts` — replace static worker URL with `new URL(... import.meta.url)`**
 
-```css
-.pageContainer {
-  position: relative;
-  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.3);
-  background: white;
-  border-radius: 2px;
-  overflow: hidden;
-}
+Open `src/renderer/hooks/usePdf.ts`. Locate the worker source assignment at the top of the file.
 
-.canvas {
-  display: block;
-}
+**Before (lines 4–5):**
+```typescript
+// Set worker path
+pdfjsLib.GlobalWorkerOptions.workerSrc = './assets/pdf.worker.min.mjs';
 ```
 
-- [ ] **Step 6: Verify TypeScript compiles**
+**After:**
+```typescript
+// Set worker path using Vite's native worker chunk emission
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url,
+).toString();
+```
 
-Run: `npx tsc --noEmit`
-Expected: No type errors.
+> **Important:** This must be the **only** worker source strategy. No CDN fallback, no `?url` suffix, no manual copy plugin. The `new URL(... import.meta.url)` pattern tells Vite to emit the worker as a separate chunk automatically during bundling. It works correctly in both dev (Vite dev server serves the resolved chunk) and production (`electron .` loads the emitted chunk from `dist/assets/`).
+
+- [ ] **Step 4: Verify stale-doc destroy guard is in `usePdf.ts`**
+
+Open `src/renderer/hooks/usePdf.ts`. Confirm the stale-load bail-out guard already reads:
+
+```typescript
+      if (loadId !== loadIdRef.current) {
+        doc.destroy(); // destroy stale document proxy to prevent memory leak
+        return;
+      }
+```
+
+If the code shows `if (loadId !== loadIdRef.current) return;` without `doc.destroy()`, update it to the block above. Otherwise, no edit needed.
+
+- [ ] **Step 5: Verify `PdfPage.tsx` has no unused `pageData` selector**
+
+Open `src/renderer/components/PdfViewport/PdfPage.tsx`. Confirm there is **no** line containing `usePdfStore((s) => s.pageData)`. The file should have only `const metadata = usePdfStore((s) => s.metadata);` for store subscriptions.
+
+If a `pageData` line is found, delete it. Otherwise, no edit needed.
+
+- [ ] **Step 6: Install dependencies + verify TypeScript + verify production build + verify source-level worker URL**
+
+Run these commands in order:
+
+```bash
+npm install
+```
+Expected: No errors; `node_modules` has no `vite-plugin-static-copy`.
+
+```bash
+npx tsc --noEmit
+```
+Expected: No type errors. Exit code 0.
+
+```bash
+npm run build
+```
+Expected: Build succeeds, exit code 0.
+
+```bash
+test -f dist/index.html && echo "INDEX HTML FOUND" || echo "INDEX HTML MISSING"
+```
+Expected: Output `INDEX HTML FOUND`. (Confirms Vite output lands at `dist/index.html`, which matches the `loadFile` path in `src/main/index.ts`.)
+
+```bash
+node -e "const fs=require('fs'); const s=fs.readFileSync('src/renderer/hooks/usePdf.ts','utf8'); if (!s.includes(\"pdfjs-dist/build/pdf.worker.min.mjs\") || !s.includes('new URL(')) process.exit(1);" && echo "NEW URL STRATEGY CONFIRMED" || echo "NEW URL STRATEGY MISSING"
+```
+Expected: Output `NEW URL STRATEGY CONFIRMED`. (Confirms the file uses Vite-native worker chunk emission with the `new URL(... import.meta.url)` pattern — no CDN, no `?url` suffix, no manual copy plugin. Exit code 0.)
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add PDF.js viewer with page rendering"
+git add -A && git commit -m "fix: support PDF worker in dev and production"
 ```
 
 ---
@@ -2738,7 +2736,26 @@ export default App;
 Run: `npx tsc --noEmit`
 Expected: No type errors.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Verify production build emits the PDF worker chunk**
+
+With the real `App.tsx` shell now importing `PdfViewport` → `usePdf`, the build should include the PDF.js worker. Run these commands in order:
+
+```bash
+npm run build
+```
+Expected: Build succeeds, exit code 0.
+
+```bash
+test -f dist/index.html && echo "INDEX HTML FOUND" || echo "INDEX HTML MISSING"
+```
+Expected: Output `INDEX HTML FOUND`.
+
+```bash
+node -e "const fs=require('fs'); const files=fs.readdirSync('dist/assets'); if (!files.some((file) => file.includes('pdf.worker'))) process.exit(1);" && echo "PDF WORKER CHUNK EMITTED" || echo "PDF WORKER CHUNK NOT FOUND"
+```
+Expected: Output `PDF WORKER CHUNK EMITTED`. (The exact filename will be content-hashed, e.g., `pdf.worker.min-abc123.mjs` — confirms Vite processed the `new URL()` import now that the component tree references `usePdf`.)
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add -A && git commit -m "feat: add app shell, status bar, and main layout"
