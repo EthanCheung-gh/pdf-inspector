@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { ipc } from "../../services/ipc-client";
 import { usePdfStore } from "../../store/pdf-store";
 import type { PdfImage, PdfObject, PdfObjectType, PdfTable } from "../../types/pdf-objects";
 import styles from "./InspectorPanel.module.css";
@@ -63,6 +64,56 @@ export const InspectorPanel = (): JSX.Element => {
   const hoveredObject = usePdfStore((state) => state.hoveredObject);
   const selectedObject = usePdfStore((state) => state.selectedObject);
   const object = hoveredObject ?? selectedObject;
+  const image = object && isImage(object) ? object : null;
+  const imageStreamId = image?.stream_id;
+  const imageFormat = image?.format;
+  const [imageData, setImageData] = useState<{ base64: string; format: string } | null>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [imageLoading, setImageLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadImage = async () => {
+      if (!imageStreamId) {
+        setImageData(null);
+        setImageError(null);
+        setImageLoading(false);
+        return;
+      }
+
+      setImageData(null);
+      setImageError(null);
+      setImageLoading(true);
+
+      try {
+        const result = await ipc.getImageData(imageStreamId);
+        if (cancelled) return;
+
+        if (result.error || !result.base64) {
+          setImageError(result.error ?? "Image data is unavailable.");
+          return;
+        }
+
+        setImageData({
+          base64: result.base64,
+          format: (result.format ?? imageFormat ?? 'jpeg').toLowerCase().replace('jpg', 'jpeg'),
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setImageError(error instanceof Error ? error.message : "Unable to load image preview.");
+        }
+      } finally {
+        if (!cancelled) setImageLoading(false);
+      }
+    };
+
+    void loadImage();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [imageFormat, imageStreamId]);
 
   if (!object) {
     return (
@@ -126,6 +177,17 @@ export const InspectorPanel = (): JSX.Element => {
             <Row label="Width">{object.width}</Row>
             <Row label="Height">{object.height}</Row>
             <Row label="Format">{object.format}</Row>
+            <Row label="Preview">
+              {imageLoading && "Loading image preview..."}
+              {imageError && imageError}
+              {imageData && (
+                <img
+                  src={`data:image/${imageData.format};base64,${imageData.base64}`}
+                  alt="PDF image preview"
+                  style={{ display: "block", maxWidth: "100%", maxHeight: 240, objectFit: "contain" }}
+                />
+              )}
+            </Row>
           </Section>
         )}
 

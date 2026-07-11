@@ -9,7 +9,7 @@ export const PdfViewport: React.FC = () => {
   const currentPage = usePdfStore((s) => s.currentPage);
   const zoom = usePdfStore((s) => s.zoom);
   const pageCount = usePdfStore((s) => s.pageCount);
-  const { renderPage, loadPdf, loading, error } = usePdf();
+  const { pdfDoc, renderPage, loadPdf, loading, error } = usePdf();
 
   // Load PDF document once when filePath changes
   useEffect(() => {
@@ -52,6 +52,7 @@ export const PdfViewport: React.FC = () => {
             pageNum={i + 1}
             isVisible={i + 1 === currentPage}
             zoom={zoom}
+            pdfDoc={pdfDoc}
             renderPage={renderPage}
           />
         ))}

@@ -2,16 +2,19 @@ import React, { useRef, useEffect } from 'react';
 import { usePdfStore } from '../../store/pdf-store';
 import { OverlayCanvas } from './OverlayCanvas';
 import { InspectorHighlight } from './InspectorHighlight';
+import { TextLayer } from './TextLayer';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
 import styles from './PdfPage.module.css';
 
 interface PdfPageProps {
   pageNum: number;
   isVisible: boolean;
   zoom: number;
+  pdfDoc: PDFDocumentProxy | null;
   renderPage: (pageNum: number, canvas: HTMLCanvasElement, scale: number) => Promise<void>;
 }
 
-export const PdfPage: React.FC<PdfPageProps> = ({ pageNum, isVisible, zoom, renderPage }) => {
+export const PdfPage: React.FC<PdfPageProps> = ({ pageNum, isVisible, zoom, pdfDoc, renderPage }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const metadata = usePdfStore((s) => s.metadata);
 
@@ -30,6 +33,7 @@ export const PdfPage: React.FC<PdfPageProps> = ({ pageNum, isVisible, zoom, rend
   return (
     <div className={styles.pageContainer} style={{ width: pageWidth, height: pageHeight }}>
       <canvas ref={canvasRef} className={styles.canvas} />
+      <TextLayer pageNum={pageNum} pdfDoc={pdfDoc} scale={zoom} width={pageWidth} height={pageHeight} />
       <OverlayCanvas
         pageNum={pageNum}
         pageWidth={pageWidth}
