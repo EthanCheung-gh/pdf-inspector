@@ -20,7 +20,8 @@
 | 6. Preload bridge + renderer IPC | Complete | included in `ec5ecb1` |
 | 7. Zustand store + React entry | Complete | `ab08e89` |
 | 8. PDF.js viewer + worker runtime fixes | Complete | `263e5d5`, `d8f3036` |
-| 9–15 | Pending | — |
+| 9. Canvas overlay + hit test | Complete | `e7e926a`, `ee14dcb` |
+| 10–15 | Pending | — |
 
 ---
 
@@ -1579,11 +1580,13 @@ git add -A && git commit -m "fix: support PDF worker in dev and production"
 ### Task 9: Overlay Canvas + HitTest
 
 **Files:**
-- Create: `src/renderer/components/PdfViewport/OverlayCanvas.tsx`
-- Create: `src/renderer/hooks/useOverlay.ts`
-- Create: `src/renderer/hooks/useHitTest.ts`
+- Modify: `src/renderer/components/PdfViewport/OverlayCanvas.tsx`
+- Modify: `src/renderer/hooks/useOverlay.ts`
+- Modify: `src/renderer/components/PdfViewport/PdfPage.tsx`
 
-- [ ] **Step 1: Create `src/renderer/hooks/useHitTest.ts`**
+- [ ] **Step 1: `src/renderer/hooks/useHitTest.ts`** — already exists, no changes needed
+
+> This file already exists with the correct implementation. No changes required. Skip to Step 2.
 
 ```typescript
 import { useCallback } from 'react';
@@ -1624,7 +1627,9 @@ export function useHitTest() {
 }
 ```
 
-- [ ] **Step 2: Create `src/renderer/hooks/useOverlay.ts`**
+- [ ] **Step 2: Modify `src/renderer/hooks/useOverlay.ts`**
+
+> This file already exists. This step updates the label-rendering section: use a readable `11px sans-serif` font, set `textBaseline = 'top'`, and render the label at a safe top-left offset (`rectX + 2, rectY + 2`).
 
 ```typescript
 import { useCallback } from 'react';
@@ -1706,8 +1711,9 @@ export function useOverlay() {
 
         // Label
         ctx.fillStyle = labelColor;
-        ctx.font = '10px monospace';
-        ctx.fillText(obj.type, rectX + 2, rectY + 10);
+        ctx.font = '11px sans-serif';
+        ctx.textBaseline = 'top';
+        ctx.fillText(obj.type, rectX + 2, rectY + 2);
       }
     }
   }, []);
@@ -1716,7 +1722,9 @@ export function useOverlay() {
 }
 ```
 
-- [ ] **Step 3: Create `src/renderer/components/PdfViewport/OverlayCanvas.tsx`**
+- [ ] **Step 3: Modify `src/renderer/components/PdfViewport/OverlayCanvas.tsx`** — remove `zoom` from props interface and destructuring
+
+> This file already exists. This step removes the unused `zoom` prop from `OverlayCanvasProps` and its destructuring, since the page dimensions already incorporate the zoom factor.
 
 ```typescript
 import React, { useRef, useEffect, useCallback } from 'react';
@@ -1730,7 +1738,6 @@ interface OverlayCanvasProps {
   pageHeight: number;
   pdfWidth: number;
   pdfHeight: number;
-  zoom: number;
 }
 
 export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
@@ -1739,7 +1746,6 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
   pageHeight,
   pdfWidth,
   pdfHeight,
-  zoom,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { drawOverlays } = useOverlay();
@@ -1802,7 +1808,34 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
 };
 ```
 
-- [ ] **Step 4: Create `src/renderer/components/PdfViewport/InspectorHighlight.tsx`**
+- [ ] **Step 4: Modify `src/renderer/components/PdfViewport/PdfPage.tsx` — remove `zoom={zoom}` from `<OverlayCanvas>` call site**
+
+Open `src/renderer/components/PdfViewport/PdfPage.tsx`. Locate the `<OverlayCanvas>` JSX element and remove the `zoom={zoom}` prop. The page already passes `pageWidth` and `pageHeight` scaled by `zoom`, so the overlay canvas does not need a separate `zoom` prop.
+
+**Before:**
+```tsx
+      <OverlayCanvas
+        pageNum={pageNum}
+        pageWidth={pageWidth}
+        pageHeight={pageHeight}
+        pdfWidth={metadata?.page_w || 612}
+        pdfHeight={metadata?.page_h || 792}
+        zoom={zoom}
+      />
+```
+
+**After:**
+```tsx
+      <OverlayCanvas
+        pageNum={pageNum}
+        pageWidth={pageWidth}
+        pageHeight={pageHeight}
+        pdfWidth={metadata?.page_w || 612}
+        pdfHeight={metadata?.page_h || 792}
+      />
+```
+
+- [ ] **Step 5: Modify `src/renderer/components/PdfViewport/InspectorHighlight.tsx`**
 
 ```typescript
 import React, { useMemo } from 'react';
@@ -1864,15 +1897,15 @@ export const InspectorHighlight: React.FC<InspectorHighlightProps> = ({ pageNum 
 };
 ```
 
-- [ ] **Step 5: Verify TypeScript compiles**
+- [ ] **Step 6: Verify TypeScript compiles**
 
 Run: `npx tsc --noEmit`
 Expected: No type errors.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add overlay canvas, hitTest, and inspector highlight"
+git add -A && git commit -m "fix: improve overlay label rendering"
 ```
 
 ---
