@@ -1,0 +1,74 @@
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 12px;
+  color: #d7dce2;
+  background: #1e2329;
+  border-bottom: 1px solid #353b43;
+  font-size: 13px;
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.button {
+  padding: 5px 9px;
+  color: #d7dce2;
+  background: #2a3139;
+  border: 1px solid #414954;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.button:hover:not(:disabled) {
+  background: #353e49;
+}
+
+.button:focus-visible {
+  outline: 2px solid #5b9cff;
+  outline-offset: 1px;
+}
+
+.button.active {
+  color: #fff;
+  background: #2d6db5;
+  border-color: #4b93e6;
+}
+
+.button:disabled {
+  color: #7b8490;
+  background: #252b32;
+  border-color: #343a42;
+  cursor: not-allowed;
+}
+
+.separator {
+  width: 1px;
+  height: 22px;
+  background: #414954;
+}
+
+.value {
+  min-width: 48px;
+  color: #aeb7c2;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.filename {
+  max-width: 280px;
+  overflow: hidden;
+  color: #aeb7c2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
