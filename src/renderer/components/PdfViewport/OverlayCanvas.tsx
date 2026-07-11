@@ -9,7 +9,6 @@ interface OverlayCanvasProps {
   pageHeight: number;
   pdfWidth: number;
   pdfHeight: number;
-  zoom: number;
 }
 
 export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
@@ -18,8 +17,6 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
   pageHeight,
   pdfWidth,
   pdfHeight,
-  // The parent includes zoom in pageWidth and pageHeight.
-  zoom: _zoom,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const allObjects = usePdfStore((state) => state.allObjects);

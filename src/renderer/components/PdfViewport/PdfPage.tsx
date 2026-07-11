@@ -36,7 +36,6 @@ export const PdfPage: React.FC<PdfPageProps> = ({ pageNum, isVisible, zoom, rend
         pageHeight={pageHeight}
         pdfWidth={metadata?.page_w || 612}
         pdfHeight={metadata?.page_h || 792}
-        zoom={zoom}
       />
       <InspectorHighlight pageNum={pageNum} />
     </div>

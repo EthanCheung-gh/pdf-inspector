@@ -59,7 +59,9 @@ export const useOverlay = () => {
       const width = (object.x1 - object.x0) * scaleX;
       const height = (object.y1 - object.y0) * scaleY;
       ctx.strokeRect(x, y, width, height);
-      ctx.fillText(object.type, x + 2, y + 10);
+      ctx.font = '11px sans-serif';
+      ctx.textBaseline = 'top';
+      ctx.fillText(object.type, x + 2, y + 2);
     });
   }, []);
 
