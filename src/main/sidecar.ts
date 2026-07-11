@@ -1,7 +1,6 @@
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
-import { SIDECAR_SCRIPT } from '../shared/constants';
 
 export interface SidecarRequest {
   id: number;
@@ -21,7 +20,10 @@ export class SidecarManager {
   private nextId = 1;
   private buffer = '';
   private autoRestartEnabled = true;
-  private restartPromise: Promise<void> | null = null;
+  /** True while a delayed restart is scheduled; prevents concurrent restart attempts. */
+  private restarting = false;
+  /** Delay before auto-restart to avoid CPU spin on rapid crash cycles. */
+  private static readonly RESTART_DELAY_MS = 500;
 
   isRunning(): boolean {
     return this.process !== null && !this.process.killed;
@@ -31,6 +33,7 @@ export class SidecarManager {
     this.autoRestartEnabled = enabled;
   }
 
+  /** Reject all in-flight requests with the given error. */
   private rejectPendingRequests(error: Error): void {
     for (const { reject } of this.pending.values()) {
       reject(error);
@@ -38,23 +41,43 @@ export class SidecarManager {
     this.pending.clear();
   }
 
+  /**
+   * Schedule a delayed restart. Uses a boolean guard (not a promise-reference
+   * comparison) to prevent re-entry, and a bounded 500ms timeout to avoid
+   * CPU-spin crash loops.
+   */
   private restartAfterCrash(): void {
-    if (!this.autoRestartEnabled || this.restartPromise || this.isRunning()) return;
+    if (!this.autoRestartEnabled || this.restarting || this.isRunning()) return;
 
-    console.log('[sidecar] Auto-restarting...');
-    const restart = this.start();
-    this.restartPromise = restart;
-    restart
-      .catch((err) => console.error('[sidecar] Restart failed:', err))
-      .finally(() => {
-        if (this.restartPromise === restart) {
-          this.restartPromise = null;
-        }
-      });
+    this.restarting = true;
+    console.log('[sidecar] Auto-restarting in 500ms...');
+    setTimeout(() => {
+      // Double-check: stop() may have been called while the timeout was pending
+      if (!this.autoRestartEnabled) {
+        this.restarting = false;
+        return;
+      }
+      this.start()
+        .catch((err) => console.error('[sidecar] Restart failed:', err))
+        .finally(() => {
+          this.restarting = false;
+        });
+    }, SidecarManager.RESTART_DELAY_MS);
   }
 
+  /**
+   * Start the Python sidecar subprocess.
+   *
+   * The returned promise resolves only after the sidecar emits its one-time
+   * JSON ready signal (`{"ready":true}`) on stdout — NOT at process spawn.
+   * A 10-second timeout rejects the promise if the ready signal never arrives.
+   */
   async start(): Promise<void> {
     if (this.isRunning()) return;
+
+    // A prior process may have exited after writing a partial stdout line.
+    // Do not let it corrupt the new process's ready signal.
+    this.buffer = '';
 
     // Resolve sidecar script path
     let scriptPath: string;
@@ -72,20 +95,35 @@ export class SidecarManager {
       });
       let startSettled = false;
 
-      proc.on('error', (err) => {
-        if (this.process === proc) {
-          this.process = null;
-        }
+      // Timeout: if ready signal not received within 10s, reject the start promise
+      const readyTimeout = setTimeout(() => {
         if (!startSettled) {
           startSettled = true;
-          reject(new Error(`Failed to start sidecar: ${err.message}`));
+          proc.kill();
+          reject(new Error('Sidecar ready signal timeout after 10s'));
         }
-      });
+      }, 10000);
 
-      proc.once('spawn', () => {
-        this.process = proc;
+      /**
+       * Settle the start promise exactly once.
+       * Called either by the ready-signal check (success) or by `error`/`exit`
+       * events (failure). Clears the ready timeout and sets `this.process`.
+       */
+      const settleStart = (err?: Error) => {
+        if (startSettled) return;
         startSettled = true;
-        resolve();
+        clearTimeout(readyTimeout);
+        if (err) {
+          if (this.process === proc) this.process = null;
+          reject(err);
+        } else {
+          this.process = proc;
+          resolve();
+        }
+      };
+
+      proc.on('error', (err) => {
+        settleStart(new Error(`Failed to start sidecar: ${err.message}`));
       });
 
       proc.stdout?.on('data', (data: Buffer) => {
@@ -97,14 +135,22 @@ export class SidecarManager {
         for (const line of lines) {
           if (!line.trim()) continue;
           try {
-            const response: SidecarResponse = JSON.parse(line);
-            const pending = this.pending.get(response.id);
+            const parsed = JSON.parse(line);
+
+            // Ready signal check — before start settles, this is the only expected line
+            if (parsed.ready === true) {
+              settleStart();
+              continue;
+            }
+
+            // Normal JSON-RPC response parsing (only triggers after start settles)
+            const pending = this.pending.get(parsed.id);
             if (pending) {
-              this.pending.delete(response.id);
-              if (response.error) {
-                pending.reject(new Error(response.error));
+              this.pending.delete(parsed.id);
+              if (parsed.error) {
+                pending.reject(new Error(parsed.error));
               } else {
-                pending.resolve(response.result);
+                pending.resolve(parsed.result);
               }
             }
           } catch {
@@ -118,13 +164,20 @@ export class SidecarManager {
       });
 
       proc.on('exit', (code) => {
+        clearTimeout(readyTimeout);
         console.log(`[sidecar] exited with code ${code}`);
+
+        // If start hasn't settled yet, the process died before the ready signal
+        if (!startSettled) {
+          settleStart(new Error(`Sidecar exited with code ${code} before ready signal`));
+        }
+
         this.rejectPendingRequests(new Error(`Sidecar exited with code ${code}`));
         if (this.process === proc) {
           this.process = null;
         }
 
-        // Auto-restart unless shutdown was intentional
+        // Auto-restart unless shutdown was intentional (stop() sets autoRestartEnabled = false)
         if (this.autoRestartEnabled && code !== 0) {
           this.restartAfterCrash();
         }

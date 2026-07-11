@@ -12,6 +12,10 @@ def main():
     extractor: PdfExtractor | None = None
     cache = PageCache(max_pages=10)
 
+    # Signal readiness to parent process — stdout must be flushed before stdin loop starts
+    sys.stdout.write(json.dumps({"ready": True}) + "\n")
+    sys.stdout.flush()
+
     for line in sys.stdin:
         line = line.strip()
         if not line:
