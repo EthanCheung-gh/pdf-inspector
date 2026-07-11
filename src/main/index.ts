@@ -3,17 +3,23 @@ import { execSync } from 'child_process';
 import * as path from 'path';
 import { SidecarManager } from './sidecar';
 import { registerIpcHandlers } from './ipc-handlers';
+import { getPythonCandidates } from '../shared/python-resolver';
 
 let mainWindow: BrowserWindow | null = null;
 const sidecar = new SidecarManager();
 
 function checkPythonAvailable(): boolean {
-  try {
-    execSync('python3 --version', { stdio: 'pipe' });
-    return true;
-  } catch {
-    return false;
+  for (const candidate of getPythonCandidates()) {
+    try {
+      const command = [candidate.command, ...candidate.args, '--version'].join(' ');
+      execSync(command, { stdio: 'pipe' });
+      return true;
+    } catch {
+      // Try the next candidate.
+    }
   }
+
+  return false;
 }
 
 function createWindow() {
