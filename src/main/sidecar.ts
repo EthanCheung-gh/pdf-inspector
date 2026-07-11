@@ -1,4 +1,5 @@
 import { spawn, ChildProcess } from 'child_process';
+import { resolvePythonCommand } from '../shared/python-resolver';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -90,7 +91,8 @@ export class SidecarManager {
     }
 
     return new Promise((resolve, reject) => {
-      const proc = spawn('python3', [scriptPath], {
+      const { command, args } = resolvePythonCommand();
+      const proc = spawn(command, [...args, scriptPath], {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       let startSettled = false;
