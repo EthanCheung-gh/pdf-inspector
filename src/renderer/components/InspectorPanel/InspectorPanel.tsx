@@ -36,6 +36,13 @@ const isTable = (object: PdfObject): object is PdfTable => object.type === "tabl
 const formatNumber = (value: number): string =>
   Number.isInteger(value) ? value.toString() : value.toFixed(2);
 
+const imageMimeTypes = new Set(["png", "jpeg", "gif", "webp"]);
+
+const getImageMimeSubtype = (format: string | undefined): string => {
+  const subtype = format?.toLowerCase().replace("jpg", "jpeg");
+  return subtype && imageMimeTypes.has(subtype) ? subtype : "jpeg";
+};
+
 interface SectionProps {
   title: string;
   children: ReactNode;
@@ -97,7 +104,7 @@ export const InspectorPanel = (): JSX.Element => {
 
         setImageData({
           base64: result.base64,
-          format: (result.format ?? imageFormat ?? 'jpeg').toLowerCase().replace('jpg', 'jpeg'),
+          format: getImageMimeSubtype(result.format ?? imageFormat),
         });
       } catch (error) {
         if (!cancelled) {
@@ -185,6 +192,10 @@ export const InspectorPanel = (): JSX.Element => {
                   src={`data:image/${imageData.format};base64,${imageData.base64}`}
                   alt="PDF image preview"
                   style={{ display: "block", maxWidth: "100%", maxHeight: 240, objectFit: "contain" }}
+                  onError={() => {
+                    setImageData(null);
+                    setImageError("Unable to display image preview.");
+                  }}
                 />
               )}
             </Row>

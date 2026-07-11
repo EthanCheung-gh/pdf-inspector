@@ -9,6 +9,19 @@ from pdfplumber.page import Page
 class PdfExtractor:
     """Wraps pdfplumber to extract page-level structured data."""
 
+    @staticmethod
+    def _detect_image_format(data: bytes) -> str:
+        """Identify a supported image format from its byte signature."""
+        if data.startswith(b'\x89PNG\r\n\x1a\n'):
+            return 'png'
+        if data.startswith(b'\xff\xd8\xff'):
+            return 'jpeg'
+        if data.startswith((b'GIF87a', b'GIF89a')):
+            return 'gif'
+        if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+            return 'webp'
+        return 'jpeg'
+
     def __init__(self, path: str, password: Optional[str] = None):
         self._path = path
         self._password = password
@@ -170,7 +183,7 @@ class PdfExtractor:
             elif not isinstance(data, bytes):
                 data = b''
             b64 = base64.b64encode(data).decode('ascii')
-            return {'base64': b64, 'format': img.get('srcsize', 'unknown')}
+            return {'base64': b64, 'format': self._detect_image_format(data)}
         except Exception as e:
             return {'error': str(e)}
 
