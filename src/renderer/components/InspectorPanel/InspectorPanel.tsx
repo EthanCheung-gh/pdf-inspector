@@ -39,7 +39,7 @@ const formatNumber = (value: number): string =>
 const imageMimeTypes = new Set(["png", "jpeg", "gif", "webp"]);
 
 const getImageMimeSubtype = (format: string | undefined): string => {
-  const subtype = format?.toLowerCase().replace("jpg", "jpeg");
+  const subtype = format?.toLowerCase()?.replace("jpg", "jpeg");
   return subtype && imageMimeTypes.has(subtype) ? subtype : "jpeg";
 };
 
