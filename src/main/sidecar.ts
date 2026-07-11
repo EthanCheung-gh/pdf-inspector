@@ -21,13 +21,36 @@ export class SidecarManager {
   private nextId = 1;
   private buffer = '';
   private autoRestartEnabled = true;
+  private restartPromise: Promise<void> | null = null;
 
   isRunning(): boolean {
     return this.process !== null && !this.process.killed;
   }
 
-  enableAutoRestart(enabled: boolean) {
+  enableAutoRestart(enabled: boolean): void {
     this.autoRestartEnabled = enabled;
+  }
+
+  private rejectPendingRequests(error: Error): void {
+    for (const { reject } of this.pending.values()) {
+      reject(error);
+    }
+    this.pending.clear();
+  }
+
+  private restartAfterCrash(): void {
+    if (!this.autoRestartEnabled || this.restartPromise || this.isRunning()) return;
+
+    console.log('[sidecar] Auto-restarting...');
+    const restart = this.start();
+    this.restartPromise = restart;
+    restart
+      .catch((err) => console.error('[sidecar] Restart failed:', err))
+      .finally(() => {
+        if (this.restartPromise === restart) {
+          this.restartPromise = null;
+        }
+      });
   }
 
   async start(): Promise<void> {
@@ -47,9 +70,22 @@ export class SidecarManager {
       const proc = spawn('python3', [scriptPath], {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
+      let startSettled = false;
 
       proc.on('error', (err) => {
-        reject(new Error(`Failed to start sidecar: ${err.message}`));
+        if (this.process === proc) {
+          this.process = null;
+        }
+        if (!startSettled) {
+          startSettled = true;
+          reject(new Error(`Failed to start sidecar: ${err.message}`));
+        }
+      });
+
+      proc.once('spawn', () => {
+        this.process = proc;
+        startSettled = true;
+        resolve();
       });
 
       proc.stdout?.on('data', (data: Buffer) => {
@@ -83,22 +119,17 @@ export class SidecarManager {
 
       proc.on('exit', (code) => {
         console.log(`[sidecar] exited with code ${code}`);
-        // Reject all pending requests
-        for (const [id, { reject: rej }] of this.pending) {
-          rej(new Error(`Sidecar exited with code ${code}`));
-          this.pending.delete(id);
+        this.rejectPendingRequests(new Error(`Sidecar exited with code ${code}`));
+        if (this.process === proc) {
+          this.process = null;
         }
-        this.process = null;
 
         // Auto-restart unless shutdown was intentional
         if (this.autoRestartEnabled && code !== 0) {
-          console.log('[sidecar] Auto-restarting...');
-          this.start().catch((err) => console.error('[sidecar] Restart failed:', err));
+          this.restartAfterCrash();
         }
       });
 
-      this.process = proc;
-      resolve();
     });
   }
 
