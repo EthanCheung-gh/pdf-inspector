@@ -1,0 +1,58 @@
+.statusBar {
+  display: flex;
+  flex: 0 0 28px;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 0 12px;
+  color: #aeb7c2;
+  background: #1e2329;
+  border-top: 1px solid #353b43;
+  font-size: 12px;
+}
+
+.documentStatus {
+  white-space: nowrap;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.error {
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px 7px;
+  color: #ffd7d7;
+  background: #6f2930;
+  border: 1px solid #c95a63;
+  border-radius: 3px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connected,
+.offline {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.connected {
+  color: #9ed9ae;
+}
+
+.offline {
+  color: #e2a2a7;
+}
+
+.indicator {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 5px currentColor;
+}
