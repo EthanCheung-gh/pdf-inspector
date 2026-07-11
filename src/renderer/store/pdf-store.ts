@@ -21,6 +21,7 @@ export interface PdfState {
   overlayVisibility: Record<string, boolean>;
   isLoading: boolean;
   sidecarRunning: boolean;
+  error: string | null;
 
   // Actions
   setFile: (path: string, meta: PdfMetadata) => void;
@@ -32,6 +33,7 @@ export interface PdfState {
   toggleOverlay: (type: string) => void;
   setLoading: (loading: boolean) => void;
   setSidecarRunning: (running: boolean) => void;
+  setError: (error: string | null) => void;
   clearSelection: () => void;
 }
 
@@ -59,6 +61,7 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   },
   isLoading: false,
   sidecarRunning: false,
+  error: null,
 
   setFile: (path, meta) =>
     set({
@@ -70,6 +73,7 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       allObjects: [],
       hoveredObject: null,
       selectedObject: null,
+      error: null,
     }),
 
   setPage: (page) => set({ currentPage: page, pageData: null, hoveredObject: null, selectedObject: null }),
@@ -88,6 +92,7 @@ export const usePdfStore = create<PdfState>((set, get) => ({
         ...data.images,
         ...data.tables,
       ],
+      error: null,
     }),
 
   setHoveredObject: (obj) => set({ hoveredObject: obj }),
@@ -102,5 +107,6 @@ export const usePdfStore = create<PdfState>((set, get) => ({
 
   setLoading: (loading) => set({ isLoading: loading }),
   setSidecarRunning: (running) => set({ sidecarRunning: running }),
+  setError: (error) => set({ error }),
   clearSelection: () => set({ hoveredObject: null, selectedObject: null }),
 }));

@@ -7,6 +7,7 @@ const OVERLAYS = [
   ['Chars', 'char'],
   ['Words', 'word'],
   ['Lines', 'line'],
+  ['Curves', 'curve'],
   ['Rects', 'rect'],
   ['Tables', 'table'],
   ['Images', 'image'],
@@ -24,9 +25,11 @@ export const Toolbar: React.FC = () => {
   const setZoom = usePdfStore((state) => state.setZoom);
   const setPageData = usePdfStore((state) => state.setPageData);
   const setLoading = usePdfStore((state) => state.setLoading);
+  const setError = usePdfStore((state) => state.setError);
   const toggleOverlay = usePdfStore((state) => state.toggleOverlay);
 
   const handleOpen = useCallback(async () => {
+    setError(null);
     setLoading(true);
     try {
       const result = await ipc.openPdf();
@@ -35,23 +38,30 @@ export const Toolbar: React.FC = () => {
       setFile(result.path, result.metadata);
       const pageData = await ipc.extractPage(1);
       setPageData(pageData);
+    } catch (error) {
+      console.error('Failed to open PDF:', error);
+      setError(error instanceof Error ? error.message : 'Failed to open PDF');
     } finally {
       setLoading(false);
     }
-  }, [setFile, setLoading, setPageData]);
+  }, [setError, setFile, setLoading, setPageData]);
 
   const navigateToPage = useCallback(async (page: number) => {
     if (page < 1 || page > pageCount) return;
 
+    setError(null);
     setLoading(true);
     try {
       setPage(page);
       const pageData = await ipc.extractPage(page);
       setPageData(pageData);
+    } catch (error) {
+      console.error('Failed to navigate to page:', error);
+      setError(error instanceof Error ? error.message : 'Failed to load page');
     } finally {
       setLoading(false);
     }
-  }, [pageCount, setLoading, setPage, setPageData]);
+  }, [pageCount, setError, setLoading, setPage, setPageData]);
 
   const filename = filePath?.split(/[\\/]/).pop() ?? 'No file open';
 
@@ -63,7 +73,7 @@ export const Toolbar: React.FC = () => {
 
       <span className={styles.separator} />
 
-      <div className={styles.group} aria-label="Page navigation">
+      <div className={styles.group} role="group" aria-label="Page navigation">
         <button
           className={styles.button}
           type="button"
@@ -85,7 +95,7 @@ export const Toolbar: React.FC = () => {
 
       <span className={styles.separator} />
 
-      <div className={styles.group} aria-label="Zoom controls">
+      <div className={styles.group} role="group" aria-label="Zoom controls">
         <button
           className={styles.button}
           type="button"
@@ -107,7 +117,7 @@ export const Toolbar: React.FC = () => {
 
       <span className={styles.separator} />
 
-      <div className={styles.group} aria-label="Overlay visibility">
+      <div className={styles.group} role="group" aria-label="Overlay visibility">
         {OVERLAYS.map(([label, type]) => (
           <button
             className={`${styles.button} ${overlayVisibility[type] ? styles.active : ''}`}
