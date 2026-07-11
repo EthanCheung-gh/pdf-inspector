@@ -21,7 +21,12 @@
 | 7. Zustand store + React entry | Complete | `ab08e89` |
 | 8. PDF.js viewer + worker runtime fixes | Complete | `263e5d5`, `d8f3036` |
 | 9. Canvas overlay + hit test | Complete | `e7e926a`, `ee14dcb` |
-| 10–15 | Pending | — |
+| 10. Toolbar | Complete | `f774b42`, `de05563` |
+| 11. Structure tree | Complete | `5aba65d`, `70c6251`, `9b7b85d` |
+| 12. Inspector panel | Complete | `3f6db33` |
+| 13. App shell + status bar | Complete | `28801a3` |
+| 14. Sidecar resilience | Complete | `e0930c8`, `c387968` |
+| 15. Text layer + image preview | Complete | `de38a56`, `d11bc29`, `979c979` |
 
 ---
 
@@ -1910,232 +1915,307 @@ git add -A && git commit -m "fix: improve overlay label rendering"
 
 ---
 
-### Task 10: Toolbar
+### Task 10: Toolbar — Overlay Controls & Error Handling
 
 **Files:**
-- Create: `src/renderer/components/Toolbar/Toolbar.tsx`
-- Create: `src/renderer/components/Toolbar/Toolbar.module.css`
+- Modify: `src/renderer/store/pdf-store.ts` (add `error: string | null` field, `setError` action; clear error in `setFile` and `setPageData`)
+- Modify: `src/renderer/components/Toolbar/Toolbar.tsx` (add `Curves` overlay toggle, integrate `setError`, add user-readable catch blocks, add `role="group"` to group divs)
 
-- [ ] **Step 1: Create `src/renderer/components/Toolbar/Toolbar.tsx`**
+**Prerequisite awareness:** The toolbar source files already exist on disk from an earlier pass. The plan modifies them in place rather than recreating them.
 
+- [ ] **Step 1: Add `error` field and `setError` action to pdf-store.ts**
+
+Open `src/renderer/store/pdf-store.ts`. Make **six** exact edits in order.
+
+**1a. Add `error` field declaration to the `PdfState` interface.**
+
+After the `sidecarRunning: boolean;` line (currently line 23), insert the error state section:
+
+Before:
 ```typescript
-import React, { useCallback } from 'react';
-import { usePdfStore } from '../../store/pdf-store';
-import { ipc } from '../../services/ipc-client';
-import styles from './Toolbar.module.css';
+  // UI state
+  overlayVisibility: Record<string, boolean>;
+  isLoading: boolean;
+  sidecarRunning: boolean;
 
-const OVERLAY_TYPES = [
-  { key: 'char', label: 'Chars' },
-  { key: 'word', label: 'Words' },
-  { key: 'line', label: 'Lines' },
-  { key: 'rect', label: 'Rects' },
-  { key: 'table', label: 'Tables' },
-  { key: 'image', label: 'Images' },
-];
+  // Actions
+```
+After:
+```typescript
+  // UI state
+  overlayVisibility: Record<string, boolean>;
+  isLoading: boolean;
+  sidecarRunning: boolean;
 
-export const Toolbar: React.FC = () => {
-  const currentPage = usePdfStore((s) => s.currentPage);
-  const pageCount = usePdfStore((s) => s.pageCount);
-  const zoom = usePdfStore((s) => s.zoom);
-  const overlayVisibility = usePdfStore((s) => s.overlayVisibility);
-  const isLoading = usePdfStore((s) => s.isLoading);
-  const filePath = usePdfStore((s) => s.filePath);
+  // Error state
+  error: string | null;
 
-  const setFile = usePdfStore((s) => s.setFile);
-  const setPage = usePdfStore((s) => s.setPage);
-  const setZoom = usePdfStore((s) => s.setZoom);
-  const setPageData = usePdfStore((s) => s.setPageData);
-  const setLoading = usePdfStore((s) => s.setLoading);
-  const toggleOverlay = usePdfStore((s) => s.toggleOverlay);
+  // Actions
+```
 
+**1b. Add `setError` action signature.**
+
+After the `setSidecarRunning: (running: boolean) => void;` line (currently line 34), insert:
+
+Before:
+```typescript
+  setSidecarRunning: (running: boolean) => void;
+  clearSelection: () => void;
+```
+After:
+```typescript
+  setSidecarRunning: (running: boolean) => void;
+  setError: (error: string | null) => void;
+  clearSelection: () => void;
+```
+
+**1c. Initialize `error` to `null` in default state.**
+
+After `sidecarRunning: false,` (currently line 61), insert:
+
+Before:
+```typescript
+  isLoading: false,
+  sidecarRunning: false,
+```
+After:
+```typescript
+  isLoading: false,
+  sidecarRunning: false,
+  error: null,
+```
+
+**1d. Add `setError` action implementation.**
+
+After the `setSidecarRunning` implementation line (currently line 104), insert:
+
+Before:
+```typescript
+  setSidecarRunning: (running) => set({ sidecarRunning: running }),
+  clearSelection: () => set({ hoveredObject: null, selectedObject: null }),
+```
+After:
+```typescript
+  setSidecarRunning: (running) => set({ sidecarRunning: running }),
+  setError: (error) => set({ error }),
+  clearSelection: () => set({ hoveredObject: null, selectedObject: null }),
+```
+
+**1e. Clear `error` in `setFile`.**
+
+Before:
+```typescript
+  setFile: (path, meta) =>
+    set({
+      filePath: path,
+      metadata: meta,
+      pageCount: meta.pages,
+      currentPage: 1,
+      pageData: null,
+      allObjects: [],
+      hoveredObject: null,
+      selectedObject: null,
+    }),
+```
+After:
+```typescript
+  setFile: (path, meta) =>
+    set({
+      filePath: path,
+      metadata: meta,
+      pageCount: meta.pages,
+      currentPage: 1,
+      pageData: null,
+      allObjects: [],
+      hoveredObject: null,
+      selectedObject: null,
+      error: null,
+    }),
+```
+
+**1f. Clear `error` in `setPageData` on successful data load.**
+
+Before:
+```typescript
+  setPageData: (data) =>
+    set({
+      pageData: data,
+      allObjects: [
+```
+After:
+```typescript
+  setPageData: (data) =>
+    set({
+      pageData: data,
+      error: null,
+      allObjects: [
+```
+
+- [ ] **Step 2: Modify `src/renderer/components/Toolbar/Toolbar.tsx`**
+
+Open `src/renderer/components/Toolbar/Toolbar.tsx`. Make **five** exact edits in order.
+
+**2a. Add `['Curves', 'curve']` to the `OVERLAYS` constant.**
+
+Before:
+```typescript
+const OVERLAYS = [
+  ['Chars', 'char'],
+  ['Words', 'word'],
+  ['Lines', 'line'],
+  ['Rects', 'rect'],
+  ['Tables', 'table'],
+  ['Images', 'image'],
+] as const;
+```
+After:
+```typescript
+const OVERLAYS = [
+  ['Chars', 'char'],
+  ['Words', 'word'],
+  ['Lines', 'line'],
+  ['Rects', 'rect'],
+  ['Curves', 'curve'],
+  ['Tables', 'table'],
+  ['Images', 'image'],
+] as const;
+```
+
+**2b. Add `setError` selector after `setLoading`.**
+
+Before:
+```typescript
+  const setLoading = usePdfStore((state) => state.setLoading);
+  const toggleOverlay = usePdfStore((state) => state.toggleOverlay);
+```
+After:
+```typescript
+  const setLoading = usePdfStore((state) => state.setLoading);
+  const setError = usePdfStore((state) => state.setError);
+  const toggleOverlay = usePdfStore((state) => state.toggleOverlay);
+```
+
+**2c. Add `setError(null)` and catch block with user-readable message to `handleOpen`.**
+
+Before:
+```typescript
   const handleOpen = useCallback(async () => {
     setLoading(true);
     try {
       const result = await ipc.openPdf();
-      if (!result.canceled) {
-        setFile(result.path, result.metadata);
-        // Load first page data
-        const data = await ipc.extractPage(1);
-        setPageData(data);
-      }
+      if (result.canceled) return;
+
+      setFile(result.path, result.metadata);
+      const pageData = await ipc.extractPage(1);
+      setPageData(pageData);
+    } finally {
+      setLoading(false);
+    }
+  }, [setFile, setLoading, setPageData]);
+```
+After:
+```typescript
+  const handleOpen = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await ipc.openPdf();
+      if (result.canceled) return;
+
+      setFile(result.path, result.metadata);
+      const pageData = await ipc.extractPage(1);
+      setPageData(pageData);
     } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to open PDF';
+      setError(msg);
       console.error('Open failed:', err);
     } finally {
       setLoading(false);
     }
-  }, [setFile, setPageData, setLoading]);
+  }, [setFile, setLoading, setPageData, setError]);
+```
 
-  const handlePageChange = useCallback(async (page: number) => {
+**2d. Add `setError(null)` and catch block with user-readable message to `navigateToPage`.**
+
+Before:
+```typescript
+  const navigateToPage = useCallback(async (page: number) => {
     if (page < 1 || page > pageCount) return;
-    setPage(page);
+
     setLoading(true);
     try {
-      const data = await ipc.extractPage(page);
-      setPageData(data);
+      setPage(page);
+      const pageData = await ipc.extractPage(page);
+      setPageData(pageData);
+    } finally {
+      setLoading(false);
+    }
+  }, [pageCount, setLoading, setPage, setPageData]);
+```
+After:
+```typescript
+  const navigateToPage = useCallback(async (page: number) => {
+    if (page < 1 || page > pageCount) return;
+
+    setLoading(true);
+    setError(null);
+    try {
+      setPage(page);
+      const pageData = await ipc.extractPage(page);
+      setPageData(pageData);
     } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to load page';
+      setError(msg);
       console.error('Page load failed:', err);
     } finally {
       setLoading(false);
     }
-  }, [pageCount, setPage, setPageData, setLoading]);
-
-  return (
-    <div className={styles.toolbar}>
-      <button className={styles.btn} onClick={handleOpen} disabled={isLoading}>
-        📂 Open PDF
-      </button>
-
-      <div className={styles.separator} />
-
-      <button className={styles.btn} onClick={() => handlePageChange(currentPage - 1)}
-              disabled={currentPage <= 1 || isLoading}>
-        ◀
-      </button>
-      <span className={styles.pageInfo}>
-        Page <strong>{currentPage}</strong> / {pageCount}
-      </span>
-      <button className={styles.btn} onClick={() => handlePageChange(currentPage + 1)}
-              disabled={currentPage >= pageCount || isLoading}>
-        ▶
-      </button>
-
-      <div className={styles.separator} />
-
-      <span className={styles.label}>Zoom:</span>
-      <button className={styles.btn} onClick={() => setZoom(zoom - 0.25)}
-              disabled={zoom <= 0.25}>
-        −
-      </button>
-      <span className={styles.zoomValue}>{Math.round(zoom * 100)}%</span>
-      <button className={styles.btn} onClick={() => setZoom(zoom + 0.25)}
-              disabled={zoom >= 5}>
-        +
-      </button>
-
-      <div className={styles.separator} />
-
-      {OVERLAY_TYPES.map(({ key, label }) => (
-        <button
-          key={key}
-          className={`${styles.overlayBtn} ${overlayVisibility[key] ? styles.active : ''}`}
-          onClick={() => toggleOverlay(key)}
-        >
-          {label}
-        </button>
-      ))}
-
-      {filePath && (
-        <>
-          <div className={styles.spacer} />
-          <span className={styles.fileName}>{filePath.split('/').pop()}</span>
-        </>
-      )}
-    </div>
-  );
-};
+  }, [pageCount, setLoading, setPage, setPageData, setError]);
 ```
 
-- [ ] **Step 2: Create `src/renderer/components/Toolbar/Toolbar.module.css`**
+**2e. Add `role="group"` to the three `<div className={styles.group}>` elements.**
 
-```css
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
-  background: #2a2a3e;
-  border-bottom: 1px solid #3a3a4e;
-  user-select: none;
-  flex-wrap: wrap;
-}
+Find each group div and add `role="group"`. There are three occurrences.
 
-.btn {
-  background: #3a3a52;
-  border: 1px solid #4a4a62;
-  color: #ccc;
-  padding: 4px 10px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 13px;
-  transition: background 0.15s;
-}
+First group (line 66) — Page navigation:
+Before:
+```tsx
+      <div className={styles.group} aria-label="Page navigation">
+```
+After:
+```tsx
+      <div className={styles.group} role="group" aria-label="Page navigation">
+```
 
-.btn:hover:not(:disabled) {
-  background: #4a4a66;
-}
+Second group (line 88) — Zoom controls:
+Before:
+```tsx
+      <div className={styles.group} aria-label="Zoom controls">
+```
+After:
+```tsx
+      <div className={styles.group} role="group" aria-label="Zoom controls">
+```
 
-.btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.separator {
-  width: 1px;
-  height: 20px;
-  background: #4a4a62;
-  margin: 0 6px;
-}
-
-.pageInfo {
-  color: #aaa;
-  font-size: 13px;
-  min-width: 80px;
-  text-align: center;
-}
-
-.label {
-  color: #888;
-  font-size: 12px;
-  margin-right: 4px;
-}
-
-.zoomValue {
-  color: #ddd;
-  font-size: 13px;
-  min-width: 40px;
-  text-align: center;
-}
-
-.overlayBtn {
-  background: #3a3a52;
-  border: 1px solid #4a4a62;
-  color: #888;
-  padding: 4px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 11px;
-  transition: all 0.15s;
-}
-
-.overlayBtn.active {
-  color: #fff;
-  border-color: #6a6aff;
-  background: #3a3a6a;
-}
-
-.spacer {
-  flex: 1;
-}
-
-.fileName {
-  color: #666;
-  font-size: 12px;
-  max-width: 300px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+Third group (line 110) — Overlay visibility:
+Before:
+```tsx
+      <div className={styles.group} aria-label="Overlay visibility">
+```
+After:
+```tsx
+      <div className={styles.group} role="group" aria-label="Overlay visibility">
 ```
 
 - [ ] **Step 3: Verify TypeScript compiles**
 
 Run: `npx tsc --noEmit`
-Expected: No type errors.
+Expected: No type errors. The new `setError` action has matching interface declaration and implementation; the `catch` blocks use `err: unknown` with an `instanceof` guard which is valid TypeScript.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add toolbar with open, nav, zoom, and overlay toggles"
+git add -A && git commit -m "fix: improve toolbar overlay controls and error handling"
 ```
 
 ---
@@ -2143,215 +2223,236 @@ git add -A && git commit -m "feat: add toolbar with open, nav, zoom, and overlay
 ### Task 11: Structure Tree (Left Panel)
 
 **Files:**
-- Create: `src/renderer/components/StructureTree/StructureTree.tsx`
-- Create: `src/renderer/components/StructureTree/StructureTree.module.css`
+- Modify: `src/renderer/components/StructureTree/StructureTree.tsx`
+- (No changes to: `src/renderer/components/StructureTree/StructureTree.module.css`)
 
-- [ ] **Step 1: Create `src/renderer/components/StructureTree/StructureTree.tsx`**
+- [ ] **Step 1: Rewrite `src/renderer/components/StructureTree/StructureTree.tsx`**
+
+Replace the entire file with the version below. The key changes from the current code:
+
+1. **Page click performs full async page load** — `navigateToPage` validates the target page, calls `setError(null)`, `setLoading(true)`, `setPage(page)`, `ipc.extractPage(page)`, `setPageData(data)`, catches errors with `console.error` + `setError(userMessage)`, and calls `setLoading(false)` in `finally`. This exactly matches Toolbar's `navigateToPage` behavior.
+
+2. **Object cross-page click uses full async navigation before selection** — `handleObjectClick` checks if the object's page differs from `currentPage`. If so, it runs the same full loading cycle, then finds the matching object instance in the freshly loaded page data (by identity comparison) before calling `setSelectedObject`.
+
+3. **Stable keys** — React keys are computed from `objectId(obj)` which uses the stable fields `type/page/x0/y0/x1/y1`, not array indices.
+
+4. **Identity comparison** — `isSelected` uses `objectsMatch(selectedObject, object)` instead of reference equality (`===`), so selection survives re-fetching page data.
+
+5. **Uses existing store error actions and ipc client** — imports `ipc`, `setLoading`, `setError`, and `useCallback`.
+
+6. **Race protection via monotonic request ID** — A `useRef<number>(0)` tracks the latest navigation request. `navigateToPage` and `handleObjectClick` capture `++navReqId.current` before the async call. After `ipc.extractPage` resolves or rejects, only the latest request ID may call `setPageData`/`setError`/`setLoading` or select a fresh object. Earlier (stale) responses are silently dropped, preventing stale page data from overwriting a newer navigation.
 
 ```typescript
-import React from 'react';
+import React, { useCallback, useRef } from 'react';
+import { ipc } from '../../services/ipc-client';
 import { usePdfStore } from '../../store/pdf-store';
-import { PdfObject } from '../../types/pdf-objects';
+import { PdfObject, PdfObjectType } from '../../types/pdf-objects';
 import styles from './StructureTree.module.css';
 
-const TYPE_ICONS: Record<string, string> = {
-  char: 'A', word: 'Ab', rect: '▭', line: '—',
-  curve: '⌒', image: '🖼', table: '⊞',
+type ObjectGroup = {
+  label: string;
+  icon: string;
+  objects: PdfObject[];
 };
 
+const MAX_WORDS = 50;
+
+const formatCoordinate = (value: number): string => Math.round(value).toString();
+
+const truncate = (value: string, maxLength = 36): string =>
+  value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
+
+const formatObjectLabel = (object: PdfObject): string => {
+  if (object.type === 'word') return truncate(object.text);
+  if (object.type === 'table') return `Table ${object.rows} × ${object.cols}`;
+  if (object.type === 'image') return `Image ${object.width} × ${object.height}`;
+  return `${object.type} (${formatCoordinate(object.x0)}, ${formatCoordinate(object.y0)})`;
+};
+
+const getVisibleObjects = (type: PdfObjectType, objects: PdfObject[]): PdfObject[] =>
+  type === 'word' ? objects.slice(0, MAX_WORDS) : objects;
+
+/** Stable identity string for a PdfObject, used for React keys and comparisons. */
+function objectId(obj: PdfObject): string {
+  return `${obj.type}-${obj.page}-${obj.x0}-${obj.y0}-${obj.x1}-${obj.y1}`;
+}
+
+/** Whether two PdfObject references represent the same logical object (by value identity). */
+function objectsMatch(a: PdfObject, b: PdfObject): boolean {
+  return a.type === b.type
+    && a.page === b.page
+    && a.x0 === b.x0
+    && a.y0 === b.y0
+    && a.x1 === b.x1
+    && a.y1 === b.y1;
+}
+
 export const StructureTree: React.FC = () => {
-  const metadata = usePdfStore((s) => s.metadata);
-  const pageCount = usePdfStore((s) => s.pageCount);
-  const currentPage = usePdfStore((s) => s.currentPage);
-  const pageData = usePdfStore((s) => s.pageData);
-  const setPage = usePdfStore((s) => s.setPage);
-  const setSelectedObject = usePdfStore((s) => s.setSelectedObject);
-  const selectedObject = usePdfStore((s) => s.selectedObject);
+  const filePath = usePdfStore((state) => state.filePath);
+  const metadata = usePdfStore((state) => state.metadata);
+  const pageCount = usePdfStore((state) => state.pageCount);
+  const currentPage = usePdfStore((state) => state.currentPage);
+  const pageData = usePdfStore((state) => state.pageData);
+  const isLoading = usePdfStore((state) => state.isLoading);
+  const selectedObject = usePdfStore((state) => state.selectedObject);
+  const setPage = usePdfStore((state) => state.setPage);
+  const setPageData = usePdfStore((state) => state.setPageData);
+  const setLoading = usePdfStore((state) => state.setLoading);
+  const setError = usePdfStore((state) => state.setError);
+  const setSelectedObject = usePdfStore((state) => state.setSelectedObject);
 
-  const handleObjectClick = (obj: PdfObject) => {
-    if (obj.page !== currentPage) {
-      setPage(obj.page);
-    }
-    setSelectedObject(obj);
-  };
+  /** Monotonically increasing navigation request ID to prevent stale response races. */
+  const navReqId = useRef(0);
 
-  const groupedObjects = (): Record<string, PdfObject[]> => {
-    if (!pageData) return {};
-    const groups: Record<string, PdfObject[]> = {};
-    for (const obj of [/* ...pageData.chars too many, skip chars */]) {
-      // Skip chars — too many for tree display
+  /** Full page navigation matching Toolbar's navigateToPage behavior. */
+  const navigateToPage = useCallback(async (page: number) => {
+    if (page < 1 || page > pageCount) return;
+    const reqId = ++navReqId.current;
+
+    setError(null);
+    setLoading(true);
+    try {
+      setPage(page);
+      const data = await ipc.extractPage(page);
+      if (reqId !== navReqId.current) return; // stale: superseded by a newer request
+      setPageData(data);
+    } catch (err) {
+      if (reqId !== navReqId.current) return; // stale: suppress error for superseded request
+      console.error('Failed to load page:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load page');
+    } finally {
+      if (reqId !== navReqId.current) return; // stale: don't toggle loading for superseded request
+      setLoading(false);
     }
-    if (pageData.words.length > 0) groups['Words'] = pageData.words.slice(0, 50);
-    if (pageData.rects.length > 0) groups['Rects'] = pageData.rects;
-    if (pageData.lines.length > 0) groups['Lines'] = pageData.lines;
-    if (pageData.curves.length > 0) groups['Curves'] = pageData.curves;
-    if (pageData.images.length > 0) groups['Images'] = pageData.images;
-    if (pageData.tables.length > 0) groups['Tables'] = pageData.tables;
-    return groups;
-  };
+  }, [pageCount, setError, setLoading, setPage, setPageData, navReqId]);
+
+  const handleObjectClick = useCallback(async (object: PdfObject) => {
+    if (object.page !== currentPage) {
+      // Cross-page navigation: load target page first, then select the object
+      const reqId = ++navReqId.current;
+      setError(null);
+      setLoading(true);
+      try {
+        setPage(object.page);
+        const data = await ipc.extractPage(object.page);
+        if (reqId !== navReqId.current) return; // stale: superseded by a newer request
+        setPageData(data);
+        // After data load, find the matching object instance in fresh data
+        const all: PdfObject[] = [
+          ...data.chars, ...data.words, ...data.rects,
+          ...data.lines, ...data.curves, ...data.images, ...data.tables,
+        ];
+        const match = all.find((o) => objectsMatch(o, object));
+        setSelectedObject(match ?? null);
+      } catch (err) {
+        if (reqId !== navReqId.current) return; // stale: suppress error for superseded request
+        console.error('Failed to load page for object selection:', err);
+        setError(err instanceof Error ? err.message : 'Failed to load page');
+      } finally {
+        if (reqId !== navReqId.current) return; // stale: don't toggle loading for superseded request
+        setLoading(false);
+      }
+    } else {
+      setSelectedObject(object);
+    }
+  }, [currentPage, setError, setLoading, setPage, setPageData, setSelectedObject, navReqId]);
+
+  if (!filePath || !metadata || pageCount === 0) {
+    return (
+      <aside className={styles.panel} aria-label="Document structure">
+        <h2 className={styles.title}>Structure</h2>
+        <div className={styles.emptyState}>Open a PDF to view its structure.</div>
+      </aside>
+    );
+  }
+
+  const groups: ObjectGroup[] = pageData
+    ? [
+        { label: 'Words', icon: 'W', objects: pageData.words },
+        { label: 'Rects', icon: '▭', objects: pageData.rects },
+        { label: 'Lines', icon: '╱', objects: pageData.lines },
+        { label: 'Curves', icon: '⌒', objects: pageData.curves },
+        { label: 'Images', icon: '▧', objects: pageData.images },
+        { label: 'Tables', icon: '▦', objects: pageData.tables },
+      ]
+    : [];
 
   return (
-    <div className={styles.tree}>
-      <div className={styles.header}>STRUCTURE</div>
-      {!metadata ? (
-        <div className={styles.empty}>No PDF open</div>
-      ) : (
-        Array.from({ length: pageCount }, (_, i) => {
-          const pageNum = i + 1;
-          const isActive = pageNum === currentPage;
-          const groups = isActive ? groupedObjects() : {};
-          const hasChildren = Object.keys(groups).length > 0;
+    <aside className={styles.panel} aria-label="Document structure">
+      <h2 className={styles.title}>Structure</h2>
+      <nav className={styles.tree} aria-label="PDF page structure">
+        {Array.from({ length: pageCount }, (_, index) => {
+          const pageNumber = index + 1;
+          const isActive = pageNumber === currentPage;
 
           return (
-            <div key={pageNum}>
-              <div
-                className={`${styles.pageItem} ${isActive ? styles.activePage : ''}`}
-                onClick={() => setPage(pageNum)}
+            <div className={styles.page} key={pageNumber}>
+              <button
+                className={`${styles.pageButton} ${isActive ? styles.activePage : ''}`}
+                type="button"
+                onClick={() => navigateToPage(pageNumber)}
+                disabled={isLoading}
+                aria-current={isActive ? 'page' : undefined}
               >
-                📄 Page {pageNum}
-              </div>
-              {isActive && hasChildren && (
-                <div className={styles.children}>
-                  {Object.entries(groups).map(([groupName, objs]) => (
-                    <div key={groupName}>
-                      <div className={styles.groupName}>
-                        {groupName} ({objs.length})
-                      </div>
-                      {objs.map((obj, idx) => (
-                        <div
-                          key={`${obj.type}-${idx}`}
-                          className={`${styles.objectItem} ${
-                            selectedObject === obj ? styles.selected : ''
-                          }`}
-                          onClick={() => handleObjectClick(obj)}
-                        >
-                          <span className={styles.objectIcon}>
-                            {TYPE_ICONS[obj.type] || '•'}
-                          </span>
-                          <span className={styles.objectLabel}>
-                            {obj.type === 'word' && 'text' in obj
-                              ? (obj as any).text.substring(0, 20)
-                              : obj.type === 'table'
-                                ? `Table ${(obj as any).rows}r×${(obj as any).cols}c`
-                                : obj.type === 'image'
-                                  ? `Image ${Math.round(obj.x1 - obj.x0)}×${Math.round(obj.y1 - obj.y0)}`
-                                  : `${obj.type} @(${Math.round(obj.x0)}, ${Math.round(obj.y0)})`
-                            }
-                          </span>
+                <span className={styles.pageIcon}>▸</span>
+                Page {pageNumber}
+              </button>
+
+              {isActive && pageData && (
+                <div className={styles.groups}>
+                  {groups.map((group) => {
+                    const type = group.objects[0]?.type;
+                    const visibleObjects = type ? getVisibleObjects(type, group.objects) : [];
+
+                    return (
+                      <section className={styles.group} key={group.label}>
+                        <div className={styles.groupHeader}>
+                          <span className={styles.groupIcon} aria-hidden="true">{group.icon}</span>
+                          <span>{group.label}</span>
+                          <span className={styles.count}>{group.objects.length}</span>
                         </div>
-                      ))}
-                    </div>
-                  ))}
+                        {visibleObjects.map((object) => {
+                          const isSelected = selectedObject !== null && objectsMatch(selectedObject, object);
+                          const label = formatObjectLabel(object);
+
+                          return (
+                            <button
+                              className={`${styles.objectButton} ${isSelected ? styles.selectedObject : ''}`}
+                              type="button"
+                              key={objectId(object)}
+                              onClick={() => handleObjectClick(object)}
+                              disabled={isLoading}
+                              title={label}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </section>
+                    );
+                  })}
                 </div>
               )}
             </div>
           );
-        })
-      )}
-    </div>
+        })}
+      </nav>
+    </aside>
   );
 };
 ```
 
-- [ ] **Step 2: Create `src/renderer/components/StructureTree/StructureTree.module.css`**
-
-```css
-.tree {
-  width: 220px;
-  background: #1e1e2e;
-  border-right: 1px solid #333;
-  overflow-y: auto;
-  font-size: 13px;
-}
-
-.header {
-  padding: 8px 12px;
-  font-size: 11px;
-  color: #666;
-  border-bottom: 1px solid #333;
-  letter-spacing: 1px;
-  font-weight: bold;
-}
-
-.empty {
-  padding: 20px 12px;
-  color: #555;
-  font-size: 12px;
-  text-align: center;
-}
-
-.pageItem {
-  padding: 6px 12px;
-  cursor: pointer;
-  color: #aaa;
-  transition: background 0.1s;
-}
-
-.pageItem:hover {
-  background: #2a2a3e;
-}
-
-.activePage {
-  color: #4a9;
-  background: #1a2a2a;
-}
-
-.children {
-  border-left: 1px solid #333;
-  margin-left: 12px;
-}
-
-.groupName {
-  padding: 4px 8px;
-  font-size: 11px;
-  color: #666;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.objectItem {
-  padding: 3px 8px 3px 16px;
-  cursor: pointer;
-  color: #888;
-  font-size: 12px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  transition: background 0.1s;
-}
-
-.objectItem:hover {
-  background: #2a2a3e;
-  color: #ccc;
-}
-
-.objectItem.selected {
-  background: #2a3a2a;
-  color: #4c4;
-}
-
-.objectIcon {
-  font-size: 11px;
-  width: 16px;
-  text-align: center;
-}
-
-.objectLabel {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-```
+- [ ] **Step 2: `src/renderer/components/StructureTree/StructureTree.module.css`** — no changes needed; the existing CSS already has matching class names (`.panel`, `.title`, `.tree`, `.pageButton`, `.objectButton`, `.selectedObject`, etc.).
 
 - [ ] **Step 3: Verify TypeScript compiles**
 
 Run: `npx tsc --noEmit`
-Expected: No type errors.
+Expected: No type errors. The `useRef<number>(0)` initial value `0` is valid for `MutableRefObject<number>`. `navReqId.current` is read as `number` — valid for `===` comparisons. The stale-guard early returns are at end of `try`, `catch`, and `finally` blocks; the `finally` block returns before `setLoading(false)` only on stale requests, while the latest request always reaches `setLoading(false)`. Inside `handleObjectClick`, the `objectsMatch` call in the then-block is only reached when the request is the latest, so the captured `object` reference is still valid. All `useCallback` deps include `navReqId` (stable ref — never changes, always safe in deps). The `objectId` and `objectsMatch` functions use only fields common to all `PdfObject` variants (`type`, `page`, `x0`, `y0`, `x1`, `y1`). The `ipc.extractPage` call returns `Promise<PageData>` whose arrays are spread into a `PdfObject[]` — valid because each element satisfies `PdfBaseObject`. All types resolve.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add structure tree panel with page hierarchy"
+git add -A && git commit -m "fix: prevent stale structure tree page loads"
 ```
 
 ---
@@ -2796,101 +2897,383 @@ git add -A && git commit -m "feat: add app shell, status bar, and main layout"
 
 ---
 
-### Task 14: Error Handling & Polish
+### Task 14: Harden Sidecar Readiness and Restart
+
+**Context from earlier tasks:** `src/main/index.ts` already has `checkPythonAvailable()` and Python-availability dialog. `src/main/sidecar.ts` already has `autoRestartEnabled` + `enableAutoRestart()` + `restartPromise` + `restartAfterCrash()`. This task replaces the timing-based `restartPromise` guard with a boolean `restarting` guard + bounded delay, adds a Python-side ready signal that the SidecarManager waits on before resolving `start()`, and preserves intentional-stop disable.
+
+**Rationale for each change:**
+
+| Change | Problem it solves |
+|---|---|
+| Python emits `{"ready":true}` before stdin loop | Main process currently resolves `start()` on `proc.once('spawn', ...)` which fires before Python is ready to accept requests. A race exists where the first `send()` write to stdin arrives before Python enters the `for line in sys.stdin` loop and the line is silently lost. |
+| `start()` resolves only after parsing ready signal | Guarantees the sidecar is fully initialized and its stdin loop is active before any `send()` call. |
+| Boolean `restarting` guard + bounded delayed retry | `restartPromise` is a timing-dependent pattern — if the restart promise resolves instantly (or the previous promise reference is overwritten by re-entry), a crash loop could spin without delay. A simple `restarting: boolean` with a 500ms `setTimeout` caps retry rate and prevents CPU spin. |
+| Preserve intentional-stop disable | `stop()` already sets `autoRestartEnabled = false` before sending `shutdown` — no code change needed; the restart logic already checks `autoRestartEnabled`. |
 
 **Files:**
-- Modify: `src/main/index.ts` (Python check + sidecar lifecycle)
-- Modify: `src/main/sidecar.ts` (auto-restart on crash)
-- Create: none (modifications only)
+- Modify: `sidecar/main.py` (emit ready signal before stdin loop)
+- Modify: `src/main/sidecar.ts` (ready-signal-aware start, boolean restarting guard, bounded delay)
+- No changes to: `src/main/index.ts`, `src/main/ipc-handlers.ts`
 
-- [ ] **Step 1: Add Python availability check to main process**
+- [ ] **Step 1: Add ready signal to `sidecar/main.py`**
 
-Add to `src/main/index.ts`, at the top:
+Open `sidecar/main.py`. Locate the `main()` function. After the `extractor` and `cache` initialization (the two lines after `def main():`) and **before** the `for line in sys.stdin:` loop, insert the ready signal emission.
 
-```typescript
-import { execSync } from 'child_process';
+**Before (the beginning of `main()`):**
+```python
+def main():
+    extractor: PdfExtractor | None = None
+    cache = PageCache(max_pages=10)
 
-function checkPythonAvailable(): boolean {
-  try {
-    execSync('python3 --version', { stdio: 'pipe' });
-    return true;
-  } catch {
-    return false;
-  }
-}
+    for line in sys.stdin:
 ```
 
-Update the `app.whenReady()` handler:
+**After:**
+```python
+def main():
+    extractor: PdfExtractor | None = None
+    cache = PageCache(max_pages=10)
+
+    # Signal readiness to parent process — stdout must be flushed before stdin loop starts
+    sys.stdout.write(json.dumps({"ready": True}) + "\n")
+    sys.stdout.flush()
+
+    for line in sys.stdin:
+```
+
+> `json` is already imported at the top of `sidecar/main.py`. The ready signal is a single-line JSON object `{"ready": true}` (no `id` field), which the TypeScript sidecar manager will distinguish from normal JSON-RPC responses by the absence of an `id` field. The signal is emitted **after** the extractor and cache are initialized but before blocking on stdin, so the main process knows the sidecar is fully ready to accept requests.
+
+- [ ] **Step 2: Replace entire `src/main/sidecar.ts` with ready-signal-aware version**
+
+Open `src/main/sidecar.ts`. Replace the entire file content with the version below.
+
+**Changes from current code:**
+1. **Ready signal wait** — `start()` no longer resolves on `proc.once('spawn', ...)`. Instead, the stdout `data` handler checks each parsed JSON line for `response.ready === true` and resolves the start promise only when the ready signal arrives. A 10-second timeout rejects the start promise if no ready signal arrives.
+2. **Boolean `restarting` guard** — `restartPromise` field and its `restartAfterCrash()`-scoped promise-comparison guard are replaced with a simple `restarting: boolean` field. The restart method sets `this.restarting = true`, schedules a `setTimeout(500ms)` for the actual `this.start()` call, and clears `restarting` in `finally`.
+3. **`stop()` preserves intentional-stop disable** — already sets `autoRestartEnabled = false` before shutdown (no changes needed). The `exit` handler checks `autoRestartEnabled && code !== 0` which correctly skips restart when `stop()` was called.
+4. **Normal response parsing intact** — the same `stdout.data` handler still processes normal JSON-RPC responses through the `this.pending` map after start settles. The ready-signal check is an additional early-return guard that only fires before start settles.
 
 ```typescript
-app.whenReady().then(async () => {
-  if (!checkPythonAvailable()) {
-    await dialog.showMessageBox({
-      type: 'error',
-      title: 'Python Required',
-      message: 'PDF Inspector requires Python 3.10+ to be installed.',
-      detail: 'Please install Python 3 from https://python.org and ensure "python3" is in your PATH.\n\nThen install the required packages:\n  pip install pdfplumber Pillow',
+import { spawn, ChildProcess } from 'child_process';
+import * as path from 'path';
+import * as fs from 'fs';
+
+export interface SidecarRequest {
+  id: number;
+  method: string;
+  params: Record<string, unknown>;
+}
+
+export interface SidecarResponse {
+  id: number;
+  result?: unknown;
+  error?: string;
+}
+
+export class SidecarManager {
+  private process: ChildProcess | null = null;
+  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  private nextId = 1;
+  private buffer = '';
+  private autoRestartEnabled = true;
+  /** True while a delayed restart is scheduled; prevents concurrent restart attempts. */
+  private restarting = false;
+  /** Delay before auto-restart to avoid CPU spin on rapid crash cycles. */
+  private static readonly RESTART_DELAY_MS = 500;
+
+  isRunning(): boolean {
+    return this.process !== null && !this.process.killed;
+  }
+
+  enableAutoRestart(enabled: boolean): void {
+    this.autoRestartEnabled = enabled;
+  }
+
+  /** Reject all in-flight requests with the given error. */
+  private rejectPendingRequests(error: Error): void {
+    for (const { reject } of this.pending.values()) {
+      reject(error);
+    }
+    this.pending.clear();
+  }
+
+  /**
+   * Schedule a delayed restart. Uses a boolean guard (not a promise-reference
+   * comparison) to prevent re-entry, and a bounded 500ms timeout to avoid
+   * CPU-spin crash loops.
+   */
+  private restartAfterCrash(): void {
+    if (!this.autoRestartEnabled || this.restarting || this.isRunning()) return;
+
+    this.restarting = true;
+    console.log('[sidecar] Auto-restarting in 500ms...');
+    setTimeout(() => {
+      // Double-check: stop() may have been called while the timeout was pending
+      if (!this.autoRestartEnabled) {
+        this.restarting = false;
+        return;
+      }
+      this.start()
+        .catch((err) => console.error('[sidecar] Restart failed:', err))
+        .finally(() => {
+          this.restarting = false;
+        });
+    }, SidecarManager.RESTART_DELAY_MS);
+  }
+
+  /**
+   * Start the Python sidecar subprocess.
+   *
+   * The returned promise resolves only after the sidecar emits its one-time
+   * JSON ready signal (`{"ready":true}`) on stdout — NOT at process spawn.
+   * A 10-second timeout rejects the promise if the ready signal never arrives.
+   */
+  async start(): Promise<void> {
+    if (this.isRunning()) return;
+
+    // Resolve sidecar script path
+    let scriptPath: string;
+    if (fs.existsSync(path.join(__dirname, '../../sidecar/main.py'))) {
+      scriptPath = path.join(__dirname, '../../sidecar/main.py');
+    } else if (process.resourcesPath && fs.existsSync(path.join(process.resourcesPath, 'sidecar/main.py'))) {
+      scriptPath = path.join(process.resourcesPath, 'sidecar/main.py');
+    } else {
+      throw new Error('Cannot find sidecar/main.py');
+    }
+
+    return new Promise((resolve, reject) => {
+      const proc = spawn('python3', [scriptPath], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      let startSettled = false;
+
+      // Timeout: if ready signal not received within 10s, reject the start promise
+      const readyTimeout = setTimeout(() => {
+        if (!startSettled) {
+          startSettled = true;
+          reject(new Error('Sidecar ready signal timeout after 10s'));
+        }
+      }, 10000);
+
+      /**
+       * Settle the start promise exactly once.
+       * Called either by the ready-signal check (success) or by `error`/`exit`
+       * events (failure). Clears the ready timeout and sets `this.process`.
+       */
+      const settleStart = (err?: Error) => {
+        if (startSettled) return;
+        startSettled = true;
+        clearTimeout(readyTimeout);
+        if (err) {
+          if (this.process === proc) this.process = null;
+          reject(err);
+        } else {
+          this.process = proc;
+          resolve();
+        }
+      };
+
+      proc.on('error', (err) => {
+        settleStart(new Error(`Failed to start sidecar: ${err.message}`));
+      });
+
+      proc.stdout?.on('data', (data: Buffer) => {
+        this.buffer += data.toString();
+        const lines = this.buffer.split('\n');
+        // Keep last incomplete line in buffer
+        this.buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const parsed = JSON.parse(line);
+
+            // Ready signal check — before start settles, this is the only expected line
+            if (parsed.ready === true) {
+              settleStart();
+              continue;
+            }
+
+            // Normal JSON-RPC response parsing (only triggers after start settles)
+            const pending = this.pending.get(parsed.id);
+            if (pending) {
+              this.pending.delete(parsed.id);
+              if (parsed.error) {
+                pending.reject(new Error(parsed.error));
+              } else {
+                pending.resolve(parsed.result);
+              }
+            }
+          } catch {
+            // Malformed JSON line — ignore
+          }
+        }
+      });
+
+      proc.stderr?.on('data', (data: Buffer) => {
+        console.error(`[sidecar] ${data.toString().trim()}`);
+      });
+
+      proc.on('exit', (code) => {
+        clearTimeout(readyTimeout);
+        console.log(`[sidecar] exited with code ${code}`);
+
+        // If start hasn't settled yet, the process died before the ready signal
+        if (!startSettled) {
+          settleStart(new Error(`Sidecar exited with code ${code} before ready signal`));
+        }
+
+        this.rejectPendingRequests(new Error(`Sidecar exited with code ${code}`));
+        if (this.process === proc) {
+          this.process = null;
+        }
+
+        // Auto-restart unless shutdown was intentional (stop() sets autoRestartEnabled = false)
+        if (this.autoRestartEnabled && code !== 0) {
+          this.restartAfterCrash();
+        }
+      });
     });
-    app.quit();
-    return;
   }
 
-  registerIpcHandlers(sidecar);
+  async send(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
+    if (!this.isRunning()) {
+      throw new Error('Sidecar is not running');
+    }
 
-  try {
-    await sidecar.start();
-    console.log('[main] Sidecar started');
-  } catch (err) {
-    console.error('[main] Failed to start sidecar:', err);
+    const id = this.nextId++;
+    const request: SidecarRequest = { id, method, params };
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`Request "${method}" timed out after 30s`));
+      }, 30000);
+
+      this.pending.set(id, {
+        resolve: (v) => { clearTimeout(timeout); resolve(v); },
+        reject: (e) => { clearTimeout(timeout); reject(e); },
+      });
+
+      this.process?.stdin?.write(JSON.stringify(request) + '\n');
+    });
   }
 
-  createWindow();
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
-});
-```
-
-- [ ] **Step 2: Add sidecar auto-restart on crash**
-
-In `src/main/sidecar.ts`, modify the `start()` method to add an auto-restart flag. Add an `autoRestart` method and update the `exit` handler:
-
-```typescript
-// Add to SidecarManager class
-private autoRestartEnabled = true;
-
-enableAutoRestart(enabled: boolean) {
-  this.autoRestartEnabled = enabled;
+  async stop(): Promise<void> {
+    this.autoRestartEnabled = false;
+    if (!this.isRunning()) return;
+    try {
+      await this.send('shutdown');
+    } catch {
+      // Ignore errors during shutdown
+    }
+    this.process?.kill();
+    this.process = null;
+  }
 }
-
-// In the start() method, update the exit handler:
-proc.on('exit', (code) => {
-  console.log(`[sidecar] exited with code ${code}`);
-  // Reject all pending requests
-  for (const [id, { reject: rej }] of this.pending) {
-    rej(new Error(`Sidecar exited with code ${code}`));
-    this.pending.delete(id);
-  }
-  this.process = null;
-
-  // Auto-restart unless shutdown was intentional
-  if (this.autoRestartEnabled && code !== 0) {
-    console.log('[sidecar] Auto-restarting...');
-    this.start().catch((err) => console.error('[sidecar] Restart failed:', err));
-  }
-});
 ```
 
-- [ ] **Step 3: Verify everything compiles**
+- [ ] **Step 3: Verify Python syntax and ready signal presence**
 
-Run: `npx tsc --noEmit`
-Expected: No type errors.
-
-- [ ] **Step 4: Commit**
+Run:
 
 ```bash
-git add -A && git commit -m "feat: add python detection and sidecar auto-restart"
+python3 -c "import ast; ast.parse(open('sidecar/main.py').read()); print('PYTHON OK')"
+```
+
+Expected: Output `PYTHON OK`.
+
+```bash
+python3 -c "
+import ast, sys
+tree = ast.parse(open('sidecar/main.py').read())
+for node in ast.walk(tree):
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'dumps':
+        for arg in node.args:
+            if isinstance(arg, ast.Dict):
+                for k in arg.keys:
+                    # Accept both ast.Str (pre-3.8) and ast.Constant (3.8+)
+                    key_text = None
+                    if isinstance(k, ast.Str):
+                        key_text = k.s
+                    elif isinstance(k, ast.Constant) and isinstance(k.value, str):
+                        key_text = k.value
+                    if key_text == 'ready':
+                        print('READY SIGNAL FOUND')
+                        sys.exit(0)
+print('READY SIGNAL MISSING')
+sys.exit(1)
+"
+```
+
+Expected: Output `READY SIGNAL FOUND`. (Confirms the `json.dumps({"ready": True})` call exists in the AST.)
+
+- [ ] **Step 4: Verify TypeScript compiles**
+
+Run:
+
+```bash
+npx tsc --noEmit
+```
+
+Expected: No type errors. Exit code 0.
+
+- [ ] **Step 5: Verify ready-signal and restarting guard patterns in sidecar.ts**
+
+Run these assertions to confirm the critical patterns are present:
+
+```bash
+node -e "
+const fs=require('fs');
+const s=fs.readFileSync('src/main/sidecar.ts','utf8');
+
+// Check 1: ready-signal wait in start() — no proc.once('spawn') as resolver
+if (s.includes(\"proc.once('spawn'\")) { process.exit(1); }
+
+// Check 2: parsed.ready === true check present
+if (!s.includes('parsed.ready === true')) { process.exit(2); }
+
+// Check 3: settleStart function present
+if (!s.includes('const settleStart')) { process.exit(3); }
+
+// Check 4: 10-second ready timeout
+if (!s.includes('10000')) { process.exit(4); }
+
+// Check 5: restarting field declaration
+if (!s.includes('private restarting = false')) { process.exit(5); }
+
+// Check 6: RESTART_DELAY_MS constant
+if (!s.includes('500')) { process.exit(6); }
+
+// Check 7: restarting guard in restartAfterCrash
+if (!s.includes('this.restarting')) { process.exit(7); }
+
+// Check 8: setTimeout in restartAfterCrash (bounded delay)
+if (!s.includes('setTimeout')) { process.exit(8); }
+
+// Check 9: autoRestartEnabled still present
+if (!s.includes('private autoRestartEnabled = true')) { process.exit(9); }
+
+// Check 10: stop() sets autoRestartEnabled = false
+if (!s.includes(\"this.autoRestartEnabled = false\")) { process.exit(10); }
+
+// Check 11: no restartPromise field or restartAfterCrash that references it
+if (s.includes('restartPromise')) { process.exit(11); }
+
+// Check 12: inner autoRestartEnabled guard inside the setTimeout callback (prevents restart after stop())
+if (!s.includes('// Double-check:')) { process.exit(12); }
+
+console.log('ALL PATTERNS VERIFIED');
+"
+```
+
+Expected: Output `ALL PATTERNS VERIFIED`. Exit code 0.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -A && git commit -m "fix: harden sidecar readiness and restart"
 ```
 
 ---
@@ -2901,6 +3284,7 @@ git add -A && git commit -m "feat: add python detection and sidecar auto-restart
 - Modify: `src/renderer/components/PdfViewport/PdfPage.tsx`
 - Create: `src/renderer/components/PdfViewport/TextLayer.tsx`
 - Modify: `src/renderer/components/InspectorPanel/InspectorPanel.tsx`
+- Modify: `sidecar/extractor.py`
 
 - [ ] **Step 1: Create `src/renderer/components/PdfViewport/TextLayer.tsx`**
 
@@ -3052,16 +3436,97 @@ export const PdfPage: React.FC<PdfPageProps> = ({ pageNum, isVisible, filePath, 
 };
 ```
 
-- [ ] **Step 3: Add image preview to InspectorPanel**
+- [ ] **Step 3: Add image format detection to `sidecar/extractor.py`**
 
-In `src/renderer/components/InspectorPanel/InspectorPanel.tsx`, add an image preview section after the existing Image info section:
+Open `sidecar/extractor.py`. Add a helper function at the top (after imports) and modify `get_image_data` to use it.
 
+**3a. Add `_detect_image_format` helper after the imports:**
+
+After the `import io` line (currently line 582), insert:
+
+```python
+
+# Image format detection from bytes magic signatures
+_IMAGE_MAGIC: list[tuple[bytes, str]] = [
+    (b'\x89PNG\r\n\x1a\n', 'png'),
+    (b'\xff\xd8\xff',      'jpeg'),
+    (b'GIF87a',            'gif'),
+    (b'GIF89a',            'gif'),
+    (b'RIFF',              'webp'),  # WEBP starts with RIFF header; confirm WEBP at offset 8
+]
+
+
+def _detect_image_format(data: bytes) -> str:
+    """Return a stable format string ('png', 'jpeg', 'gif', 'webp')
+    by inspecting bytes magic signatures.
+    Falls back to 'jpeg' for unrecognised formats (JPEG is the most
+    common embedded image in PDFs).
+    """
+    for magic, fmt in _IMAGE_MAGIC:
+        if fmt == 'webp':
+            # WEBP: file starts with RIFF....WEBP
+            if data[:4] == magic and data[8:12] == b'WEBP':
+                return fmt
+        elif data[:len(magic)] == magic:
+            return fmt
+    return 'jpeg'
+```
+
+**3b. Update `get_image_data` to use the detected format:**
+
+Locate the `try` block inside `get_image_data` (currently lines 747-755). Replace it:
+
+Before:
+```python
+        try:
+            data = stream.get('data', b'')
+            if isinstance(data, memoryview):
+                data = bytes(data)
+            elif not isinstance(data, bytes):
+                data = b''
+            b64 = base64.b64encode(data).decode('ascii')
+            return {'base64': b64, 'format': img.get('srcsize', 'unknown')}
+        except Exception as e:
+            return {'error': str(e)}
+```
+
+After:
+```python
+        try:
+            data = stream.get('data', b'')
+            if isinstance(data, memoryview):
+                data = bytes(data)
+            elif not isinstance(data, bytes):
+                data = b''
+            fmt = _detect_image_format(data)
+            b64 = base64.b64encode(data).decode('ascii')
+            return {'base64': b64, 'format': fmt}
+        except Exception as e:
+            return {'error': str(e)}
+```
+
+- [ ] **Step 4: Update image preview in InspectorPanel with MIME-safe types and `onError`**
+
+Replace the existing image preview section in `src/renderer/components/InspectorPanel/InspectorPanel.tsx`.
+
+**4a. Update imports at top:**
+
+Before:
 ```typescript
-// Add import at top
 import { ipc } from '../../services/ipc-client';
 import { useState, useEffect } from 'react';
+```
 
-// Add image preview state inside InspectorPanel component
+After:
+```typescript
+import { ipc } from '../../services/ipc-client';
+import { useState, useEffect, useCallback } from 'react';
+```
+
+**4b. Replace the image preview state and effect block and JSX with the version below:**
+
+Before (the full block from `const [imagePreview, setImagePreview] = useState...` through the JSX section):
+```typescript
 const [imagePreview, setImagePreview] = useState<string | null>(null);
 
 // Add effect to load image preview when an image is selected
@@ -3099,13 +3564,85 @@ useEffect(() => {
 )}
 ```
 
-- [ ] **Step 4: Verify TypeScript compiles**
+After:
+```typescript
+const [imagePreview, setImagePreview] = useState<string | null>(null);
 
-Run: `npx tsc --noEmit`
-Expected: No type errors.
+// Stable format → MIME subtype mapping (only known types)
+const MIME_SUBTYPES: Record<string, string> = {
+  png:  'image/png',
+  jpeg: 'image/jpeg',
+  gif:  'image/gif',
+  webp: 'image/webp',
+};
 
-- [ ] **Step 5: Commit**
+/** Return the MIME subtype for a given format string; fall back to 'image/jpeg'. */
+function toMimeSubtype(fmt: string | undefined): string {
+  return MIME_SUBTYPES[fmt || ''] || 'image/jpeg';
+}
+
+// Add effect to load image preview when an image is selected
+useEffect(() => {
+  if (!obj || obj.type !== 'image') {
+    setImagePreview(null);
+    return;
+  }
+  const imgObj = obj as any;
+  if (imgObj.stream_id) {
+    setImagePreview('loading...');
+    ipc.getImageData(imgObj.stream_id).then((data) => {
+      if ('base64' in data && data.base64) {
+        const mime = toMimeSubtype(data.format);
+        setImagePreview(`data:${mime};base64,${data.base64}`);
+      } else {
+        setImagePreview('(preview unavailable)');
+      }
+    }).catch(() => setImagePreview('(error loading)'));
+  }
+}, [obj]);
+
+const handleImageError = useCallback(() => {
+  setImagePreview('(error loading)');
+}, []);
+
+// Add after the existing Image section:
+{'width' in obj && obj.type === 'image' && imagePreview && (
+  <Section label="Preview">
+    {imagePreview.startsWith('data:') ? (
+      <img
+        src={imagePreview}
+        alt="Extracted image"
+        onError={handleImageError}
+        style={{ maxWidth: '100%', maxHeight: 150, borderRadius: 4, marginTop: 4 }}
+      />
+    ) : (
+      <div style={{ color: '#888', fontSize: 11 }}>{imagePreview}</div>
+    )}
+  </Section>
+)}
+```
+
+- [ ] **Step 5: Verify Python syntax and TypeScript compile**
+
+Run these commands in order:
 
 ```bash
-git add -A && git commit -m "feat: add PDF.js text layer and image preview"
+python3 -c "import ast; ast.parse(open('sidecar/extractor.py').read()); print('PYTHON OK')"
+```
+Expected: Output `PYTHON OK`. (Confirms the new `_detect_image_format` function and updated `get_image_data` are syntactically valid.)
+
+```bash
+npx tsc --noEmit
+```
+Expected: No type errors. The `useCallback` import is valid, the `toMimeSubtype` function is a plain function (not a hook) so it doesn't violate rules of hooks, and `onError` is a valid HTML img event handler.
+
+```bash
+npm run build
+```
+Expected: Build succeeds, exit code 0.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -A && git commit -m "fix: detect image formats for preview"
 ```
