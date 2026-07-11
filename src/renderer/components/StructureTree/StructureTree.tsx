@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { ipc } from '../../services/ipc-client';
 import { usePdfStore } from '../../store/pdf-store';
 import { PageData, PdfObject, PdfObjectType } from '../../types/pdf-objects';
@@ -50,6 +50,7 @@ const getPageObjects = (data: PageData): PdfObject[] => [
 ];
 
 export const StructureTree: React.FC = () => {
+  const navigationRequestId = useRef(0);
   const filePath = usePdfStore((state) => state.filePath);
   const metadata = usePdfStore((state) => state.metadata);
   const pageCount = usePdfStore((state) => state.pageCount);
@@ -82,23 +83,24 @@ export const StructureTree: React.FC = () => {
     ]
     : [];
 
-  const navigateToPage = async (page: number): Promise<PageData | null> => {
+  const navigateToPage = async (page: number): Promise<{ data: PageData | null; requestId: number } | null> => {
     if (page < 1 || page > pageCount) return null;
 
+    const requestId = ++navigationRequestId.current;
     setError(null);
     setLoading(true);
     setPage(page);
 
     try {
       const data = await ipc.extractPage(page);
-      setPageData(data);
-      return data;
+      if (requestId === navigationRequestId.current) setPageData(data);
+      return { data, requestId };
     } catch (error) {
       console.error('Failed to load page data:', error);
-      setError('Failed to load page data. Please try again.');
-      return null;
+      if (requestId === navigationRequestId.current) setError('Failed to load page data. Please try again.');
+      return { data: null, requestId };
     } finally {
-      setLoading(false);
+      if (requestId === navigationRequestId.current) setLoading(false);
     }
   };
 
@@ -108,9 +110,9 @@ export const StructureTree: React.FC = () => {
       return;
     }
 
-    const data = await navigateToPage(object.page);
-    const freshObject = data && getPageObjects(data).find((candidate) => objectsMatch(candidate, object));
-    if (freshObject) setSelectedObject(freshObject);
+    const result = await navigateToPage(object.page);
+    const freshObject = result?.data && getPageObjects(result.data).find((candidate) => objectsMatch(candidate, object));
+    if (freshObject && result.requestId === navigationRequestId.current) setSelectedObject(freshObject);
   };
 
   return (
