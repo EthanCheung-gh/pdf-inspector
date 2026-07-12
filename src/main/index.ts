@@ -3,7 +3,7 @@ import { execSync } from 'child_process';
 import * as path from 'path';
 import { SidecarManager } from './sidecar';
 import { registerIpcHandlers } from './ipc-handlers';
-import { getPythonCandidates } from '../shared/python-resolver';
+import { getPythonCandidates, setSelectedPython } from '../shared/python-resolver';
 
 let mainWindow: BrowserWindow | null = null;
 const sidecar = new SidecarManager();
@@ -13,6 +13,7 @@ function checkPythonAvailable(): boolean {
     try {
       const command = [candidate.command, ...candidate.args, '--version'].join(' ');
       execSync(command, { stdio: 'pipe' });
+      setSelectedPython(candidate);
       return true;
     } catch {
       // Try the next candidate.
