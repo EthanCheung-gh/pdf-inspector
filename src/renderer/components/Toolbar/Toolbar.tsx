@@ -1,5 +1,6 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useRef } from 'react';
 import { ipc } from '../../services/ipc-client';
+import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { usePdfStore } from '../../store/pdf-store';
 import styles from './Toolbar.module.css';
 
@@ -14,6 +15,7 @@ const OVERLAYS = [
 ] as const;
 
 export const Toolbar: React.FC = () => {
+  const openRequestIdRef = useRef(0);
   const currentPage = usePdfStore((state) => state.currentPage);
   const pageCount = usePdfStore((state) => state.pageCount);
   const zoom = usePdfStore((state) => state.zoom);
@@ -21,47 +23,33 @@ export const Toolbar: React.FC = () => {
   const isLoading = usePdfStore((state) => state.isLoading);
   const filePath = usePdfStore((state) => state.filePath);
   const setFile = usePdfStore((state) => state.setFile);
-  const setPage = usePdfStore((state) => state.setPage);
   const setZoom = usePdfStore((state) => state.setZoom);
-  const setPageData = usePdfStore((state) => state.setPageData);
   const setLoading = usePdfStore((state) => state.setLoading);
   const setError = usePdfStore((state) => state.setError);
   const toggleOverlay = usePdfStore((state) => state.toggleOverlay);
+  const { navigate } = usePageNavigation();
 
   const handleOpen = useCallback(async () => {
+    const openRequestId = ++openRequestIdRef.current;
     setError(null);
     setLoading(true);
     try {
       const result = await ipc.openPdf();
-      if (result.canceled) return;
+      if (openRequestId !== openRequestIdRef.current) return;
+      if (result.canceled) {
+        setLoading(false);
+        return;
+      }
 
       setFile(result.path, result.metadata);
-      const pageData = await ipc.extractPage(1);
-      setPageData(pageData);
+      await navigate(1);
     } catch (error) {
+      if (openRequestId !== openRequestIdRef.current) return;
       console.error('Failed to open PDF:', error);
       setError(error instanceof Error ? error.message : 'Failed to open PDF');
-    } finally {
       setLoading(false);
     }
-  }, [setError, setFile, setLoading, setPageData]);
-
-  const navigateToPage = useCallback(async (page: number) => {
-    if (page < 1 || page > pageCount) return;
-
-    setError(null);
-    setLoading(true);
-    try {
-      setPage(page);
-      const pageData = await ipc.extractPage(page);
-      setPageData(pageData);
-    } catch (error) {
-      console.error('Failed to navigate to page:', error);
-      setError(error instanceof Error ? error.message : 'Failed to load page');
-    } finally {
-      setLoading(false);
-    }
-  }, [pageCount, setError, setLoading, setPage, setPageData]);
+  }, [navigate, setError, setFile, setLoading]);
 
   const filename = filePath?.split(/[\\/]/).pop() ?? 'No file open';
 
@@ -77,7 +65,7 @@ export const Toolbar: React.FC = () => {
         <button
           className={styles.button}
           type="button"
-          onClick={() => navigateToPage(currentPage - 1)}
+          onClick={() => void navigate(currentPage - 1)}
           disabled={isLoading || currentPage <= 1}
         >
           Prev
@@ -86,7 +74,7 @@ export const Toolbar: React.FC = () => {
         <button
           className={styles.button}
           type="button"
-          onClick={() => navigateToPage(currentPage + 1)}
+          onClick={() => void navigate(currentPage + 1)}
           disabled={isLoading || currentPage >= pageCount}
         >
           Next

@@ -1,5 +1,5 @@
-import React, { useRef } from 'react';
-import { ipc } from '../../services/ipc-client';
+import React from 'react';
+import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { usePdfStore } from '../../store/pdf-store';
 import { PageData, PdfObject, PdfObjectType } from '../../types/pdf-objects';
 import styles from './StructureTree.module.css';
@@ -50,18 +50,14 @@ const getPageObjects = (data: PageData): PdfObject[] => [
 ];
 
 export const StructureTree: React.FC = () => {
-  const navigationRequestId = useRef(0);
   const filePath = usePdfStore((state) => state.filePath);
   const metadata = usePdfStore((state) => state.metadata);
   const pageCount = usePdfStore((state) => state.pageCount);
   const currentPage = usePdfStore((state) => state.currentPage);
   const pageData = usePdfStore((state) => state.pageData);
   const selectedObject = usePdfStore((state) => state.selectedObject);
-  const setPage = usePdfStore((state) => state.setPage);
-  const setPageData = usePdfStore((state) => state.setPageData);
   const setSelectedObject = usePdfStore((state) => state.setSelectedObject);
-  const setLoading = usePdfStore((state) => state.setLoading);
-  const setError = usePdfStore((state) => state.setError);
+  const { navigate } = usePageNavigation();
 
   if (!filePath || !metadata || pageCount === 0) {
     return (
@@ -83,36 +79,17 @@ export const StructureTree: React.FC = () => {
     ]
     : [];
 
-  const navigateToPage = async (page: number): Promise<{ data: PageData | null; requestId: number } | null> => {
-    if (page < 1 || page > pageCount) return null;
-
-    const requestId = ++navigationRequestId.current;
-    setError(null);
-    setLoading(true);
-    setPage(page);
-
-    try {
-      const data = await ipc.extractPage(page);
-      if (requestId === navigationRequestId.current) setPageData(data);
-      return { data, requestId };
-    } catch (error) {
-      console.error('Failed to load page data:', error);
-      if (requestId === navigationRequestId.current) setError('Failed to load page data. Please try again.');
-      return { data: null, requestId };
-    } finally {
-      if (requestId === navigationRequestId.current) setLoading(false);
-    }
-  };
-
   const handleObjectClick = async (object: PdfObject): Promise<void> => {
     if (object.page === currentPage) {
       setSelectedObject(object);
       return;
     }
 
-    const result = await navigateToPage(object.page);
-    const freshObject = result?.data && getPageObjects(result.data).find((candidate) => objectsMatch(candidate, object));
-    if (freshObject && result.requestId === navigationRequestId.current) setSelectedObject(freshObject);
+    await navigate(object.page);
+    const freshData = usePdfStore.getState().pageData;
+    if (usePdfStore.getState().currentPage !== object.page || !freshData) return;
+    const freshObject = getPageObjects(freshData).find((candidate) => objectsMatch(candidate, object));
+    if (freshObject) setSelectedObject(freshObject);
   };
 
   return (
@@ -128,7 +105,7 @@ export const StructureTree: React.FC = () => {
               <button
                 className={`${styles.pageButton} ${isActive ? styles.activePage : ''}`}
                 type="button"
-                onClick={() => void navigateToPage(pageNumber)}
+                onClick={() => void navigate(pageNumber)}
                 aria-current={isActive ? 'page' : undefined}
               >
                 <span className={styles.pageIcon}>▸</span>
