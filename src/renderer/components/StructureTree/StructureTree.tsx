@@ -60,12 +60,7 @@ export const StructureTree: React.FC = () => {
   const { navigate } = usePageNavigation();
 
   if (!filePath || !metadata || pageCount === 0) {
-    return (
-      <aside className={styles.panel} aria-label="Document structure">
-        <h2 className={styles.title}>Structure</h2>
-        <div className={styles.emptyState}>Open a PDF to view its structure.</div>
-      </aside>
-    );
+    return <div className={styles.emptyState}>Open a PDF to view its structure.</div>;
   }
 
   const groups: ObjectGroup[] = pageData
@@ -85,41 +80,42 @@ export const StructureTree: React.FC = () => {
       return;
     }
 
+    const dataBefore = usePdfStore.getState().pageData;
     await navigate(object.page);
+
     const freshData = usePdfStore.getState().pageData;
-    if (usePdfStore.getState().currentPage !== object.page || !freshData) return;
-    const freshObject = getPageObjects(freshData).find((candidate) => objectsMatch(candidate, object));
-    if (freshObject) setSelectedObject(freshObject);
+    if (freshData && freshData !== dataBefore) {
+      const freshObject = getPageObjects(freshData).find((candidate) => objectsMatch(candidate, object));
+      if (freshObject) setSelectedObject(freshObject);
+    }
   };
 
   return (
-    <aside className={styles.panel} aria-label="Document structure">
-      <h2 className={styles.title}>Structure</h2>
-      <nav className={styles.tree} aria-label="PDF page structure">
-        {Array.from({ length: pageCount }, (_, index) => {
-          const pageNumber = index + 1;
-          const isActive = pageNumber === currentPage;
+    <nav className={styles.tree} aria-label="PDF page structure">
+      {Array.from({ length: pageCount }, (_, index) => {
+        const pageNumber = index + 1;
+        const isActive = pageNumber === currentPage;
 
-          return (
-            <div className={styles.page} key={pageNumber}>
-              <button
-                className={`${styles.pageButton} ${isActive ? styles.activePage : ''}`}
-                type="button"
-                onClick={() => void navigate(pageNumber)}
-                aria-current={isActive ? 'page' : undefined}
-              >
-                <span className={styles.pageIcon}>▸</span>
-                Page {pageNumber}
-              </button>
+        return (
+          <div className={styles.page} key={pageNumber}>
+            <button
+              className={`${styles.pageButton} ${isActive ? styles.activePage : ''}`}
+              type="button"
+              onClick={() => void navigate(pageNumber)}
+              aria-current={isActive ? 'page' : undefined}
+            >
+              <span className={styles.pageIcon}>▸</span>
+              Page {pageNumber}
+            </button>
 
-              {isActive && pageData && (
-                <div className={styles.groups}>
-                  {groups.map((group) => {
-                    const type = group.objects[0]?.type;
-                    const visibleObjects = type ? getVisibleObjects(type, group.objects) : [];
+            {isActive && pageData && (
+              <div className={styles.groups}>
+                {groups.map((group) => {
+                  const type = group.objects[0]?.type;
+                  const visibleObjects = type ? getVisibleObjects(type, group.objects) : [];
 
-                    return (
-                      <section className={styles.group} key={group.label}>
+                  return (
+                    <section className={styles.group} key={group.label}>
                         <div className={styles.groupHeader}>
                           <span className={styles.groupIcon} aria-hidden="true">{group.icon}</span>
                           <span>{group.label}</span>
@@ -141,15 +137,14 @@ export const StructureTree: React.FC = () => {
                             </button>
                           );
                         })}
-                      </section>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </nav>
-    </aside>
+                    </section>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </nav>
   );
 };
