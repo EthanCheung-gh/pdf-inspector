@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { usePdfStore } from '../store/pdf-store';
+import type { PdfOutlineItem } from '../types/pdf-objects';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -29,6 +30,7 @@ export function usePdf(): UsePdfReturn {
         pdfRef.current = null;
       }
       usePdfStore.getState().setPdfDocRef(null);
+      usePdfStore.getState().setOutline(null);
     };
   }, []);
 
@@ -58,7 +60,8 @@ export function usePdf(): UsePdfReturn {
       try {
         const outline = await doc.getOutline();
         if (loadId === loadIdRef.current) {
-          store.setOutline(outline as any);
+          // The renderer only needs the common outline fields declared in PdfOutlineItem.
+          store.setOutline(outline as unknown as PdfOutlineItem[] | null);
         }
       } catch (outlineErr) {
         console.warn('Failed to load PDF outline:', outlineErr);

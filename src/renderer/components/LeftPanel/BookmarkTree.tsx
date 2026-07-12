@@ -18,7 +18,7 @@ export const BookmarkTree: React.FC<BookmarkTreeProps> = ({ pdfDoc }) => {
 
   const handleBookmarkClick = useCallback(
     async (dest: string | unknown[] | null) => {
-      if (!dest || !pdfDoc) return;
+      if (!dest || !pdfDoc || (Array.isArray(dest) && dest.length === 0)) return;
 
       try {
         let pageIndex: number;

@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import { InspectorPanel } from './components/InspectorPanel/InspectorPanel';
+import { LeftPanel } from './components/LeftPanel/LeftPanel';
 import { PdfViewport } from './components/PdfViewport/PdfViewport';
 import { StatusBar } from './components/StatusBar/StatusBar';
-import { StructureTree } from './components/StructureTree/StructureTree';
 import { Toolbar } from './components/Toolbar/Toolbar';
 import { ipc } from './services/ipc-client';
 import { usePdfStore } from './store/pdf-store';
@@ -13,6 +13,8 @@ const SIDECAR_STATUS_POLL_INTERVAL_MS = 5_000;
 const App = (): JSX.Element => {
   const setSidecarRunning = usePdfStore((state) => state.setSidecarRunning);
   const clearSelection = usePdfStore((state) => state.clearSelection);
+  const textSelectionMode = usePdfStore((state) => state.textSelectionMode);
+  const setTextSelectionMode = usePdfStore((state) => state.setTextSelectionMode);
 
   useEffect(() => {
     const updateSidecarStatus = async (): Promise<void> => {
@@ -32,18 +34,24 @@ const App = (): JSX.Element => {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') clearSelection();
+      if (event.key === 'Escape') {
+        clearSelection();
+        return;
+      }
+      if ((event.key === 't' || event.key === 'T') && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        setTextSelectionMode(!textSelectionMode);
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [clearSelection]);
+  }, [clearSelection, setTextSelectionMode, textSelectionMode]);
 
   return (
     <div className={styles.app}>
       <Toolbar />
       <main className={styles.main}>
-        <StructureTree />
+        <LeftPanel />
         <PdfViewport />
         <InspectorPanel />
       </main>
