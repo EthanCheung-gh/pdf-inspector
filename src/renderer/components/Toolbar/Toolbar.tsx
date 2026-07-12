@@ -19,13 +19,17 @@ export const Toolbar: React.FC = () => {
   const currentPage = usePdfStore((state) => state.currentPage);
   const pageCount = usePdfStore((state) => state.pageCount);
   const zoom = usePdfStore((state) => state.zoom);
+  const fitWidthZoom = usePdfStore((state) => state.fitWidthZoom);
   const overlayVisibility = usePdfStore((state) => state.overlayVisibility);
   const isLoading = usePdfStore((state) => state.isLoading);
   const filePath = usePdfStore((state) => state.filePath);
+  const textSelectionMode = usePdfStore((state) => state.textSelectionMode);
   const setFile = usePdfStore((state) => state.setFile);
   const setZoom = usePdfStore((state) => state.setZoom);
   const setLoading = usePdfStore((state) => state.setLoading);
   const setError = usePdfStore((state) => state.setError);
+  const setFitWidthZoom = usePdfStore((state) => state.setFitWidthZoom);
+  const setTextSelectionMode = usePdfStore((state) => state.setTextSelectionMode);
   const toggleOverlay = usePdfStore((state) => state.toggleOverlay);
   const { navigate } = usePageNavigation();
 
@@ -50,6 +54,16 @@ export const Toolbar: React.FC = () => {
       setLoading(false);
     }
   }, [navigate, setError, setFile, setLoading]);
+
+  const handleFitWidth = useCallback(() => {
+    if (fitWidthZoom !== null) {
+      setFitWidthZoom(fitWidthZoom);
+    }
+  }, [fitWidthZoom, setFitWidthZoom]);
+
+  const handleTextSelectionToggle = useCallback(() => {
+    setTextSelectionMode(!textSelectionMode);
+  }, [setTextSelectionMode, textSelectionMode]);
 
   const filename = filePath?.split(/[\\/]/).pop() ?? 'No file open';
 
@@ -101,6 +115,15 @@ export const Toolbar: React.FC = () => {
         >
           +
         </button>
+        <button
+          className={`${styles.button} ${fitWidthZoom !== null && Math.abs(zoom - fitWidthZoom) < 0.01 ? styles.active : ''}`}
+          type="button"
+          onClick={handleFitWidth}
+          disabled={fitWidthZoom === null}
+          title="Fit page width"
+        >
+          Fit W
+        </button>
       </div>
 
       <span className={styles.separator} />
@@ -117,6 +140,20 @@ export const Toolbar: React.FC = () => {
             {label}
           </button>
         ))}
+      </div>
+
+      <span className={styles.separator} />
+
+      <div className={styles.group} role="group" aria-label="Text selection">
+        <button
+          className={`${styles.button} ${textSelectionMode ? styles.active : ''}`}
+          type="button"
+          onClick={handleTextSelectionToggle}
+          aria-pressed={textSelectionMode}
+          title="Toggle text selection mode (T)"
+        >
+          Select Text
+        </button>
       </div>
 
       <div className={styles.spacer} />
