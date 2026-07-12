@@ -78,7 +78,7 @@ export const PdfPage: React.FC<PdfPageProps> = ({ pageNum, zoom, pdfDoc }) => {
   return (
     <div className={styles.pageContainer} style={{ width: pageWidth, height: pageHeight }}>
       <canvas ref={canvasRef} className={styles.canvas} />
-      <TextLayer pageNum={pageNum} pdfDoc={pdfDoc} scale={zoom} width={pageWidth} height={pageHeight} />
+      <TextLayer pageNum={pageNum} pdfDoc={pdfDoc} zoom={zoom} />
       <OverlayCanvas
         pageNum={pageNum}
         pageWidth={pageWidth}
