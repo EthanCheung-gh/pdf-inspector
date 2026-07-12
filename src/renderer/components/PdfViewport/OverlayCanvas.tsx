@@ -22,6 +22,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
   const allObjects = usePdfStore((state) => state.allObjects);
   const pageData = usePdfStore((state) => state.pageData);
   const overlayVisibility = usePdfStore((state) => state.overlayVisibility);
+  const textSelectionMode = usePdfStore((state) => state.textSelectionMode);
   const setHoveredObject = usePdfStore((state) => state.setHoveredObject);
   const setSelectedObject = usePdfStore((state) => state.setSelectedObject);
   const { drawOverlays } = useOverlay();
@@ -31,10 +32,15 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    canvas.width = pageWidth;
-    canvas.height = pageHeight;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = pageWidth * dpr;
+    canvas.height = pageHeight * dpr;
+    canvas.style.width = `${pageWidth}px`;
+    canvas.style.height = `${pageHeight}px`;
+
     const context = canvas.getContext('2d');
     if (context) {
+      context.scale(dpr, dpr);
       drawOverlays(context, allObjects, overlayVisibility, pageWidth, pageHeight, pdfWidth, pdfHeight);
     }
   }, [allObjects, drawOverlays, overlayVisibility, pageData, pageWidth, pageHeight, pdfWidth, pdfHeight]);
@@ -64,7 +70,8 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
         left: 0,
         width: pageWidth,
         height: pageHeight,
-        cursor: 'crosshair',
+        cursor: textSelectionMode ? 'auto' : 'crosshair',
+        pointerEvents: textSelectionMode ? 'none' : 'auto',
       }}
       aria-label={`PDF page ${pageNum} object overlay`}
     />
