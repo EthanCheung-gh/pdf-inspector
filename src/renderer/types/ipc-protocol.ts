@@ -14,4 +14,5 @@ export interface IpcApi {
   extractMetadata(): Promise<PdfMetadata>;
   getImageData(streamId: string): Promise<{ base64?: string; format?: string; error?: string }>;
   getSidecarStatus(): Promise<{ running: boolean }>;
+  restartSidecar(): Promise<{ success: boolean; running: boolean; error?: string }>;
 }

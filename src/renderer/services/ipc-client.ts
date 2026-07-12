@@ -12,4 +12,5 @@ export const ipc = {
   extractMetadata: () => window.pdfInspector.extractMetadata(),
   getImageData: (streamId: string) => window.pdfInspector.getImageData(streamId),
   getSidecarStatus: () => window.pdfInspector.getSidecarStatus(),
+  restartSidecar: () => window.pdfInspector.restartSidecar(),
 };

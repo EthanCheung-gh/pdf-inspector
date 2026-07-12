@@ -5,4 +5,5 @@ export const IPC_CHANNELS = {
   EXTRACT_METADATA: 'pdf:extract-metadata',
   GET_IMAGE_DATA: 'pdf:get-image-data',
   SIDECAR_STATUS: 'pdf:sidecar-status',
+  RESTART_SIDECAR: 'pdf:restart-sidecar',
 } as const;

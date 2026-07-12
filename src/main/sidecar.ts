@@ -222,4 +222,31 @@ export class SidecarManager {
     this.process?.kill();
     this.process = null;
   }
+
+  /**
+   * Restart the sidecar subprocess and wait for its ready signal.
+   * Pending requests are rejected so callers do not wait on the old process.
+   */
+  async restart(): Promise<void> {
+    this.autoRestartEnabled = false;
+    this.restarting = true;
+
+    try {
+      if (this.isRunning()) {
+        try {
+          await this.send('shutdown');
+        } catch {
+          // The process may already be unhealthy; force it to stop below.
+        }
+        this.process?.kill();
+        this.process = null;
+      }
+
+      this.rejectPendingRequests(new Error('Sidecar is restarting'));
+      this.autoRestartEnabled = true;
+      await this.start();
+    } finally {
+      this.restarting = false;
+    }
+  }
 }

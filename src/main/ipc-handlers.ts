@@ -2,6 +2,9 @@ import { ipcMain, dialog, BrowserWindow } from 'electron';
 import { SidecarManager } from './sidecar';
 import { IPC_CHANNELS } from '../shared/constants';
 
+/** Tracks the open PDF so a restarted sidecar can restore its document state. */
+let currentFilePath: string | null = null;
+
 export function registerIpcHandlers(sidecar: SidecarManager): void {
   ipcMain.handle(IPC_CHANNELS.OPEN_PDF, async () => {
     const win = BrowserWindow.getFocusedWindow();
@@ -19,7 +22,21 @@ export function registerIpcHandlers(sidecar: SidecarManager): void {
 
     const filePath = result.filePaths[0];
     const meta = await sidecar.send('open', { path: filePath });
+    currentFilePath = filePath;
     return { canceled: false, path: filePath, metadata: meta };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.RESTART_SIDECAR, async () => {
+    try {
+      await sidecar.restart();
+      if (currentFilePath) {
+        await sidecar.send('open', { path: currentFilePath });
+      }
+      return { success: true, running: sidecar.isRunning() };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : 'Unknown error';
+      return { success: false, running: sidecar.isRunning(), error };
+    }
   });
 
   ipcMain.handle(IPC_CHANNELS.EXTRACT_PAGE, async (_event, page: number) => {
