@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { PdfObject, PdfMetadata, PageData } from '../types/pdf-objects';
+import { PdfObject, PdfMetadata, PageData, PdfOutlineItem } from '../types/pdf-objects';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 export interface PdfState {
   // File state
@@ -23,6 +24,19 @@ export interface PdfState {
   sidecarRunning: boolean;
   error: string | null;
 
+  // PDF.js document reference (shared for outline destination resolution)
+  pdfDocRef: PDFDocumentProxy | null;
+
+  // Outline / bookmarks
+  outline: PdfOutlineItem[] | null;
+
+  // Fit-width zoom
+  fitWidthZoom: number | null;
+  initialFitWidthZoom: boolean;
+
+  // Text selection mode
+  textSelectionMode: boolean;
+
   // Actions
   setFile: (path: string, meta: PdfMetadata) => void;
   setPage: (page: number) => void;
@@ -35,6 +49,10 @@ export interface PdfState {
   setSidecarRunning: (running: boolean) => void;
   setError: (error: string | null) => void;
   clearSelection: () => void;
+  setPdfDocRef: (doc: PDFDocumentProxy | null) => void;
+  setOutline: (outline: PdfOutlineItem[] | null) => void;
+  setFitWidthZoom: (zoom: number | null) => void;
+  setTextSelectionMode: (mode: boolean) => void;
 }
 
 export const usePdfStore = create<PdfState>((set, get) => ({
@@ -62,6 +80,11 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   isLoading: false,
   sidecarRunning: false,
   error: null,
+  pdfDocRef: null,
+  outline: null,
+  fitWidthZoom: null,
+  initialFitWidthZoom: false,
+  textSelectionMode: false,
 
   setFile: (path, meta) =>
     set({
@@ -74,6 +97,10 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       hoveredObject: null,
       selectedObject: null,
       error: null,
+      pdfDocRef: null,
+      outline: null,
+      fitWidthZoom: null,
+      initialFitWidthZoom: false,
     }),
 
   setPage: (page) => set({ currentPage: page, pageData: null, hoveredObject: null, selectedObject: null }),
@@ -109,4 +136,16 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   setSidecarRunning: (running) => set({ sidecarRunning: running }),
   setError: (error) => set({ error }),
   clearSelection: () => set({ hoveredObject: null, selectedObject: null }),
+  setPdfDocRef: (doc) => set({ pdfDocRef: doc }),
+  setOutline: (outline) => set({ outline }),
+  setFitWidthZoom: (zoom) => {
+    if (zoom === null) {
+      set({ fitWidthZoom: null });
+      return;
+    }
+
+    const clamped = Math.max(0.25, Math.min(5, zoom));
+    set({ fitWidthZoom: clamped, zoom: clamped });
+  },
+  setTextSelectionMode: (mode) => set({ textSelectionMode: mode }),
 }));

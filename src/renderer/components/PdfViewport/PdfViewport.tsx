@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { usePdfStore } from '../../store/pdf-store';
 import { usePdf } from '../../hooks/usePdf';
+import { pathToFileUrl } from '../../../shared/path-utils';
 import { PdfPage } from './PdfPage';
 import styles from './PdfViewport.module.css';
 
@@ -14,7 +15,7 @@ export const PdfViewport: React.FC = () => {
   // Load PDF document once when filePath changes
   useEffect(() => {
     if (filePath) {
-      loadPdf(`file://${filePath}`);
+      loadPdf(pathToFileUrl(filePath));
     }
   }, [filePath, loadPdf]);
 

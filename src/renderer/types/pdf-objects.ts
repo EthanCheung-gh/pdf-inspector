@@ -85,3 +85,11 @@ export interface PdfMetadata {
   producer: string;
   fonts: string[];
 }
+
+export interface PdfOutlineItem {
+  title: string;
+  bold: boolean;
+  italic: boolean;
+  dest: string | unknown[] | null;
+  items: PdfOutlineItem[];
+}

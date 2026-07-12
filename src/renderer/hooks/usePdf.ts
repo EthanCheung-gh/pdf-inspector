@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
+import { usePdfStore } from '../store/pdf-store';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -28,16 +29,20 @@ export function usePdf(): UsePdfReturn {
         pdfRef.current.destroy();
         pdfRef.current = null;
       }
+      usePdfStore.getState().setPdfDocRef(null);
     };
   }, []);
 
   const loadPdf = useCallback(async (url: string) => {
     const loadId = ++loadIdRef.current;
+    const store = usePdfStore.getState();
     setLoading(true);
     setError(null);
     try {
       if (pdfRef.current) {
         pdfRef.current.destroy();
+        pdfRef.current = null;
+        store.setPdfDocRef(null);
       }
       const doc = await pdfjsLib.getDocument(url).promise;
       if (loadId !== loadIdRef.current) {
@@ -46,6 +51,7 @@ export function usePdf(): UsePdfReturn {
       }
       pdfRef.current = doc;
       setPdfDoc(doc);
+      store.setPdfDocRef(doc);
     } catch (err) {
       if (loadId !== loadIdRef.current) return;
       setError(err instanceof Error ? err.message : 'Failed to load PDF');
