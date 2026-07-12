@@ -11,7 +11,6 @@ interface UsePdfReturn {
   pdfDoc: pdfjsLib.PDFDocumentProxy | null;
   loading: boolean;
   error: string | null;
-  renderPage: (pageNum: number, canvas: HTMLCanvasElement, scale: number) => Promise<void>;
   loadPdf: (url: string) => Promise<void>;
 }
 
@@ -38,6 +37,8 @@ export function usePdf(): UsePdfReturn {
     const store = usePdfStore.getState();
     setLoading(true);
     setError(null);
+    store.setLoading(true);
+
     try {
       if (pdfRef.current) {
         pdfRef.current.destroy();
@@ -52,29 +53,51 @@ export function usePdf(): UsePdfReturn {
       pdfRef.current = doc;
       setPdfDoc(doc);
       store.setPdfDocRef(doc);
+
+      // Load outline (bookmarks) after document is ready
+      try {
+        const outline = await doc.getOutline();
+        if (loadId === loadIdRef.current) {
+          store.setOutline(outline as any);
+        }
+      } catch (outlineErr) {
+        console.warn('Failed to load PDF outline:', outlineErr);
+        if (loadId === loadIdRef.current) {
+          store.setOutline(null);
+        }
+      }
+
+      // Calculate fit-width zoom from first page
+      try {
+        const firstPage = await doc.getPage(1);
+        const viewport = firstPage.getViewport({ scale: 1 });
+        const H_PADDING = 48; // 24px each side
+        const containerWidth = store.fitWidthZoom
+          ? (window.innerWidth - 220 - 300) // viewport area: total width minus left panel minus inspector
+          : window.innerWidth - 220; // rough estimate
+
+        const availableWidth = Math.max(containerWidth - H_PADDING, 200);
+        const fitWidthZoom = availableWidth / viewport.width;
+        const clamped = Math.max(0.25, Math.min(5, fitWidthZoom));
+
+        if (loadId === loadIdRef.current) {
+          store.setFitWidthZoom(clamped);
+        }
+      } catch (zoomErr) {
+        console.warn('Failed to calculate fit-width zoom:', zoomErr);
+      }
     } catch (err) {
       if (loadId !== loadIdRef.current) return;
-      setError(err instanceof Error ? err.message : 'Failed to load PDF');
+      const message = err instanceof Error ? err.message : 'Failed to load PDF';
+      setError(message);
+      store.setError(message);
     } finally {
       if (loadId === loadIdRef.current) {
         setLoading(false);
+        store.setLoading(false);
       }
     }
   }, []);
 
-  const renderPage = useCallback(async (pageNum: number, canvas: HTMLCanvasElement, scale: number) => {
-    if (!pdfRef.current) return;
-    try {
-      const page = await pdfRef.current.getPage(pageNum);
-      const viewport = page.getViewport({ scale });
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      const ctx = canvas.getContext('2d')!;
-      await page.render({ canvasContext: ctx, viewport }).promise;
-    } catch (err) {
-      console.error('Page render error:', err);
-    }
-  }, []);
-
-  return { pdfDoc, loading, error, renderPage, loadPdf };
+  return { pdfDoc, loading, error, loadPdf };
 }
