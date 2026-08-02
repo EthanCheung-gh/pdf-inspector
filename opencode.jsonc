@@ -8,9 +8,9 @@
       "model": "deepseek/deepseek-v4-flash"
     },
 
-    // 🔧 Build/implementer — GPT 5.5
+    // 🔧 Build/implementer — Kimi K3
     "superpowers-implementer": {
-      "model": "openai/gpt-5.5"
+      "model": "kimi/kimi-k3"
     },
 
     // 👁️ Code reviewer — Deepseek V4 Pro
@@ -21,6 +21,14 @@
     // 🔍 Explore agent — Deepseek V4 Flash
     "explore": {
       "model": "deepseek/deepseek-v4-flash"
+    },
+
+    // Built-in agents mirror the same routing.
+    "plan": {
+      "model": "deepseek/deepseek-v4-flash"
+    },
+    "build": {
+      "model": "kimi/kimi-k3"
     }
   }
 }
