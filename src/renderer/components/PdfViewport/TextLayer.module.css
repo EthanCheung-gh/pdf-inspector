@@ -11,3 +11,13 @@
 .textLayer :global(::selection) {
   background: rgba(0, 0, 255, 0.3);
 }
+
+.textLayer :global(.searchMatch) {
+  background: rgba(255, 235, 59, 0.4);
+  border-radius: 2px;
+}
+
+.textLayer :global(.searchMatchCurrent) {
+  background: rgba(255, 152, 0, 0.6);
+  border-radius: 2px;
+}
