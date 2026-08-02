@@ -3,6 +3,7 @@ import { ipc } from '../../services/ipc-client';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { usePdfStore } from '../../store/pdf-store';
 import { SearchBox } from './SearchBox';
+import { ExportMenu } from './ExportMenu';
 import styles from './Toolbar.module.css';
 
 const OVERLAYS = [
@@ -158,6 +159,7 @@ export const Toolbar: React.FC = () => {
       </div>
 
       <div className={styles.spacer} />
+      <ExportMenu />
       <SearchBox />
       <span className={styles.filename} title={filePath ?? undefined}>{filename}</span>
     </header>

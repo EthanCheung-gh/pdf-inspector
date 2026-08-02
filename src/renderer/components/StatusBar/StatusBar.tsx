@@ -7,6 +7,7 @@ export const StatusBar = (): JSX.Element => {
   const pageCount = usePdfStore((state) => state.pageCount);
   const objectCount = usePdfStore((state) => state.allObjects.length);
   const sidecarRunning = usePdfStore((state) => state.sidecarRunning);
+  const exportProgress = usePdfStore((state) => state.exportProgress);
   const error = usePdfStore((state) => state.error);
 
   return (
@@ -14,6 +15,11 @@ export const StatusBar = (): JSX.Element => {
       <span className={styles.documentStatus}>
         {isLoading ? 'Loading…' : `Page ${currentPage}/${pageCount} · ${objectCount} objects`}
       </span>
+      {exportProgress && (
+        <span className={styles.documentStatus}>
+          Exporting {exportProgress.done}/{exportProgress.total}…
+        </span>
+      )}
       {error && <span className={styles.error} role="alert">Error: {error}</span>}
       <span className={styles.spacer} />
       <span className={sidecarRunning ? styles.connected : styles.offline}>
