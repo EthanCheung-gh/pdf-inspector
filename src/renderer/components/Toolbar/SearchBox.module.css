@@ -1,0 +1,50 @@
+.searchBox {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.input {
+  width: 160px;
+  padding: 4px 8px;
+  color: #d7dce2;
+  background: #2a3139;
+  border: 1px solid #414954;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.input:focus {
+  outline: none;
+  border-color: #5b9cff;
+}
+
+.count {
+  min-width: 36px;
+  text-align: center;
+  font-size: 12px;
+  color: #aeb7c2;
+  font-variant-numeric: tabular-nums;
+}
+
+.button {
+  padding: 5px 9px;
+  color: #d7dce2;
+  background: #2a3139;
+  border: 1px solid #414954;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.button:hover:not(:disabled) {
+  background: #353e49;
+}
+
+.button:disabled {
+  color: #7b8490;
+  background: #252b32;
+  border-color: #343a42;
+  cursor: not-allowed;
+}
