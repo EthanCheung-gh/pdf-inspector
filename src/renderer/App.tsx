@@ -34,6 +34,13 @@ const App = (): JSX.Element => {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
+      if ((event.ctrlKey || event.metaKey) && (event.key === 'f' || event.key === 'F')) {
+        event.preventDefault();
+        if (usePdfStore.getState().pageCount > 0) {
+          usePdfStore.getState().setSearchOpen(true);
+        }
+        return;
+      }
       if (event.key === 'Escape') {
         clearSelection();
         return;

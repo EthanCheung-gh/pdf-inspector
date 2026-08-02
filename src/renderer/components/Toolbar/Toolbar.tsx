@@ -2,6 +2,7 @@ import React, { useCallback, useRef } from 'react';
 import { ipc } from '../../services/ipc-client';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { usePdfStore } from '../../store/pdf-store';
+import { SearchBox } from './SearchBox';
 import styles from './Toolbar.module.css';
 
 const OVERLAYS = [
@@ -157,6 +158,7 @@ export const Toolbar: React.FC = () => {
       </div>
 
       <div className={styles.spacer} />
+      <SearchBox />
       <span className={styles.filename} title={filePath ?? undefined}>{filename}</span>
     </header>
   );
