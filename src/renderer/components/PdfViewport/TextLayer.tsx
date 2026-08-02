@@ -19,9 +19,12 @@ interface HighlightRange {
 /**
  * Wrap matched character ranges in highlight spans. Matches are
  * non-overlapping (see findMatches), so sorted ranges never intersect.
+ * `divs` must be the PdfjsTextLayer's `textDivs` array — it is parallel
+ * to `textContentItemsStr`, which the search index mirrors, so offsets
+ * line up even with <br> siblings, empty items and markedContent wrappers.
  */
 function applyHighlights(
-  container: HTMLElement,
+  divs: HTMLElement[],
   matches: SearchMatch[],
   currentIndex: number,
   pageNum: number,
@@ -31,7 +34,6 @@ function applyHighlights(
     .filter(({ match }) => match.page === pageNum);
   if (pageMatches.length === 0) return;
 
-  const divs = Array.from(container.children) as HTMLElement[];
   const divTexts = divs.map((d) => d.textContent ?? '');
 
   const perDiv = new Map<number, HighlightRange[]>();
@@ -71,6 +73,7 @@ function applyHighlights(
 
 export const TextLayer: React.FC<TextLayerProps> = ({ pageNum, pdfDoc, zoom }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const textLayerRef = useRef<PdfjsTextLayer | null>(null);
   const textSelectionMode = usePdfStore((s) => s.textSelectionMode);
   const searchMatches = usePdfStore((s) => s.searchMatches);
   const currentMatchIndex = usePdfStore((s) => s.currentMatchIndex);
@@ -102,10 +105,11 @@ export const TextLayer: React.FC<TextLayerProps> = ({ pageNum, pdfDoc, zoom }) =
         });
         await textLayer.render();
         if (cancelled) return;
+        textLayerRef.current = textLayer;
 
         const s = usePdfStore.getState();
         if (!s.textSelectionMode) {
-          applyHighlights(container, s.searchMatches, s.currentMatchIndex, pageNum);
+          applyHighlights(textLayer.textDivs, s.searchMatches, s.currentMatchIndex, pageNum);
         }
       } catch (error) {
         if (!cancelled) {
@@ -119,6 +123,7 @@ export const TextLayer: React.FC<TextLayerProps> = ({ pageNum, pdfDoc, zoom }) =
     return () => {
       cancelled = true;
       textLayer?.cancel();
+      textLayerRef.current = null;
       container.innerHTML = '';
       container.style.width = '';
       container.style.height = '';
@@ -126,19 +131,14 @@ export const TextLayer: React.FC<TextLayerProps> = ({ pageNum, pdfDoc, zoom }) =
   }, [pageNum, pdfDoc, zoom]);
 
   // Re-apply highlights when the match set or active match changes
-  // without re-rendering the text layer (innerHTML is rebuilt from
-  // the still-intact text: highlights wrap text nodes, so re-running
-  // on an already-highlighted layer is avoided by re-render above;
-  // here we only act when the container has un-highlighted text or
-  // the active class must move).
+  // without re-rendering the text layer. Applying twice is harmless:
+  // applyHighlights only reads textContent, which highlight spans
+  // leave unchanged, and rebuilds each affected div from scratch.
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container || !pdfDoc || textSelectionMode) return;
-    // Skip if a (re)render is about to rebuild the container anyway —
-    // applying twice is harmless because applyHighlights only reads
-    // textContent, which is unchanged by highlight spans.
-    applyHighlights(container, searchMatches, currentMatchIndex, pageNum);
-  }, [searchMatches, currentMatchIndex, pageNum, pdfDoc, textSelectionMode, zoom]);
+    const textLayer = textLayerRef.current;
+    if (!textLayer || textSelectionMode) return;
+    applyHighlights(textLayer.textDivs, searchMatches, currentMatchIndex, pageNum);
+  }, [searchMatches, currentMatchIndex, pageNum, textSelectionMode, zoom]);
 
   return (
     <div

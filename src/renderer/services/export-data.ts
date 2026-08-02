@@ -26,7 +26,7 @@ function csvRow(values: (string | number | boolean)[]): string {
 
 const BBOX = ['page', 'x0', 'y0', 'x1', 'y1'] as const;
 
-/** Single CSV file, one `# <type>` section per object type. */
+/** Single CSV file, one `# <type>` section per object type. BOM-prefixed so Excel decodes UTF-8 correctly. */
 export function pagesToCsv(pages: PageData[]): string {
   const out: string[] = [];
 
@@ -92,7 +92,8 @@ export function pagesToCsv(pages: PageData[]): string {
     });
   }
 
-  return `${out.join('\n')}\n`;
+  // ﻿ prefix so Excel decodes non-ASCII text as UTF-8.
+  return `﻿${out.join('\n')}\n`;
 }
 
 export function suggestFilename(

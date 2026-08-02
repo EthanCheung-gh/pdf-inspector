@@ -56,6 +56,10 @@ describe('pagesToJson', () => {
 describe('pagesToCsv', () => {
   const csv = pagesToCsv([makePage()]);
 
+  it('starts with a UTF-8 BOM so Excel decodes non-ASCII text', () => {
+    expect(csv.charCodeAt(0)).toBe(0xfeff);
+  });
+
   it('contains one section per object type in order', () => {
     const sections = ['# chars', '# words', '# rects', '# lines', '# curves', '# images', '# tables'];
     let last = -1;

@@ -57,8 +57,8 @@ export function registerIpcHandlers(sidecar: SidecarManager): void {
     return { running: sidecar.isRunning() };
   });
 
-  ipcMain.handle(IPC_CHANNELS.SAVE_FILE, async (_event, req: SaveFileRequest) => {
-    const win = BrowserWindow.getFocusedWindow();
+  ipcMain.handle(IPC_CHANNELS.SAVE_FILE, async (event, req: SaveFileRequest) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) throw new Error('No active window');
 
     const result = await dialog.showSaveDialog(win, {

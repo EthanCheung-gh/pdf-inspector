@@ -41,6 +41,11 @@ const App = (): JSX.Element => {
         }
         return;
       }
+      // Ignore shortcuts typed into editable elements (e.g. the search input).
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea'))) {
+        return;
+      }
       if (event.key === 'Escape') {
         clearSelection();
         return;
