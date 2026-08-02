@@ -1,6 +1,8 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron';
+import { writeFile } from 'node:fs/promises';
 import { SidecarManager } from './sidecar';
 import { IPC_CHANNELS } from '../shared/constants';
+import type { SaveFileRequest } from '../shared/constants';
 
 /** Tracks the open PDF so a restarted sidecar can restore its document state. */
 let currentFilePath: string | null = null;
@@ -53,5 +55,27 @@ export function registerIpcHandlers(sidecar: SidecarManager): void {
 
   ipcMain.handle(IPC_CHANNELS.SIDECAR_STATUS, async () => {
     return { running: sidecar.isRunning() };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SAVE_FILE, async (_event, req: SaveFileRequest) => {
+    const win = BrowserWindow.getFocusedWindow();
+    if (!win) throw new Error('No active window');
+
+    const result = await dialog.showSaveDialog(win, {
+      title: 'Export data',
+      defaultPath: req.defaultPath,
+      filters: [{ name: req.filterName, extensions: req.extensions }],
+    });
+
+    if (result.canceled || !result.filePath) {
+      return { canceled: true };
+    }
+
+    try {
+      await writeFile(result.filePath, req.content, 'utf8');
+      return { canceled: false, filePath: result.filePath };
+    } catch (err) {
+      return { canceled: false, error: err instanceof Error ? err.message : 'Unknown error' };
+    }
   });
 }

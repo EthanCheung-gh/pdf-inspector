@@ -1,4 +1,4 @@
-import { IpcApi } from '../types/ipc-protocol';
+import { IpcApi, SaveFileRequest } from '../types/ipc-protocol';
 
 declare global {
   interface Window {
@@ -77,4 +77,5 @@ export const ipc = {
   getImageData: (streamId: string) => callWithTimeout(() => window.pdfInspector.getImageData(streamId), 'getImageData'),
   getSidecarStatus: () => callWithTimeout(() => window.pdfInspector.getSidecarStatus(), 'getSidecarStatus'),
   restartSidecar: () => window.pdfInspector.restartSidecar(),
+  saveFile: (req: SaveFileRequest) => window.pdfInspector.saveFile(req),
 };
