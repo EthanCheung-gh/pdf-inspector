@@ -2,3 +2,6 @@ node_modules/
 dist/
 release/
 .superpowers/
+.codegraph/
+__pycache__/
+*.tsbuildinfo
