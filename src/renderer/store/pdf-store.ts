@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { PdfObject, PdfMetadata, PageData, PdfOutlineItem } from '../types/pdf-objects';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import type { SearchMatch } from '../services/pdf-search';
 
 export interface PdfState {
   // File state
@@ -37,6 +38,15 @@ export interface PdfState {
   // Text selection mode
   textSelectionMode: boolean;
 
+  // Text search
+  searchQuery: string;
+  searchMatches: SearchMatch[];
+  currentMatchIndex: number;
+  searchOpen: boolean;
+
+  // Export progress
+  exportProgress: { done: number; total: number } | null;
+
   // Actions
   setFile: (path: string, meta: PdfMetadata) => void;
   setPage: (page: number) => void;
@@ -53,6 +63,12 @@ export interface PdfState {
   setOutline: (outline: PdfOutlineItem[] | null) => void;
   setFitWidthZoom: (zoom: number | null) => void;
   setTextSelectionMode: (mode: boolean) => void;
+  setSearchQuery: (query: string) => void;
+  setSearchMatches: (matches: SearchMatch[]) => void;
+  setCurrentMatchIndex: (index: number) => void;
+  setSearchOpen: (open: boolean) => void;
+  clearSearch: () => void;
+  setExportProgress: (progress: { done: number; total: number } | null) => void;
 }
 
 export const usePdfStore = create<PdfState>((set, get) => ({
@@ -85,6 +101,11 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   fitWidthZoom: null,
   initialFitWidthZoom: false,
   textSelectionMode: false,
+  searchQuery: '',
+  searchMatches: [],
+  currentMatchIndex: -1,
+  searchOpen: false,
+  exportProgress: null,
 
   setFile: (path, meta) =>
     set({
@@ -101,6 +122,11 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       outline: null,
       fitWidthZoom: null,
       initialFitWidthZoom: false,
+      searchQuery: '',
+      searchMatches: [],
+      currentMatchIndex: -1,
+      searchOpen: false,
+      exportProgress: null,
     }),
 
   setPage: (page) => set({ currentPage: page, pageData: null, hoveredObject: null, selectedObject: null }),
@@ -148,4 +174,11 @@ export const usePdfStore = create<PdfState>((set, get) => ({
     set({ fitWidthZoom: clamped, zoom: clamped });
   },
   setTextSelectionMode: (mode) => set({ textSelectionMode: mode }),
+  setSearchQuery: (query) => set({ searchQuery: query }),
+  setSearchMatches: (matches) => set({ searchMatches: matches }),
+  setCurrentMatchIndex: (index) => set({ currentMatchIndex: index }),
+  setSearchOpen: (open) => set({ searchOpen: open }),
+  clearSearch: () =>
+    set({ searchQuery: '', searchMatches: [], currentMatchIndex: -1, searchOpen: false }),
+  setExportProgress: (progress) => set({ exportProgress: progress }),
 }));

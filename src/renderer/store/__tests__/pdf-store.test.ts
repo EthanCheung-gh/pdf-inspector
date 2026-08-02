@@ -116,3 +116,64 @@ describe('pdf-store', () => {
     expect(state.initialFitWidthZoom).toBe(false);
   });
 });
+
+describe('search state', () => {
+  it('defaults to empty search state', () => {
+    const s = usePdfStore.getState();
+    expect(s.searchQuery).toBe('');
+    expect(s.searchMatches).toEqual([]);
+    expect(s.currentMatchIndex).toBe(-1);
+    expect(s.searchOpen).toBe(false);
+  });
+
+  it('setSearchQuery / setSearchMatches / setCurrentMatchIndex update fields', () => {
+    const s = usePdfStore.getState();
+    s.setSearchQuery('hello');
+    s.setSearchMatches([{ page: 2, begin: 3, length: 5 }]);
+    s.setCurrentMatchIndex(0);
+    const after = usePdfStore.getState();
+    expect(after.searchQuery).toBe('hello');
+    expect(after.searchMatches).toEqual([{ page: 2, begin: 3, length: 5 }]);
+    expect(after.currentMatchIndex).toBe(0);
+  });
+
+  it('clearSearch resets all search fields', () => {
+    const s = usePdfStore.getState();
+    s.setSearchQuery('x');
+    s.setSearchMatches([{ page: 1, begin: 0, length: 1 }]);
+    s.setCurrentMatchIndex(0);
+    s.setSearchOpen(true);
+    s.clearSearch();
+    const after = usePdfStore.getState();
+    expect(after.searchQuery).toBe('');
+    expect(after.searchMatches).toEqual([]);
+    expect(after.currentMatchIndex).toBe(-1);
+    expect(after.searchOpen).toBe(false);
+  });
+
+  it('setFile resets search and export state', () => {
+    const s = usePdfStore.getState();
+    s.setSearchQuery('leftover');
+    s.setSearchMatches([{ page: 1, begin: 0, length: 1 }]);
+    s.setExportProgress({ done: 1, total: 5 });
+    s.setFile('/tmp/a.pdf', {
+      pages: 3, version: '1.7', encrypted: false, page_w: 612, page_h: 792,
+      title: '', author: '', producer: '', fonts: [],
+    });
+    const after = usePdfStore.getState();
+    expect(after.searchQuery).toBe('');
+    expect(after.searchMatches).toEqual([]);
+    expect(after.currentMatchIndex).toBe(-1);
+    expect(after.exportProgress).toBeNull();
+  });
+});
+
+describe('export progress', () => {
+  it('setExportProgress sets and clears', () => {
+    const s = usePdfStore.getState();
+    s.setExportProgress({ done: 2, total: 10 });
+    expect(usePdfStore.getState().exportProgress).toEqual({ done: 2, total: 10 });
+    s.setExportProgress(null);
+    expect(usePdfStore.getState().exportProgress).toBeNull();
+  });
+});
