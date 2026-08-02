@@ -104,7 +104,7 @@ New actions: `setSearchQuery(q)`, `setSearchMatches(matches)`, `setCurrentMatchI
 Pure functions:
 
 - `pagesToJson(pages: PageData[], metadata: PdfMetadata): string` — pretty-printed JSON: `{ metadata, exportedAt, pageCount, pages: [...] }`.
-- `pagesToCsv(pages: PageData[]): string` — single file, one section per object type: a `# chars` header line, then a header row (`page,x0,y0,x1,y1,text,fontname,size`) and data rows; then `# words`, `# rects`, `# lines`, `# curves`, `# tables`, `# images` sections likewise. CSV escaping per RFC 4180 (quote fields containing `,` `"` or newline; double internal quotes). Each row is prefixed with its 1-based page number.
+- `pagesToCsv(pages: PageData[]): string` — single file, one section per object type: a `# chars` header line, then a header row (`page,x0,y0,x1,y1,text,fontname,size`) and data rows; then `# words`, `# rects`, `# lines`, `# curves`, `# images` sections likewise (each prefixed with `page` plus the object's bbox fields). The `# tables` section flattens each table's 2-D `cells` array into rows of `page,table_index,row,col,text`. CSV escaping per RFC 4180 (quote fields containing `,` `"` or newline; double internal quotes). Each row is prefixed with its 1-based page number.
 - `suggestFilename(pdfPath: string, scope: 'page'|'document', page: number, ext: 'json'|'csv'): string` — e.g. `report-p3.json`, `report-all.csv`.
 
 ### 6.2 New file: `src/renderer/components/Toolbar/ExportMenu.tsx` (+ CSS module)
@@ -115,7 +115,7 @@ Pure functions:
   - Whole document → JSON
   - Whole document → CSV
 - Current-page export reads `pageData` from the store directly.
-- Whole-document export loops `ipc.extractPage(page)` for `1..pageCount` (skips pages already cached if a page cache exists), updates `exportProgress` in the store after each page, then serializes and saves.
+- Whole-document export loops `ipc.extractPage(page)` for `1..pageCount` (no page cache exists — every page is fetched through the IPC), updates `exportProgress` in the store after each page, then serializes and saves.
 - Menu closes on selection or outside click; disabled while `isLoading` or an export is running.
 
 ### 6.3 IPC: `saveFile`
