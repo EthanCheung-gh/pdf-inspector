@@ -1,19 +1,33 @@
-appId: com.pdfinspector.app
+appId: com.ethancheung.pdfinspector
 productName: PDF Inspector
 directories:
   output: release
 files:
-  - dist/**/*
+  - dist/**
   - package.json
 extraResources:
-  - from: sidecar/
-    to: sidecar/
+  - from: dist-sidecar
+    to: sidecar
     filter:
-      - "**/*.py"
-      - requirements.txt
-mac:
-  target: dmg
+      - pdf-inspector-sidecar
+      - pdf-inspector-sidecar.exe
 win:
-  target: nsis
+  target:
+    - nsis
+    - portable
+  icon: build/icon.png
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  shortcutName: PDF Inspector
 linux:
-  target: AppImage
+  target:
+    - AppImage
+    - deb
+  icon: build/icon.png
+  category: Office
+mac:
+  target:
+    - dmg
+  icon: build/icon.png
+  category: public.app-category.productivity
