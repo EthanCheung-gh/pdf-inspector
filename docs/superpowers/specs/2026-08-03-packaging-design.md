@@ -108,10 +108,23 @@ POSIX shell script (run via Git Bash on Windows):
 set -e
 cd "$(dirname "$0")/../sidecar"
 
+# Resolve a working Python command (mirrors python-resolver.ts candidate order).
+PYTHON=""
+for candidate in "python3" "py -3" "python"; do
+  if $candidate --version >/dev/null 2>&1; then
+    PYTHON="$candidate"
+    break
+  fi
+done
+if [ -z "$PYTHON" ]; then
+  echo "error: no working Python found (tried: python3, py -3, python)" >&2
+  exit 1
+fi
+
 OUT_DIR="../dist-sidecar"
 rm -rf "$OUT_DIR" build dist
 
-python3 -m PyInstaller \
+$PYTHON -m PyInstaller \
   --onefile \
   --name pdf-inspector-sidecar \
   --collect-all pdfminer \
@@ -125,7 +138,7 @@ python3 -m PyInstaller \
 echo "Frozen sidecar written to $OUT_DIR"
 ```
 
-Prerequisite (documented in `docs/packaging.md`): `pip install pyinstaller` plus `pip install -r sidecar/requirements.txt` in the build environment. On Windows the script runs under Git Bash and `python3` may need to be `py -3`/`python` — the script tries `python3` then falls back to `py -3` then `python` (mirroring `python-resolver.ts` candidate order).
+Prerequisite (documented in `docs/packaging.md`): `pip install pyinstaller` plus `pip install -r sidecar/requirements.txt` in the build environment. On Windows the script runs under Git Bash; the Python candidate fallback (`python3` → `py -3` → `python`) mirrors `python-resolver.ts`.
 
 ### 5.3 Modified: `src/main/sidecar.ts`
 
@@ -178,7 +191,7 @@ Packaged app start: `main` creates `SidecarManager` → `resolveSidecarCommand({
 ## 8. Testing
 
 - `sidecar-command.test.ts` per §5.4 (vitest, `vi.mock` for the python resolver in dev-mode cases).
-- Build validation on the dev machine: `npm run freeze:sidecar` produces a runnable binary (`./dist-sidecar/pdf-inspector-sidecar` responds to a JSON-RPC `sidecar-status`-style smoke check), `npm run dist:linux` produces AppImage + deb in `release/`.
+- Build validation on the dev machine: `npm run freeze:sidecar` produces a binary that starts and stays alive awaiting stdin (no immediate exit or Python traceback), and `npm run dist:linux` produces AppImage + deb in `release/`.
 - Manual verification (per platform, as hosts are available): install on a machine WITHOUT Python → launch → open PDF → extraction/search/export work; portable build runs without install.
 
 ## 9. File Structure
