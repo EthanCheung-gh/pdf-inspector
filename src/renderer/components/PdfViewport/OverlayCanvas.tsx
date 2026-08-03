@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { useHitTest } from '../../hooks/useHitTest';
 import { useOverlay } from '../../hooks/useOverlay';
+import { useRegionSelect } from '../../hooks/useRegionSelect';
 import { usePdfStore } from '../../store/pdf-store';
 
 interface OverlayCanvasProps {
@@ -23,10 +24,13 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
   const pageData = usePdfStore((state) => state.pageData);
   const overlayVisibility = usePdfStore((state) => state.overlayVisibility);
   const textSelectionMode = usePdfStore((state) => state.textSelectionMode);
+  const subset = usePdfStore((state) => state.subset);
+  const regionMode = usePdfStore((state) => state.regionMode);
   const setHoveredObject = usePdfStore((state) => state.setHoveredObject);
   const setSelectedObject = usePdfStore((state) => state.setSelectedObject);
   const { drawOverlays } = useOverlay();
   const { hitTest } = useHitTest();
+  const { handlers, liveRect, dragging } = useRegionSelect(pageWidth, pageHeight, pdfWidth, pdfHeight);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -41,9 +45,9 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
     const context = canvas.getContext('2d');
     if (context) {
       context.scale(dpr, dpr);
-      drawOverlays(context, allObjects, overlayVisibility, pageWidth, pageHeight, pdfWidth, pdfHeight);
+      drawOverlays(context, allObjects, overlayVisibility, pageWidth, pageHeight, pdfWidth, pdfHeight, subset, liveRect);
     }
-  }, [allObjects, drawOverlays, overlayVisibility, pageData, pageWidth, pageHeight, pdfWidth, pdfHeight]);
+  }, [allObjects, drawOverlays, overlayVisibility, pageData, pageWidth, pageHeight, pdfWidth, pdfHeight, subset, liveRect]);
 
   const getHoveredObject = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -61,9 +65,15 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
   return (
     <canvas
       ref={canvasRef}
-      onMouseMove={(event) => setHoveredObject(getHoveredObject(event))}
+      onMouseDown={handlers.onMouseDown}
+      onMouseMove={(event) => {
+        handlers.onMouseMove(event);
+        if (dragging) return;
+        setHoveredObject(getHoveredObject(event));
+      }}
+      onMouseUp={handlers.onMouseUp}
       onClick={() => setSelectedObject(usePdfStore.getState().hoveredObject)}
-      onMouseLeave={() => setHoveredObject(null)}
+      onMouseLeave={() => { if (!dragging) setHoveredObject(null); }}
       style={{
         position: 'absolute',
         top: 0,
