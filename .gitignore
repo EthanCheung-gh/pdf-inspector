@@ -1,6 +1,8 @@
 node_modules/
 dist/
 release/
+dist-sidecar/
+sidecar/build/
 .superpowers/
 .codegraph/
 __pycache__/
