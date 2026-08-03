@@ -2,6 +2,9 @@
   "name": "pdf-inspector",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "vite",
