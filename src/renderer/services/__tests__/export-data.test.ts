@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { PageData, PdfMetadata } from '../../types/pdf-objects';
-import { pagesToCsv, pagesToJson, suggestFilename } from '../export-data';
+import type { PageData, PdfMetadata, PdfObject } from '../../types/pdf-objects';
+import { objectsToCsv, objectsToJson, pagesToCsv, pagesToJson, suggestFilename } from '../export-data';
 
 const metadata: PdfMetadata = {
   pages: 1, version: '1.7', encrypted: false, page_w: 612, page_h: 792,
@@ -100,5 +100,31 @@ describe('suggestFilename', () => {
   it('handles missing path and non-pdf extension', () => {
     expect(suggestFilename(null, 'page', 1, 'json')).toBe('document-p1.json');
     expect(suggestFilename('/a/b.txt', 'document', 1, 'csv')).toBe('b.txt-all.csv');
+  });
+});
+
+const objects: PdfObject[] = [
+  { type: 'char', x0: 0, y0: 1, x1: 2, y1: 3, page: 2, text: 'hi, "there"', fontname: 'Helvetica', size: 12, color: '#000000' },
+  { type: 'rect', x0: 4, y0: 5, x1: 6, y1: 7, page: 2, fill: true, stroke: false, color: '#ff0000', width: 1 },
+];
+
+describe('objectsToJson', () => {
+  it('emits metadata, page, objectCount and objects', () => {
+    const parsed = JSON.parse(objectsToJson(objects, null, 2));
+    expect(parsed.page).toBe(2);
+    expect(parsed.objectCount).toBe(2);
+    expect(parsed.objects[0].text).toBe('hi, "there"');
+  });
+});
+
+describe('objectsToCsv', () => {
+  it('uses the same section headers as pagesToCsv with page-prefixed rows', () => {
+    const csv = objectsToCsv(objects, 2);
+    expect(csv).toContain('# chars');
+    expect(csv).toContain('# rects');
+    // RFC 4180: text containing comma + quotes is escaped.
+    expect(csv).toContain('2,0,1,2,3,"hi, ""there"""');
+    // No table objects: '# tables' section is header-only (same layout as pagesToCsv).
+    expect(csv.endsWith('# tables\npage,table_index,row,col,text\n')).toBe(true);
   });
 });
