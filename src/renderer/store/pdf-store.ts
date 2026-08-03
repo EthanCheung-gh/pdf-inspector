@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { PdfObject, PdfMetadata, PageData, PdfOutlineItem } from '../types/pdf-objects';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { SearchMatch } from '../services/pdf-search';
+import { ObjectSubset, FilterCriteria, filterByProperties } from '../services/object-filter';
 
 export interface PdfState {
   // File state
@@ -47,6 +48,11 @@ export interface PdfState {
   // Export progress
   exportProgress: { done: number; total: number } | null;
 
+  // Object subset (region selection / property filter)
+  regionMode: boolean;
+  filterCriteria: FilterCriteria;
+  subset: ObjectSubset | null;
+
   // Actions
   setFile: (path: string, meta: PdfMetadata) => void;
   setPage: (page: number) => void;
@@ -69,6 +75,10 @@ export interface PdfState {
   setSearchOpen: (open: boolean) => void;
   clearSearch: () => void;
   setExportProgress: (progress: { done: number; total: number } | null) => void;
+  setRegionMode: (on: boolean) => void;
+  setFilterCriteria: (criteria: FilterCriteria) => void;
+  setSubset: (subset: ObjectSubset | null) => void;
+  clearSubset: () => void;
 }
 
 export const usePdfStore = create<PdfState>((set, get) => ({
@@ -106,6 +116,9 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   currentMatchIndex: -1,
   searchOpen: false,
   exportProgress: null,
+  regionMode: false,
+  filterCriteria: {},
+  subset: null,
 
   setFile: (path, meta) =>
     set({
@@ -127,9 +140,11 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       currentMatchIndex: -1,
       searchOpen: false,
       exportProgress: null,
+      subset: null,
     }),
 
-  setPage: (page) => set({ currentPage: page, pageData: null, hoveredObject: null, selectedObject: null }),
+  setPage: (page) =>
+    set({ currentPage: page, pageData: null, hoveredObject: null, selectedObject: null, subset: null }),
 
   setZoom: (zoom) => set({ zoom: Math.max(0.25, Math.min(5, zoom)) }),
 
@@ -181,4 +196,27 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   clearSearch: () =>
     set({ searchQuery: '', searchMatches: [], currentMatchIndex: -1, searchOpen: false }),
   setExportProgress: (progress) => set({ exportProgress: progress }),
+
+  setRegionMode: (on) =>
+    set((state) => ({
+      regionMode: on,
+      ...(on ? {} : { subset: null }),
+    })),
+
+  setFilterCriteria: (criteria) =>
+    set((state) => {
+      const hasCriteria =
+        Boolean(criteria.types?.length) ||
+        Boolean(criteria.fontname) ||
+        criteria.sizeMin !== undefined ||
+        criteria.sizeMax !== undefined ||
+        Boolean(criteria.color);
+      const subset = hasCriteria
+        ? { source: 'filter' as const, mode: 'intersect' as const, objects: filterByProperties(state.allObjects, criteria) }
+        : null;
+      return { filterCriteria: criteria, subset };
+    }),
+
+  setSubset: (subset) => set({ subset }),
+  clearSubset: () => set({ subset: null }),
 }));

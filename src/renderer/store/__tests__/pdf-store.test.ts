@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { usePdfStore } from '../pdf-store';
+import type { PdfChar } from '../../types/pdf-objects';
 
 const metadata = {
   pages: 10,
@@ -175,5 +176,54 @@ describe('export progress', () => {
     expect(usePdfStore.getState().exportProgress).toEqual({ done: 2, total: 10 });
     s.setExportProgress(null);
     expect(usePdfStore.getState().exportProgress).toBeNull();
+  });
+});
+
+const char = (font: string, size: number): PdfChar => ({
+  type: 'char', x0: 0, y0: 0, x1: 10, y1: 10, page: 1, text: 'A', fontname: font, size, color: '#000000',
+});
+
+describe('subset state', () => {
+  beforeEach(() => {
+    const store = usePdfStore.getState();
+    store.setPageData({
+      width: 100, height: 100,
+      chars: [char('Helvetica', 12), char('Arial', 8)],
+      words: [], rects: [], lines: [], curves: [], images: [], tables: [],
+    });
+  });
+
+  it('setFilterCriteria recomputes the subset from allObjects', () => {
+    const store = usePdfStore.getState();
+    store.setFilterCriteria({ fontname: 'Helvetica' });
+    const subset = usePdfStore.getState().subset;
+    expect(subset?.source).toBe('filter');
+    expect(subset?.objects).toHaveLength(1);
+  });
+
+  it('empty criteria clears the subset to null', () => {
+    const store = usePdfStore.getState();
+    store.setFilterCriteria({ fontname: 'Helvetica' });
+    store.setFilterCriteria({});
+    expect(usePdfStore.getState().subset).toBeNull();
+  });
+
+  it('setPage and setFile clear the subset', () => {
+    const store = usePdfStore.getState();
+    store.setFilterCriteria({ fontname: 'Helvetica' });
+    store.setPage(2);
+    expect(usePdfStore.getState().subset).toBeNull();
+
+    store.setFilterCriteria({ fontname: 'Helvetica' });
+    store.setFile('/x.pdf', { pages: 1, version: '1.7', encrypted: false, page_w: 100, page_h: 100, title: '', author: '', producer: '', fonts: [] });
+    expect(usePdfStore.getState().subset).toBeNull();
+  });
+
+  it('setRegionMode(false) clears the subset', () => {
+    const store = usePdfStore.getState();
+    store.setSubset({ source: 'region', mode: 'intersect', objects: [], bbox: { x0: 0, y0: 0, x1: 1, y1: 1 } });
+    store.setRegionMode(false);
+    expect(usePdfStore.getState().subset).toBeNull();
+    expect(usePdfStore.getState().regionMode).toBe(false);
   });
 });
