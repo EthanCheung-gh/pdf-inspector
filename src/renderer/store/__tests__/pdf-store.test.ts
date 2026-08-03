@@ -219,6 +219,14 @@ describe('subset state', () => {
     expect(usePdfStore.getState().subset).toBeNull();
   });
 
+  it('clearSubset resets the subset to null', () => {
+    const store = usePdfStore.getState();
+    store.setSubset({ source: 'region', mode: 'intersect', objects: [], bbox: { x0: 0, y0: 0, x1: 1, y1: 1 } });
+    expect(usePdfStore.getState().subset).not.toBeNull();
+    store.clearSubset();
+    expect(usePdfStore.getState().subset).toBeNull();
+  });
+
   it('setRegionMode(false) clears the subset', () => {
     const store = usePdfStore.getState();
     store.setSubset({ source: 'region', mode: 'intersect', objects: [], bbox: { x0: 0, y0: 0, x1: 1, y1: 1 } });

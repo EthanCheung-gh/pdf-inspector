@@ -50,6 +50,7 @@ const App = (): JSX.Element => {
       }
       if (event.key === 'Escape') {
         clearSelection();
+        usePdfStore.getState().clearSubset();
         return;
       }
       if ((event.key === 't' || event.key === 'T') && !event.ctrlKey && !event.metaKey && !event.altKey) {

@@ -30,7 +30,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
   const setSelectedObject = usePdfStore((state) => state.setSelectedObject);
   const { drawOverlays } = useOverlay();
   const { hitTest } = useHitTest();
-  const { handlers, liveRect, dragging } = useRegionSelect(pageWidth, pageHeight, pdfWidth, pdfHeight);
+  const { handlers, liveRect, dragging, wasDragRef } = useRegionSelect(pageWidth, pageHeight, pdfWidth, pdfHeight);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -72,7 +72,11 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
         setHoveredObject(getHoveredObject(event));
       }}
       onMouseUp={handlers.onMouseUp}
-      onClick={() => setSelectedObject(usePdfStore.getState().hoveredObject)}
+      onClick={() => {
+        // Skip the click fired right after a region drag so it does not select a stale hovered object.
+        if (wasDragRef.current) return;
+        setSelectedObject(usePdfStore.getState().hoveredObject);
+      }}
       onMouseLeave={() => { if (!dragging) setHoveredObject(null); }}
       style={{
         position: 'absolute',

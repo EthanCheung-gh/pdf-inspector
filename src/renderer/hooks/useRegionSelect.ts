@@ -28,8 +28,10 @@ export const useRegionSelect = (
   const [dragging, setDragging] = useState(false);
   const [liveRect, setLiveRect] = useState<BBox | null>(null);
   const startRef = useRef<{ x: number; y: number } | null>(null);
+  const wasDragRef = useRef(false);
 
   const onMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    wasDragRef.current = false;
     if (!regionMode) return;
     const rect = e.currentTarget.getBoundingClientRect();
     startRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
@@ -51,12 +53,20 @@ export const useRegionSelect = (
     startRef.current = null;
     setDragging(false);
     setLiveRect(null);
-    if (!regionMode || !start) return;
+    if (!regionMode || !start) {
+      wasDragRef.current = false;
+      return;
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     const end = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     const dx = end.x - start.x;
     const dy = end.y - start.y;
-    if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return; // min drag (4px), treat as click
+    // Below the 4px min-drag threshold: not a region drag, let the following click select normally.
+    if (Math.abs(dx) < 4 && Math.abs(dy) < 4) {
+      wasDragRef.current = false;
+      return;
+    }
+    wasDragRef.current = true;
     const bbox = computeRegionBBox(
       screenToPdf(start.x, start.y, pageWidth, pageHeight, pdfWidth, pdfHeight),
       screenToPdf(end.x, end.y, pageWidth, pageHeight, pdfWidth, pdfHeight),
@@ -65,5 +75,5 @@ export const useRegionSelect = (
     setSubset({ source: 'region', mode, objects: filterByRegion(allObjects, bbox, mode), bbox });
   }, [allObjects, pageWidth, pageHeight, pdfWidth, pdfHeight, regionMode, setSubset]);
 
-  return { handlers: { onMouseDown, onMouseMove, onMouseUp }, liveRect, dragging };
+  return { handlers: { onMouseDown, onMouseMove, onMouseUp }, liveRect, dragging, wasDragRef };
 };
