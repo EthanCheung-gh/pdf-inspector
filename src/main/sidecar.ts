@@ -3,6 +3,41 @@ import { resolvePythonCommand } from '../shared/python-resolver';
 import * as path from 'path';
 import * as fs from 'fs';
 
+export interface SidecarCommandOptions {
+  isPackaged: boolean;
+  resourcesPath: string;
+  platform: NodeJS.Platform;
+}
+
+/**
+ * Decide what to spawn for the sidecar.
+ * Packaged: the PyInstaller-frozen binary shipped under resourcesPath/sidecar/.
+ * Development: the resolved Python command + sidecar/main.py (prefers the
+ * repo layout, falls back to the resources layout — caller validates).
+ */
+export function resolveSidecarCommand(opts: SidecarCommandOptions): {
+  command: string;
+  args: string[];
+} {
+  if (opts.isPackaged) {
+    if (opts.platform !== 'win32' && opts.platform !== 'linux' && opts.platform !== 'darwin') {
+      console.warn(`[sidecar] Unknown platform "${opts.platform}"; using non-Windows binary name`);
+    }
+    const binary = opts.platform === 'win32' ? 'pdf-inspector-sidecar.exe' : 'pdf-inspector-sidecar';
+    return { command: path.join(opts.resourcesPath, 'sidecar', binary), args: [] };
+  }
+
+  const devScript = path.join(__dirname, '../../sidecar/main.py');
+  const bundledScript = path.join(opts.resourcesPath, 'sidecar/main.py');
+  const scriptPath = fs.existsSync(devScript)
+    ? devScript
+    : fs.existsSync(bundledScript)
+      ? bundledScript
+      : devScript; // caller validates existence and reports the error
+  const { command, args } = resolvePythonCommand();
+  return { command, args: [...args, scriptPath] };
+}
+
 export interface SidecarRequest {
   id: number;
   method: string;
