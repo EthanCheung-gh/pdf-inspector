@@ -53,7 +53,9 @@ const App = (): JSX.Element => {
         return;
       }
       if ((event.key === 't' || event.key === 'T') && !event.ctrlKey && !event.metaKey && !event.altKey) {
-        setTextSelectionMode(!textSelectionMode);
+        const next = !textSelectionMode;
+        setTextSelectionMode(next);
+        if (next) usePdfStore.getState().setRegionMode(false);
       }
       if ((event.key === 'r' || event.key === 'R') && !event.ctrlKey && !event.metaKey && !event.altKey) {
         const next = !regionMode;

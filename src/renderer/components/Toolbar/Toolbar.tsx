@@ -67,7 +67,8 @@ export const Toolbar: React.FC = () => {
 
   const handleTextSelectionToggle = useCallback(() => {
     setTextSelectionMode(!textSelectionMode);
-  }, [setTextSelectionMode, textSelectionMode]);
+    if (!textSelectionMode) setRegionMode(false);
+  }, [setRegionMode, setTextSelectionMode, textSelectionMode]);
 
   const handleRegionToggle = useCallback(() => {
     setRegionMode(!regionMode);
