@@ -1,3 +1,4 @@
+import { app } from 'electron';
 import { spawn, ChildProcess } from 'child_process';
 import { resolvePythonCommand } from '../shared/python-resolver';
 import * as path from 'path';
@@ -115,19 +116,26 @@ export class SidecarManager {
     // Do not let it corrupt the new process's ready signal.
     this.buffer = '';
 
-    // Resolve sidecar script path
-    let scriptPath: string;
-    if (fs.existsSync(path.join(__dirname, '../../sidecar/main.py'))) {
-      scriptPath = path.join(__dirname, '../../sidecar/main.py');
-    } else if (process.resourcesPath && fs.existsSync(path.join(process.resourcesPath, 'sidecar/main.py'))) {
-      scriptPath = path.join(process.resourcesPath, 'sidecar/main.py');
+    const isPackaged = app.isPackaged;
+    const { command, args } = resolveSidecarCommand({
+      isPackaged,
+      resourcesPath: process.resourcesPath ?? '',
+      platform: process.platform,
+    });
+
+    if (isPackaged) {
+      if (!fs.existsSync(command)) {
+        throw new Error(`Sidecar binary missing at ${command}. Reinstall the application.`);
+      }
     } else {
-      throw new Error('Cannot find sidecar/main.py');
+      const scriptPath = args[args.length - 1];
+      if (!fs.existsSync(scriptPath)) {
+        throw new Error('Cannot find sidecar/main.py');
+      }
     }
 
     return new Promise((resolve, reject) => {
-      const { command, args } = resolvePythonCommand();
-      const proc = spawn(command, [...args, scriptPath], {
+      const proc = spawn(command, args, {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       let startSettled = false;
