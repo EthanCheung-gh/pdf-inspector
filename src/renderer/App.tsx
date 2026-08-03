@@ -15,6 +15,8 @@ const App = (): JSX.Element => {
   const clearSelection = usePdfStore((state) => state.clearSelection);
   const textSelectionMode = usePdfStore((state) => state.textSelectionMode);
   const setTextSelectionMode = usePdfStore((state) => state.setTextSelectionMode);
+  const regionMode = usePdfStore((state) => state.regionMode);
+  const setRegionMode = usePdfStore((state) => state.setRegionMode);
 
   useEffect(() => {
     const updateSidecarStatus = async (): Promise<void> => {
@@ -53,11 +55,16 @@ const App = (): JSX.Element => {
       if ((event.key === 't' || event.key === 'T') && !event.ctrlKey && !event.metaKey && !event.altKey) {
         setTextSelectionMode(!textSelectionMode);
       }
+      if ((event.key === 'r' || event.key === 'R') && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        const next = !regionMode;
+        setRegionMode(next);
+        if (next) setTextSelectionMode(false);
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [clearSelection, setTextSelectionMode, textSelectionMode]);
+  }, [clearSelection, regionMode, setRegionMode, setTextSelectionMode, textSelectionMode]);
 
   return (
     <div className={styles.app}>

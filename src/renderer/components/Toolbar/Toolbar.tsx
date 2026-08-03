@@ -26,12 +26,14 @@ export const Toolbar: React.FC = () => {
   const isLoading = usePdfStore((state) => state.isLoading);
   const filePath = usePdfStore((state) => state.filePath);
   const textSelectionMode = usePdfStore((state) => state.textSelectionMode);
+  const regionMode = usePdfStore((state) => state.regionMode);
   const setFile = usePdfStore((state) => state.setFile);
   const setZoom = usePdfStore((state) => state.setZoom);
   const setLoading = usePdfStore((state) => state.setLoading);
   const setError = usePdfStore((state) => state.setError);
   const setFitWidthZoom = usePdfStore((state) => state.setFitWidthZoom);
   const setTextSelectionMode = usePdfStore((state) => state.setTextSelectionMode);
+  const setRegionMode = usePdfStore((state) => state.setRegionMode);
   const toggleOverlay = usePdfStore((state) => state.toggleOverlay);
   const { navigate } = usePageNavigation();
 
@@ -66,6 +68,11 @@ export const Toolbar: React.FC = () => {
   const handleTextSelectionToggle = useCallback(() => {
     setTextSelectionMode(!textSelectionMode);
   }, [setTextSelectionMode, textSelectionMode]);
+
+  const handleRegionToggle = useCallback(() => {
+    setRegionMode(!regionMode);
+    if (!regionMode) setTextSelectionMode(false);
+  }, [regionMode, setRegionMode, setTextSelectionMode]);
 
   const filename = filePath?.split(/[\\/]/).pop() ?? 'No file open';
 
@@ -155,6 +162,15 @@ export const Toolbar: React.FC = () => {
           title="Toggle text selection mode (T)"
         >
           Select Text
+        </button>
+        <button
+          className={`${styles.button} ${regionMode ? styles.active : ''}`}
+          type="button"
+          onClick={handleRegionToggle}
+          aria-pressed={regionMode}
+          title="Toggle region selection mode (R)"
+        >
+          Region
         </button>
       </div>
 
