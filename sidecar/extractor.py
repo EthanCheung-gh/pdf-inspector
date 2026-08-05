@@ -45,6 +45,28 @@ class PdfExtractor:
             'fonts': sorted(fonts),
         }
 
+    def analyze_fonts(self) -> dict:
+        fonts: dict[str, dict] = {}
+        for page_num, page in enumerate(self._pdf.pages, start=1):
+            for c in page.chars:
+                name = c.get('fontname', '')
+                if not name:
+                    continue
+                entry = fonts.setdefault(name, {
+                    'fontname': name, 'pages': [], 'charCount': 0,
+                    'sizeMin': float(c.get('size', 0)), 'sizeMax': float(c.get('size', 0)),
+                    'colors': [],
+                })
+                entry['charCount'] += 1
+                entry['sizeMin'] = min(entry['sizeMin'], float(c.get('size', 0)))
+                entry['sizeMax'] = max(entry['sizeMax'], float(c.get('size', 0)))
+                color = str(c.get('stroking_color', '#000000')) or '#000000'
+                if color not in entry['colors']:
+                    entry['colors'].append(color)
+                if page_num not in entry['pages']:
+                    entry['pages'].append(page_num)
+        return {'fonts': sorted(fonts.values(), key=lambda f: f['charCount'], reverse=True)}
+
     def extract_page(self, page_num: int) -> dict:
         page: Page = self._pdf.pages[page_num - 1]  # pdfplumber is 0-indexed
 

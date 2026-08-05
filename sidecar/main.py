@@ -56,6 +56,12 @@ def main():
                     meta = extractor.get_metadata()
                     resp = format_response(RpcResponse(id=req.id, result=meta))
 
+            elif req.method == 'analyze_fonts':
+                if extractor is None:
+                    resp = format_response(RpcResponse(id=req.id, error='No PDF open'))
+                else:
+                    resp = format_response(RpcResponse(id=req.id, result=extractor.analyze_fonts()))
+
             elif req.method == 'get_image_data':
                 if extractor is None:
                     resp = format_response(RpcResponse(id=req.id, error='No PDF open'))
