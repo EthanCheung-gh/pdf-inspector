@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import { usePdfStore } from '../../store/pdf-store';
 import { StructureTree } from '../StructureTree/StructureTree';
 import { BookmarkTree } from './BookmarkTree';
+import { FontsTab } from './FontsTab';
 import styles from './LeftPanel.module.css';
 
-type Tab = 'structure' | 'bookmarks';
+type Tab = 'structure' | 'bookmarks' | 'fonts';
 
 export const LeftPanel: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('structure');
@@ -31,9 +32,18 @@ export const LeftPanel: React.FC = () => {
         >
           Bookmarks
         </button>
+        <button
+          className={`${styles.tabButton} ${activeTab === 'fonts' ? styles.activeTab : ''}`}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'fonts'}
+          onClick={() => setActiveTab('fonts')}
+        >
+          Fonts
+        </button>
       </div>
       <div className={styles.tabContent} role="tabpanel">
-        {activeTab === 'structure' ? <StructureTree /> : <BookmarkTree pdfDoc={pdfDocRef} />}
+        {activeTab === 'structure' ? <StructureTree /> : activeTab === 'bookmarks' ? <BookmarkTree pdfDoc={pdfDocRef} /> : <FontsTab />}
       </div>
     </aside>
   );

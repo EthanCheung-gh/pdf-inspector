@@ -1,0 +1,74 @@
+.hint {
+  padding: 8px;
+  color: #888;
+  font-size: 12px;
+}
+
+.stateBox {
+  padding: 8px;
+  color: #888;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.retry {
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  max-height: calc(100% - 8px);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 6px 8px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.row:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.name {
+  font-weight: 600;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.meta {
+  color: #888;
+  font-size: 11px;
+}
+
+.swatches {
+  display: inline-flex;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+}
