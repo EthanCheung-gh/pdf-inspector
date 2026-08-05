@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ipc } from '../../services/ipc-client';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { usePdfStore } from '../../store/pdf-store';
@@ -14,12 +14,10 @@ export const FontsTab: React.FC = () => {
   const setFilterCriteria = usePdfStore((s) => s.setFilterCriteria);
   const { navigate } = usePageNavigation();
   const [localError, setLocalError] = useState<string | null>(null);
-  const requestedRef = useRef(false);
 
   useEffect(() => {
-    if (!filePath || fontStats !== null || localError !== null || requestedRef.current) return;
+    if (!filePath || fontStats !== null || localError !== null) return;
     if (isLoading) return;
-    requestedRef.current = true;
     let cancelled = false;
 
     void (async () => {
@@ -38,7 +36,6 @@ export const FontsTab: React.FC = () => {
   }, [filePath, fontStats, isLoading, localError, setError, setFontStats]);
 
   const handleRetry = (): void => {
-    requestedRef.current = false;
     setLocalError(null);
     setError(null);
   };
