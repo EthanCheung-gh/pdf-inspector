@@ -74,6 +74,7 @@ export const ipc = {
   openPdf: () => callWithTimeout(() => window.pdfInspector.openPdf(), 'openPdf'),
   extractPage: (page: number) => callWithTimeout(() => window.pdfInspector.extractPage(page), 'extractPage'),
   extractMetadata: () => callWithTimeout(() => window.pdfInspector.extractMetadata(), 'extractMetadata'),
+  analyzeFonts: () => callWithTimeout(() => window.pdfInspector.analyzeFonts(), 'analyzeFonts'),
   getImageData: (streamId: string) => callWithTimeout(() => window.pdfInspector.getImageData(streamId), 'getImageData'),
   getSidecarStatus: () => callWithTimeout(() => window.pdfInspector.getSidecarStatus(), 'getSidecarStatus'),
   restartSidecar: () => window.pdfInspector.restartSidecar(),

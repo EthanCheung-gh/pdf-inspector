@@ -19,5 +19,6 @@ export const IPC_CHANNELS = {
   GET_IMAGE_DATA: 'pdf:get-image-data',
   SIDECAR_STATUS: 'pdf:sidecar-status',
   RESTART_SIDECAR: 'pdf:restart-sidecar',
+  ANALYZE_FONTS: 'pdf:analyze-fonts',
   SAVE_FILE: 'file:save',
 } as const;

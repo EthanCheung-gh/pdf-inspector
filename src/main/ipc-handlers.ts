@@ -49,6 +49,10 @@ export function registerIpcHandlers(sidecar: SidecarManager): void {
     return sidecar.send('extract_metadata');
   });
 
+  ipcMain.handle(IPC_CHANNELS.ANALYZE_FONTS, async () => {
+    return sidecar.send('analyze_fonts');
+  });
+
   ipcMain.handle(IPC_CHANNELS.GET_IMAGE_DATA, async (_event, streamId: string) => {
     return sidecar.send('get_image_data', { stream_id: streamId });
   });

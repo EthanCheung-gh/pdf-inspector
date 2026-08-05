@@ -3,6 +3,15 @@ import type { SaveFileRequest } from '../../shared/constants';
 
 export type { SaveFileRequest };
 
+export interface FontStat {
+  fontname: string;
+  pages: number[];
+  charCount: number;
+  sizeMin: number;
+  sizeMax: number;
+  colors: string[];
+}
+
 export type OpenPdfResult = {
   canceled: true;
 } | {
@@ -20,6 +29,7 @@ export interface IpcApi {
   saveFile(req: SaveFileRequest): Promise<SaveFileResult>;
   extractPage(page: number): Promise<PageData>;
   extractMetadata(): Promise<PdfMetadata>;
+  analyzeFonts(): Promise<{ fonts: FontStat[] }>;
   getImageData(streamId: string): Promise<{ base64?: string; format?: string; error?: string }>;
   getSidecarStatus(): Promise<{ running: boolean }>;
   restartSidecar(): Promise<{ success: boolean; running: boolean; error?: string }>;

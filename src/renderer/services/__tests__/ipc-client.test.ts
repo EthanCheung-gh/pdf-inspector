@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockRestartSidecar = vi.fn();
 const mockExtractPage = vi.fn();
+const mockAnalyzeFonts = vi.fn();
 
 globalThis.window = {
   pdfInspector: {
@@ -9,6 +10,7 @@ globalThis.window = {
     extractPage: mockExtractPage,
     openPdf: vi.fn(),
     extractMetadata: vi.fn(),
+    analyzeFonts: mockAnalyzeFonts,
     getImageData: vi.fn(),
     getSidecarStatus: vi.fn(),
   },
@@ -91,4 +93,13 @@ describe('ipc-client timeout recovery', () => {
 
     expect(mockRestartSidecar).toHaveBeenCalledTimes(3);
   });
+  it('analyzeFonts resolves when the sidecar responds in time', async () => {
+    const fonts = { fonts: [{ fontname: 'Helvetica', pages: [1], charCount: 9, sizeMin: 10, sizeMax: 14, colors: ['#000000'] }] };
+    mockAnalyzeFonts.mockResolvedValue(fonts);
+
+    await expect(ipc.analyzeFonts()).resolves.toEqual(fonts);
+    expect(mockAnalyzeFonts).toHaveBeenCalledWith();
+    expect(mockRestartSidecar).not.toHaveBeenCalled();
+  });
+
 });

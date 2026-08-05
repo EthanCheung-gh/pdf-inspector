@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('pdfInspector', {
   openPdf: () => ipcRenderer.invoke(IPC_CHANNELS.OPEN_PDF),
   extractPage: (page: number) => ipcRenderer.invoke(IPC_CHANNELS.EXTRACT_PAGE, page),
   extractMetadata: () => ipcRenderer.invoke(IPC_CHANNELS.EXTRACT_METADATA),
+  analyzeFonts: () => ipcRenderer.invoke(IPC_CHANNELS.ANALYZE_FONTS),
   getImageData: (streamId: string) => ipcRenderer.invoke(IPC_CHANNELS.GET_IMAGE_DATA, streamId),
   getSidecarStatus: () => ipcRenderer.invoke(IPC_CHANNELS.SIDECAR_STATUS),
   restartSidecar: () => ipcRenderer.invoke(IPC_CHANNELS.RESTART_SIDECAR),
