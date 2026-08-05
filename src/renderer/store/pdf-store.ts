@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { PdfObject, PdfMetadata, PageData, PdfOutlineItem } from '../types/pdf-objects';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { SearchMatch } from '../services/pdf-search';
+import type { FontStat } from '../types/ipc-protocol';
 import { ObjectSubset, FilterCriteria, filterByProperties } from '../services/object-filter';
 
 export interface PdfState {
@@ -75,6 +76,8 @@ export interface PdfState {
   setSearchOpen: (open: boolean) => void;
   clearSearch: () => void;
   setExportProgress: (progress: { done: number; total: number } | null) => void;
+  fontStats: FontStat[] | null;
+  setFontStats: (stats: FontStat[] | null) => void;
   setRegionMode: (on: boolean) => void;
   setFilterCriteria: (criteria: FilterCriteria) => void;
   setSubset: (subset: ObjectSubset | null) => void;
@@ -116,6 +119,7 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   currentMatchIndex: -1,
   searchOpen: false,
   exportProgress: null,
+  fontStats: null,
   regionMode: false,
   filterCriteria: {},
   subset: null,
@@ -140,6 +144,7 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       currentMatchIndex: -1,
       searchOpen: false,
       exportProgress: null,
+      fontStats: null,
       subset: null,
     }),
 
@@ -196,6 +201,7 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   clearSearch: () =>
     set({ searchQuery: '', searchMatches: [], currentMatchIndex: -1, searchOpen: false }),
   setExportProgress: (progress) => set({ exportProgress: progress }),
+  setFontStats: (stats) => set({ fontStats: stats }),
 
   setRegionMode: (on) =>
     set((state) => ({

@@ -235,3 +235,16 @@ describe('subset state', () => {
     expect(usePdfStore.getState().regionMode).toBe(false);
   });
 });
+
+describe('fontStats', () => {
+  it('setFontStats stores the stats', () => {
+    usePdfStore.getState().setFontStats([{ fontname: 'Helvetica', pages: [1], charCount: 9, sizeMin: 10, sizeMax: 14, colors: ['#000000'] }]);
+    expect(usePdfStore.getState().fontStats).toHaveLength(1);
+  });
+
+  it('setFile resets fontStats to null', () => {
+    usePdfStore.getState().setFontStats([{ fontname: 'Helvetica', pages: [1], charCount: 9, sizeMin: 10, sizeMax: 14, colors: ['#000000'] }]);
+    usePdfStore.getState().setFile('/x.pdf', { pages: 1, version: '1.7', encrypted: false, page_w: 100, page_h: 100, title: '', author: '', producer: '', fonts: [] });
+    expect(usePdfStore.getState().fontStats).toBeNull();
+  });
+});
