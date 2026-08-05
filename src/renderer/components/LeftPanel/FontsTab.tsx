@@ -40,9 +40,11 @@ export const FontsTab: React.FC = () => {
     setError(null);
   };
 
-  const handleClick = (font: FontStat): void => {
+  const handleClick = async (font: FontStat): Promise<void> => {
     if (font.pages.length === 0) return;
-    void navigate(font.pages[0]);
+    // Wait for the page's objects to load before filtering, otherwise the
+    // subset is computed from the previous page's allObjects.
+    await navigate(font.pages[0]);
     setFilterCriteria({ fontname: font.fontname });
   };
 
@@ -71,7 +73,7 @@ export const FontsTab: React.FC = () => {
     <ul className={styles.list}>
       {fontStats.map((font) => (
         <li key={font.fontname}>
-          <button type="button" className={styles.row} onClick={() => handleClick(font)}>
+          <button type="button" className={styles.row} onClick={() => void handleClick(font)}>
             <span className={styles.name}>{font.fontname}</span>
             <span className={styles.meta}>
               {font.pages.length} page{font.pages.length === 1 ? '' : 's'} · {font.charCount} chars · {font.sizeMin}–{font.sizeMax}pt
