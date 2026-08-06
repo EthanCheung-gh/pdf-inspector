@@ -11,10 +11,12 @@ export const PdfViewport: React.FC = () => {
   const zoom = usePdfStore((s) => s.zoom);
   const { pdfDoc, loadPdf, loading, error } = usePdf();
 
-  // Load PDF document once when filePath changes
+  // Load PDF document once when filePath changes. Remote http(s) URLs are
+  // passed to PDF.js as-is; local paths are converted to file:// URLs.
   useEffect(() => {
     if (filePath) {
-      loadPdf(pathToFileUrl(filePath));
+      const url = /^https?:\/\//i.test(filePath) ? filePath : pathToFileUrl(filePath);
+      loadPdf(url);
     }
   }, [filePath, loadPdf]);
 
