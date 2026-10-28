@@ -4,10 +4,13 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { SearchMatch } from '../services/pdf-search';
 import type { FontStat } from '../types/ipc-protocol';
 import { ObjectSubset, FilterCriteria, filterByProperties } from '../services/object-filter';
+import { MAX_FIT_WIDTH_ZOOM, MIN_FIT_WIDTH_ZOOM } from '../services/page-geometry';
 
 export interface PdfState {
   // File state
   filePath: string | null;
+  /** URL the document was opened from, or null for local files. */
+  sourceUrl: string | null;
   metadata: PdfMetadata | null;
   pageCount: number;
   currentPage: number;
@@ -55,7 +58,7 @@ export interface PdfState {
   subset: ObjectSubset | null;
 
   // Actions
-  setFile: (path: string, meta: PdfMetadata) => void;
+  setFile: (path: string, meta: PdfMetadata, sourceUrl?: string | null) => void;
   setPage: (page: number) => void;
   setZoom: (zoom: number) => void;
   setPageData: (data: PageData) => void;
@@ -86,6 +89,7 @@ export interface PdfState {
 
 export const usePdfStore = create<PdfState>((set, get) => ({
   filePath: null,
+  sourceUrl: null,
   metadata: null,
   pageCount: 0,
   currentPage: 1,
@@ -124,9 +128,12 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   filterCriteria: {},
   subset: null,
 
-  setFile: (path, meta) =>
+  setFile: (path, meta, sourceUrl = null) =>
     set({
       filePath: path,
+      // Reset with the rest of the document state: opening a local file after a
+      // URL drops the URL, opening a URL keeps it for the filename label.
+      sourceUrl: sourceUrl ?? null,
       metadata: meta,
       pageCount: meta.pages,
       currentPage: 1,
@@ -148,10 +155,21 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       subset: null,
     }),
 
+  // Objects are page-scoped: dropping them with the page data prevents the
+  // previous page's boxes from being drawn/hit-tested while the new page is
+  // still being extracted.
   setPage: (page) =>
-    set({ currentPage: page, pageData: null, hoveredObject: null, selectedObject: null, subset: null }),
+    set({
+      currentPage: page,
+      pageData: null,
+      allObjects: [],
+      hoveredObject: null,
+      selectedObject: null,
+      subset: null,
+    }),
 
-  setZoom: (zoom) => set({ zoom: Math.max(0.25, Math.min(5, zoom)) }),
+  // Zoom is clamped to the same range the fit-width geometry uses.
+  setZoom: (zoom) => set({ zoom: Math.max(MIN_FIT_WIDTH_ZOOM, Math.min(MAX_FIT_WIDTH_ZOOM, zoom)) }),
 
   setPageData: (data) =>
     set({
@@ -190,7 +208,7 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       return;
     }
 
-    const clamped = Math.max(0.25, Math.min(5, zoom));
+    const clamped = Math.max(MIN_FIT_WIDTH_ZOOM, Math.min(MAX_FIT_WIDTH_ZOOM, zoom));
     set({ fitWidthZoom: clamped, zoom: clamped });
   },
   setTextSelectionMode: (mode) => set({ textSelectionMode: mode }),

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { usePdfStore } from '../pdf-store';
+import { filterByRegion } from '../../services/object-filter';
 import type { PdfChar } from '../../types/pdf-objects';
 
 const metadata = {
@@ -18,6 +19,7 @@ describe('pdf-store', () => {
   beforeEach(() => {
     usePdfStore.setState({
       filePath: null,
+      sourceUrl: null,
       metadata: null,
       pageCount: 0,
       currentPage: 1,
@@ -82,6 +84,7 @@ describe('pdf-store', () => {
     usePdfStore.setState({
       currentPage: 1,
       pageData: {} as any,
+      allObjects: [{ type: 'char' } as any],
       hoveredObject: {} as any,
       selectedObject: {} as any,
     });
@@ -89,8 +92,48 @@ describe('pdf-store', () => {
     const state = usePdfStore.getState();
     expect(state.currentPage).toBe(5);
     expect(state.pageData).toBeNull();
+    expect(state.allObjects).toEqual([]);
     expect(state.hoveredObject).toBeNull();
     expect(state.selectedObject).toBeNull();
+  });
+
+  it('setPage does not let subsets be derived from the previous page objects', () => {
+    const previousPageObjects = [char('Helvetica', 12), char('Arial', 8)];
+    usePdfStore.setState({
+      currentPage: 1,
+      pageData: {
+        width: 100, height: 100,
+        chars: previousPageObjects as PdfChar[],
+        words: [], rects: [], lines: [], curves: [], images: [], tables: [],
+      },
+      allObjects: previousPageObjects,
+    });
+
+    usePdfStore.getState().setPage(2);
+    expect(usePdfStore.getState().allObjects).toEqual([]);
+
+    // A property filter over the new (still loading) page matches nothing.
+    usePdfStore.getState().setFilterCriteria({ fontname: 'Helvetica' });
+    expect(usePdfStore.getState().subset?.objects).toEqual([]);
+
+    // A region drag covering the whole page selects nothing either.
+    const bbox = { x0: 0, y0: 0, x1: 1000, y1: 1000 };
+    usePdfStore.getState().setSubset({
+      source: 'region',
+      mode: 'intersect',
+      objects: filterByRegion(usePdfStore.getState().allObjects, bbox, 'intersect'),
+      bbox,
+    });
+    expect(usePdfStore.getState().subset?.objects).toEqual([]);
+
+    // Once the new page's data arrives, matching works again.
+    usePdfStore.getState().setPageData({
+      width: 100, height: 100,
+      chars: [char('Helvetica', 10)],
+      words: [], rects: [], lines: [], curves: [], images: [], tables: [],
+    });
+    expect(usePdfStore.getState().allObjects).toHaveLength(1);
+    expect(filterByRegion(usePdfStore.getState().allObjects, bbox, 'intersect')).toHaveLength(1);
   });
 
   it('setOutline stores outline data', () => {
@@ -166,6 +209,54 @@ describe('search state', () => {
     expect(after.searchMatches).toEqual([]);
     expect(after.currentMatchIndex).toBe(-1);
     expect(after.exportProgress).toBeNull();
+  });
+});
+
+describe('sourceUrl state', () => {
+  beforeEach(() => {
+    usePdfStore.setState({ filePath: null, sourceUrl: null, metadata: null, pageCount: 0, currentPage: 1 });
+  });
+
+  it('defaults to null', () => {
+    expect(usePdfStore.getState().sourceUrl).toBeNull();
+  });
+
+  it('setFile stores the URL and resets document state', () => {
+    usePdfStore.setState({
+      currentPage: 4,
+      pageData: {} as any,
+      pdfDocRef: { fake: true } as any,
+      outline: [{ title: 'Old', bold: false, italic: false, dest: null, items: [] }],
+      subset: { source: 'region', mode: 'intersect', objects: [], bbox: { x0: 0, y0: 0, x1: 1, y1: 1 } },
+    });
+
+    usePdfStore.getState().setFile('/tmp/download.pdf', metadata, 'https://example.com/a.pdf');
+
+    const state = usePdfStore.getState();
+    expect(state.filePath).toBe('/tmp/download.pdf');
+    expect(state.sourceUrl).toBe('https://example.com/a.pdf');
+    expect(state.currentPage).toBe(1);
+    expect(state.pageData).toBeNull();
+    expect(state.pdfDocRef).toBeNull();
+    expect(state.outline).toBeNull();
+    expect(state.subset).toBeNull();
+  });
+
+  it('a following local setFile clears the URL', () => {
+    usePdfStore.getState().setFile('/tmp/download.pdf', metadata, 'https://example.com/a.pdf');
+    usePdfStore.getState().setFile('/tmp/local.pdf', metadata);
+
+    const state = usePdfStore.getState();
+    expect(state.filePath).toBe('/tmp/local.pdf');
+    expect(state.sourceUrl).toBeNull();
+  });
+
+  it('setFile without a URL argument yields null', () => {
+    usePdfStore.getState().setFile('/tmp/local.pdf', metadata);
+    expect(usePdfStore.getState().sourceUrl).toBeNull();
+
+    usePdfStore.getState().setFile('/tmp/local.pdf', metadata, null);
+    expect(usePdfStore.getState().sourceUrl).toBeNull();
   });
 });
 
