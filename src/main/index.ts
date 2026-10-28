@@ -3,10 +3,14 @@ import { execSync } from 'child_process';
 import * as path from 'path';
 import { SidecarManager } from './sidecar';
 import { registerIpcHandlers } from './ipc-handlers';
+import { cleanupDownloadedFiles } from './pdf-url';
 import { getPythonCandidates, setSelectedPython } from '../shared/python-resolver';
+import { resolveStartupPlan, shouldDeferQuit } from './lifecycle';
 
 let mainWindow: BrowserWindow | null = null;
 const sidecar = new SidecarManager();
+/** Set once graceful shutdown begins so the re-issued quit passes through. */
+let shutdownStarted = false;
 
 function checkPythonAvailable(): boolean {
   for (const candidate of getPythonCandidates()) {
@@ -45,7 +49,11 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  if (!checkPythonAvailable()) {
+  const startup = resolveStartupPlan({ isPackaged: app.isPackaged });
+
+  // Packaged builds ship a frozen sidecar binary and must not require a system
+  // Python installation; only development runs the Python script.
+  if (startup.probeSystemPython && !checkPythonAvailable()) {
     await dialog.showMessageBox({
       type: 'error',
       title: 'Python Required',
@@ -76,6 +84,32 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', async () => {
-  await sidecar.stop();
+/**
+ * Electron does not await async `before-quit` listeners, so a graceful stop
+ * has to be split across two quit events: cancel the first one, stop the
+ * sidecar, then re-issue `app.quit()` with `shutdownStarted` set so the second
+ * pass is allowed through.
+ *
+ * `stop()` runs even when the sidecar is not running: it is what disables
+ * auto-restart, so skipping it would let a pending crash-restart timer spawn a
+ * fresh sidecar after the user quit.
+ */
+app.on('before-quit', (event) => {
+  if (!shouldDeferQuit({ shutdownStarted })) {
+    return;
+  }
+
+  event.preventDefault();
+  shutdownStarted = true;
+
+  void sidecar
+    .stop()
+    .catch((err) => console.error('[main] Failed to stop sidecar:', err))
+    // Only after the sidecar is gone: on Windows a file it still has open
+    // cannot be deleted. Cleanup is best effort and never rejects.
+    .then(() => cleanupDownloadedFiles())
+    .catch((err) => console.error('[main] Failed to clean up downloaded files:', err))
+    .finally(() => {
+      app.quit();
+    });
 });

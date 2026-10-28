@@ -1,3 +1,8 @@
+// The Electron binary is not required for these unit tests, and importing the
+// real package throws when its binary download was skipped. Kept at the top so
+// it is registered before `../sidecar` (which imports electron) is loaded.
+vi.mock('electron', () => ({ app: { isPackaged: false } }));
+
 import * as path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolvePythonCommand } from '../../shared/python-resolver';

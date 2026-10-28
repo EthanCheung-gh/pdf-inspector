@@ -1,4 +1,8 @@
 import { IpcApi, SaveFileRequest } from '../types/ipc-protocol';
+import {
+  ANALYZE_FONTS_RENDERER_TIMEOUT_MS,
+  OPEN_PDF_URL_TIMEOUT_MS,
+} from '../../shared/constants';
 
 declare global {
   interface Window {
@@ -12,9 +16,23 @@ const RESTART_WINDOW_MS = 60_000;
 
 let restartTimestamps: number[] = [];
 
-function withinRestartBudget(): boolean {
+/**
+ * Window in which `MAX_RESTARTS` restarts are allowed.
+ *
+ * A method with a longer request budget also retries further apart, so a fixed
+ * 60s window would let a 120s method restart the sidecar forever (every retry
+ * would look like a fresh start). Scaling the window with the budget keeps the
+ * cap meaningful: extraction keeps its original 60s (30s * 2), font analysis
+ * gets 240s.
+ */
+function restartWindowMs(timeoutMs: number): number {
+  return Math.max(RESTART_WINDOW_MS, timeoutMs * 2);
+}
+
+function withinRestartBudget(timeoutMs: number): boolean {
   const now = Date.now();
-  restartTimestamps = restartTimestamps.filter((timestamp) => now - timestamp < RESTART_WINDOW_MS);
+  const windowMs = restartWindowMs(timeoutMs);
+  restartTimestamps = restartTimestamps.filter((timestamp) => now - timestamp < windowMs);
   return restartTimestamps.length < MAX_RESTARTS;
 }
 
@@ -49,7 +67,7 @@ async function callWithTimeout<T>(
       throw error;
     }
 
-    if (!withinRestartBudget()) {
+    if (!withinRestartBudget(timeoutMs)) {
       throw new Error('Sidecar repeatedly crashes. Please restart the application.');
     }
 
@@ -72,9 +90,21 @@ async function callWithTimeout<T>(
 
 export const ipc = {
   openPdf: () => callWithTimeout(() => window.pdfInspector.openPdf(), 'openPdf'),
+  // A URL open downloads the whole document in the main process before the
+  // sidecar parses it, so it needs a budget beyond the 30s default.
+  openPdfUrl: (url: string) =>
+    callWithTimeout(() => window.pdfInspector.openPdfUrl(url), 'openPdfUrl', OPEN_PDF_URL_TIMEOUT_MS),
   extractPage: (page: number) => callWithTimeout(() => window.pdfInspector.extractPage(page), 'extractPage'),
   extractMetadata: () => callWithTimeout(() => window.pdfInspector.extractMetadata(), 'extractMetadata'),
-  analyzeFonts: () => callWithTimeout(() => window.pdfInspector.analyzeFonts(), 'analyzeFonts'),
+  // Must be LARGER than the main-process budget so main's own timeout (and its
+  // clear error) surfaces first: an equal budget would make the renderer lose
+  // the race one IPC hop early and restart the sidecar instead.
+  analyzeFonts: () =>
+    callWithTimeout(
+      () => window.pdfInspector.analyzeFonts(),
+      'analyzeFonts',
+      ANALYZE_FONTS_RENDERER_TIMEOUT_MS,
+    ),
   getImageData: (streamId: string) => callWithTimeout(() => window.pdfInspector.getImageData(streamId), 'getImageData'),
   getSidecarStatus: () => callWithTimeout(() => window.pdfInspector.getSidecarStatus(), 'getSidecarStatus'),
   restartSidecar: () => window.pdfInspector.restartSidecar(),
