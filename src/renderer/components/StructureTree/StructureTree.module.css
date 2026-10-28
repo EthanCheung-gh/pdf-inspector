@@ -47,6 +47,9 @@
 .objectButton {
   width: 100%;
   border: 0;
+  /* Explicitly transparent: without a background reset the browser's default
+     button surface shows through and the muted text becomes unreadable. */
+  background: transparent;
   cursor: pointer;
   font: inherit;
   text-align: left;
