@@ -199,10 +199,33 @@ describe('ANALYZE_FONTS request timeout', () => {
   it('requests a 120s budget for font analysis', async () => {
     expect(ANALYZE_FONTS_TIMEOUT_MS).toBe(120_000);
 
-    await invoke(IPC_CHANNELS.ANALYZE_FONTS);
+    // Handlers receive `(event, ...args)`; the renderer sends no range here.
+    await invoke(IPC_CHANNELS.ANALYZE_FONTS, {}, undefined, undefined);
 
     expect(sidecar.send).toHaveBeenCalledTimes(1);
     expect(sidecar.send).toHaveBeenCalledWith('analyze_fonts', {}, ANALYZE_FONTS_TIMEOUT_MS);
+  });
+
+  it('forwards a page range as start_page/end_page with the same budget', async () => {
+    await invoke(IPC_CHANNELS.ANALYZE_FONTS, {}, 1, 10);
+
+    expect(sidecar.send).toHaveBeenCalledTimes(1);
+    expect(sidecar.send).toHaveBeenCalledWith(
+      'analyze_fonts',
+      { start_page: 1, end_page: 10 },
+      ANALYZE_FONTS_TIMEOUT_MS,
+    );
+  });
+
+  it('omits a bound that was not provided', async () => {
+    await invoke(IPC_CHANNELS.ANALYZE_FONTS, {}, 3, undefined);
+
+    expect(sidecar.send).toHaveBeenCalledTimes(1);
+    expect(sidecar.send).toHaveBeenCalledWith(
+      'analyze_fonts',
+      { start_page: 3 },
+      ANALYZE_FONTS_TIMEOUT_MS,
+    );
   });
 
   it('leaves the other channels on the 30s default', async () => {

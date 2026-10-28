@@ -113,8 +113,40 @@ describe('ipc-client timeout recovery', () => {
     mockAnalyzeFonts.mockResolvedValue(fonts);
 
     await expect(ipc.analyzeFonts()).resolves.toEqual(fonts);
-    expect(mockAnalyzeFonts).toHaveBeenCalledWith();
+    // A no-argument call must reach the preload as "both bounds omitted", which
+    // main turns into `{}` (full document).
+    expect(mockAnalyzeFonts).toHaveBeenCalledWith(undefined, undefined);
     expect(mockRestartSidecar).not.toHaveBeenCalled();
+  });
+
+  it('analyzeFonts forwards a page range verbatim', async () => {
+    const fonts = { fonts: [] };
+    mockAnalyzeFonts.mockResolvedValue(fonts);
+
+    await expect(ipc.analyzeFonts(1, 10)).resolves.toEqual(fonts);
+
+    expect(mockAnalyzeFonts).toHaveBeenCalledTimes(1);
+    expect(mockAnalyzeFonts).toHaveBeenCalledWith(1, 10);
+    expect(mockRestartSidecar).not.toHaveBeenCalled();
+  });
+
+  it('analyzeFonts retries a ranged request with the same range', async () => {
+    mockRestartSidecar.mockResolvedValue({ success: true, running: true });
+    mockAnalyzeFonts
+      .mockImplementationOnce(() => new Promise(() => {}))
+      .mockResolvedValueOnce({ fonts: [] });
+
+    const promise = ipc.analyzeFonts(2, 5);
+    await vi.advanceTimersByTimeAsync(ANALYZE_FONTS_RENDERER_TIMEOUT_MS);
+    await vi.runAllTicks();
+
+    await expect(promise).resolves.toEqual({ fonts: [] });
+    expect(mockRestartSidecar).toHaveBeenCalledTimes(1);
+    // The restart must not silently widen the range back to the full document.
+    expect(mockAnalyzeFonts.mock.calls).toEqual([
+      [2, 5],
+      [2, 5],
+    ]);
   });
 
   it('analyzeFonts keeps waiting past the 30s default', async () => {

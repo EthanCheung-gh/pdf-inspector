@@ -99,9 +99,13 @@ export const ipc = {
   // Must be LARGER than the main-process budget so main's own timeout (and its
   // clear error) surfaces first: an equal budget would make the renderer lose
   // the race one IPC hop early and restart the sidecar instead.
-  analyzeFonts: () =>
+  //
+  // The optional 1-based, inclusive page range is forwarded verbatim; a retry
+  // after a restart re-sends the same range because the arguments are captured
+  // in the retried closure.
+  analyzeFonts: (startPage?: number, endPage?: number) =>
     callWithTimeout(
-      () => window.pdfInspector.analyzeFonts(),
+      () => window.pdfInspector.analyzeFonts(startPage, endPage),
       'analyzeFonts',
       ANALYZE_FONTS_RENDERER_TIMEOUT_MS,
     ),

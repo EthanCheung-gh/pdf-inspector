@@ -35,7 +35,7 @@ export interface IpcApi {
   saveFile(req: SaveFileRequest): Promise<SaveFileResult>;
   extractPage(page: number): Promise<PageData>;
   extractMetadata(): Promise<PdfMetadata>;
-  analyzeFonts(): Promise<{ fonts: FontStat[] }>;
+  analyzeFonts(startPage?: number, endPage?: number): Promise<{ fonts: FontStat[] }>;
   getImageData(streamId: string): Promise<{ base64?: string; format?: string; error?: string }>;
   getSidecarStatus(): Promise<{ running: boolean }>;
   restartSidecar(): Promise<{ success: boolean; running: boolean; error?: string }>;

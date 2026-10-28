@@ -145,11 +145,19 @@ export function registerIpcHandlers(sidecar: SidecarManager): void {
     return sidecar.send('extract_metadata');
   });
 
-  ipcMain.handle(IPC_CHANNELS.ANALYZE_FONTS, async () => {
+  ipcMain.handle(IPC_CHANNELS.ANALYZE_FONTS, async (_event, startPage?: number, endPage?: number) => {
     // Font analysis walks every page and every font, so a large PDF legitimately
     // exceeds the default request timeout. Only this channel gets the longer
     // budget; the others keep the 30s default.
-    return sidecar.send('analyze_fonts', {}, ANALYZE_FONTS_TIMEOUT_MS);
+    //
+    // The page range is optional and 1-based/inclusive. Omitting both arguments
+    // sends `{}`, which the sidecar treats as the whole document — the pre-range
+    // behavior stays the default.
+    const params: { start_page?: number; end_page?: number } = {};
+    if (startPage !== undefined) params.start_page = startPage;
+    if (endPage !== undefined) params.end_page = endPage;
+
+    return sidecar.send('analyze_fonts', params, ANALYZE_FONTS_TIMEOUT_MS);
   });
 
   ipcMain.handle(IPC_CHANNELS.GET_IMAGE_DATA, async (_event, streamId: string) => {

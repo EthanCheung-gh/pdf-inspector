@@ -7,7 +7,8 @@ contextBridge.exposeInMainWorld('pdfInspector', {
   openPdfUrl: (url: string) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_PDF_URL, url),
   extractPage: (page: number) => ipcRenderer.invoke(IPC_CHANNELS.EXTRACT_PAGE, page),
   extractMetadata: () => ipcRenderer.invoke(IPC_CHANNELS.EXTRACT_METADATA),
-  analyzeFonts: () => ipcRenderer.invoke(IPC_CHANNELS.ANALYZE_FONTS),
+  analyzeFonts: (startPage?: number, endPage?: number) =>
+    ipcRenderer.invoke(IPC_CHANNELS.ANALYZE_FONTS, startPage, endPage),
   getImageData: (streamId: string) => ipcRenderer.invoke(IPC_CHANNELS.GET_IMAGE_DATA, streamId),
   getSidecarStatus: () => ipcRenderer.invoke(IPC_CHANNELS.SIDECAR_STATUS),
   restartSidecar: () => ipcRenderer.invoke(IPC_CHANNELS.RESTART_SIDECAR),
