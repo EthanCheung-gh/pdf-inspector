@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ipc } from '../../services/ipc-client';
+import { analyzeFontsInBatches } from '../../services/font-stats';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { usePdfStore } from '../../store/pdf-store';
 import type { FontStat } from '../../types/ipc-protocol';
@@ -9,43 +10,66 @@ type FontRequest = { filePath: string };
 
 export const FontsTab: React.FC = () => {
   const filePath = usePdfStore((s) => s.filePath);
+  const pageCount = usePdfStore((s) => s.pageCount);
   const fontStats = usePdfStore((s) => s.fontStats);
-  const isLoading = usePdfStore((s) => s.isLoading);
+  const fontProgress = usePdfStore((s) => s.fontProgress);
   const setFontStats = usePdfStore((s) => s.setFontStats);
+  const setFontProgress = usePdfStore((s) => s.setFontProgress);
   const setError = usePdfStore((s) => s.setError);
   const setFilterCriteria = usePdfStore((s) => s.setFilterCriteria);
   const { navigate } = usePageNavigation();
   const [localError, setLocalError] = useState<string | null>(null);
   // Identifies the request that is allowed to update state. Re-renders caused by
-  // isLoading or fontStats changes must not start a duplicate analyzeFonts call,
-  // but the in-flight request must still be able to publish its result.
+  // progress, fontStats or navigation (isLoading) changes must not start a
+  // duplicate run or cancel a multi-batch one, but the in-flight request must
+  // still be able to publish its result.
   const inFlightRef = useRef<FontRequest | null>(null);
 
   useEffect(() => {
     if (!filePath || fontStats !== null || localError !== null) return;
-    if (isLoading) return;
     // A request for the same document is already running.
     if (inFlightRef.current?.filePath === filePath) return;
 
     const request: FontRequest = { filePath };
     inFlightRef.current = request;
+    const isCurrent = (): boolean => inFlightRef.current === request;
 
     void (async () => {
       try {
-        const result = await ipc.analyzeFonts();
-        // Ignore results that were superseded (e.g. another document was opened).
-        if (inFlightRef.current !== request) return;
-        setFontStats(result.fonts);
+        // Batches are sequential so queued extract_page requests can run in
+        // between them instead of waiting for the whole document.
+        const result = await analyzeFontsInBatches({
+          totalPages: usePdfStore.getState().pageCount,
+          fetchBatch: async (startPage, endPage) => (await ipc.analyzeFonts(startPage, endPage)).fonts,
+          onProgress: (progress) => {
+            if (isCurrent()) setFontProgress(progress);
+          },
+          isCancelled: () => !isCurrent(),
+        });
+        // Ignore results that were superseded (e.g. another document was opened)
+        // or cancelled: partial results must never be published.
+        if (!isCurrent() || result === null) return;
+        setFontStats(result);
         setError(null);
       } catch (error) {
-        if (inFlightRef.current !== request) return;
+        if (!isCurrent()) return;
         setLocalError(error instanceof Error ? error.message : 'Failed to analyze fonts');
         setError('Failed to analyze fonts. Please try again.');
       } finally {
-        if (inFlightRef.current === request) inFlightRef.current = null;
+        if (isCurrent()) {
+          inFlightRef.current = null;
+          setFontProgress(null);
+        }
       }
     })();
-  }, [filePath, fontStats, isLoading, localError, setError, setFontStats]);
+
+    return () => {
+      if (inFlightRef.current === request) {
+        inFlightRef.current = null;
+        setFontProgress(null);
+      }
+    };
+  }, [filePath, fontStats, localError, setError, setFontStats, setFontProgress]);
 
   const handleRetry = (): void => {
     setLocalError(null);
@@ -71,11 +95,20 @@ export const FontsTab: React.FC = () => {
       </div>
     );
   }
-  if (isLoading && fontStats === null) {
-    return <div className={styles.stateBox}>Analyzing fonts…</div>;
-  }
   if (fontStats === null) {
-    return <div className={styles.stateBox} />;
+    const done = fontProgress?.done ?? 0;
+    const total = fontProgress?.total ?? pageCount;
+    return (
+      <div className={styles.stateBox}>
+        <div>Analyzing fonts… {done}/{total} pages</div>
+        <progress
+          className={styles.progress}
+          value={done}
+          max={Math.max(total, 1)}
+          aria-label="Font analysis progress"
+        />
+      </div>
+    );
   }
   if (fontStats.length === 0) {
     return <div className={styles.stateBox}>No text fonts detected in this document.</div>;

@@ -39,6 +39,8 @@ describe('pdf-store', () => {
       fitWidthZoom: null,
       initialFitWidthZoom: false,
       textSelectionMode: false,
+      fontStats: null,
+      fontProgress: null,
     });
   });
 
@@ -337,5 +339,24 @@ describe('fontStats', () => {
     usePdfStore.getState().setFontStats([{ fontname: 'Helvetica', pages: [1], charCount: 9, sizeMin: 10, sizeMax: 14, colors: ['#000000'] }]);
     usePdfStore.getState().setFile('/x.pdf', { pages: 1, version: '1.7', encrypted: false, page_w: 100, page_h: 100, title: '', author: '', producer: '', fonts: [] });
     expect(usePdfStore.getState().fontStats).toBeNull();
+  });
+});
+
+describe('fontProgress', () => {
+  it('defaults to null', () => {
+    expect(usePdfStore.getInitialState().fontProgress).toBeNull();
+  });
+
+  it('setFontProgress sets and clears', () => {
+    usePdfStore.getState().setFontProgress({ done: 10, total: 25 });
+    expect(usePdfStore.getState().fontProgress).toEqual({ done: 10, total: 25 });
+    usePdfStore.getState().setFontProgress(null);
+    expect(usePdfStore.getState().fontProgress).toBeNull();
+  });
+
+  it('setFile resets fontProgress to null', () => {
+    usePdfStore.getState().setFontProgress({ done: 10, total: 25 });
+    usePdfStore.getState().setFile('/x.pdf', { pages: 1, version: '1.7', encrypted: false, page_w: 100, page_h: 100, title: '', author: '', producer: '', fonts: [] });
+    expect(usePdfStore.getState().fontProgress).toBeNull();
   });
 });

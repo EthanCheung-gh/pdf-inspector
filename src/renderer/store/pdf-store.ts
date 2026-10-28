@@ -3,6 +3,7 @@ import { PdfObject, PdfMetadata, PageData, PdfOutlineItem } from '../types/pdf-o
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { SearchMatch } from '../services/pdf-search';
 import type { FontStat } from '../types/ipc-protocol';
+import type { FontBatchProgress } from '../services/font-stats';
 import { ObjectSubset, FilterCriteria, filterByProperties } from '../services/object-filter';
 import { MAX_FIT_WIDTH_ZOOM, MIN_FIT_WIDTH_ZOOM } from '../services/page-geometry';
 
@@ -81,6 +82,9 @@ export interface PdfState {
   setExportProgress: (progress: { done: number; total: number } | null) => void;
   fontStats: FontStat[] | null;
   setFontStats: (stats: FontStat[] | null) => void;
+  /** Progress of the batched font analysis, or null when no run is active. */
+  fontProgress: FontBatchProgress | null;
+  setFontProgress: (progress: FontBatchProgress | null) => void;
   setRegionMode: (on: boolean) => void;
   setFilterCriteria: (criteria: FilterCriteria) => void;
   setSubset: (subset: ObjectSubset | null) => void;
@@ -124,6 +128,7 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   searchOpen: false,
   exportProgress: null,
   fontStats: null,
+  fontProgress: null,
   regionMode: false,
   filterCriteria: {},
   subset: null,
@@ -152,6 +157,7 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       searchOpen: false,
       exportProgress: null,
       fontStats: null,
+      fontProgress: null,
       subset: null,
     }),
 
@@ -220,6 +226,7 @@ export const usePdfStore = create<PdfState>((set, get) => ({
     set({ searchQuery: '', searchMatches: [], currentMatchIndex: -1, searchOpen: false }),
   setExportProgress: (progress) => set({ exportProgress: progress }),
   setFontStats: (stats) => set({ fontStats: stats }),
+  setFontProgress: (progress) => set({ fontProgress: progress }),
 
   setRegionMode: (on) =>
     set((state) => ({
