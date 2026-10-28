@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install npm dependencies
+        # Tests mock Electron, so the ~100 MB binary is not needed in CI.
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm ci
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: sidecar/requirements.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r sidecar/requirements.txt pytest reportlab
+
+      - name: Type-check (Node and renderer projects)
+        run: npx tsc -b
+
+      - name: Type-check (web build)
+        run: npx tsc -p tsconfig.web.json
+
+      - name: Run frontend tests
+        run: npx vitest run
+
+      - name: Run sidecar tests
+        run: python -m pytest sidecar/__tests__ -q
+
+      - name: Build desktop app
+        run: npm run build
+
+      - name: Build web client
+        run: npm run build:web
+
+      - name: Build web server
+        run: npm run build:web-server
+
+      - name: Generate web sample PDFs
+        run: python scripts/generate-web-samples.py
