@@ -23,6 +23,10 @@ describe('LeftPanel', () => {
       pageCount: 0,
       outline: null,
       pdfDocRef: null,
+      fontStats: null,
+      fontProgress: null,
+      error: null,
+      isLoading: false,
     });
   });
 
@@ -108,5 +112,45 @@ describe('LeftPanel', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Bookmarks' }));
 
     expect(screen.getByText('This document has 2001 bookmarks. The outline is too large to display.')).toBeTruthy();
+  });
+
+  // The Fonts tab runs a batched analysis whose cleanup cancels the run, so it
+  // must be mounted lazily (never before the first visit) and then kept alive
+  // while the user navigates other tabs.
+  it('mounts the Fonts tab on first visit and keeps it mounted across tab switches', () => {
+    render(React.createElement(LeftPanel));
+
+    const fontsHint = 'Open a PDF to analyze fonts.';
+    expect(screen.queryByText(fontsHint)).toBeNull();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Fonts' }));
+
+    const hint = screen.getByText(fontsHint);
+    expect(hint.closest('[hidden]')).toBeNull();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Structure' }));
+
+    // Still mounted, but inside the hidden wrapper: no remount, so an in-flight
+    // analysis keeps running instead of restarting from page 1.
+    const hiddenHint = screen.getByText(fontsHint);
+    expect(hiddenHint).toBe(hint);
+    const hiddenWrapper = hiddenHint.closest('[hidden]');
+    expect(hiddenWrapper).not.toBeNull();
+    expect(hiddenWrapper?.hasAttribute('hidden')).toBe(true);
+    expect(screen.getByRole('tab', { name: 'Structure' }).getAttribute('aria-selected')).toBe('true');
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Bookmarks' }));
+    expect(screen.getByText(fontsHint)).toBe(hint);
+    expect(hint.closest('[hidden]')).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Fonts' }));
+    expect(screen.getByText(fontsHint)).toBe(hint);
+    expect(hint.closest('[hidden]')).toBeNull();
+
+    // Tab semantics survive the extra wrapper.
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Structure', 'Bookmarks', 'Fonts']);
+    expect(screen.getByRole('tab', { name: 'Fonts' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tabpanel')).toBeTruthy();
   });
 });

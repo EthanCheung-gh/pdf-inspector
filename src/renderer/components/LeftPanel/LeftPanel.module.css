@@ -49,6 +49,23 @@
   overflow: hidden;
 }
 
+/*
+ * Wrapper for the Fonts tab, which stays mounted while another tab is active.
+ * The explicit [hidden] rule is required: the author-level `display: flex`
+ * below outranks the user-agent `[hidden] { display: none }` rule.
+ */
+.tabPanel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tabPanel[hidden] {
+  display: none;
+}
+
 .emptyState {
   display: grid;
   flex: 1;
