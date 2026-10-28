@@ -121,7 +121,7 @@ export const StructureTree: React.FC = () => {
                           <span>{group.label}</span>
                           <span className={styles.count}>{group.objects.length}</span>
                         </div>
-                        {visibleObjects.map((object) => {
+                        {visibleObjects.map((object, index) => {
                           const isSelected = selectedObject !== null && objectsMatch(selectedObject, object);
                           const label = formatObjectLabel(object);
 
@@ -129,7 +129,7 @@ export const StructureTree: React.FC = () => {
                             <button
                               className={`${styles.objectButton} ${isSelected ? styles.selectedObject : ''}`}
                               type="button"
-                              key={objectId(object)}
+                              key={`${objectId(object)}-${index}`}
                               onClick={() => void handleObjectClick(object)}
                               title={label}
                             >
@@ -137,6 +137,11 @@ export const StructureTree: React.FC = () => {
                             </button>
                           );
                         })}
+                        {type === 'word' && group.objects.length > MAX_WORDS && (
+                          <div className={styles.truncationHint}>
+                            Showing first {MAX_WORDS} of {group.objects.length} words
+                          </div>
+                        )}
                     </section>
                   );
                 })}

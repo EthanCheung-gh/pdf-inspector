@@ -152,12 +152,50 @@ export function objectsToCsv(objects: PdfObject[], page: number): string {
   return `﻿${out.join('\n')}\n`;
 }
 
+function localStem(pdfPath: string | null): string {
+  return (pdfPath?.split(/[\\/]/).pop() ?? 'document').replace(/\.pdf$/i, '');
+}
+
+/**
+ * Filename stem derived from a source URL's last path segment. Query and hash
+ * are not part of `pathname`, so they never end up in the name. Returns null
+ * when the URL is unusable (unparseable, no file segment, broken escaping) so
+ * callers can fall back to the local path.
+ */
+function urlStem(sourceUrl: string | null | undefined): string | null {
+  if (!sourceUrl) return null;
+
+  let pathname: string;
+  try {
+    pathname = new URL(sourceUrl).pathname;
+  } catch {
+    return null;
+  }
+
+  const segment = pathname.split('/').filter(Boolean).pop();
+  // A trailing slash means the last segment is a directory, not a file name.
+  if (!segment || pathname.endsWith('/')) return null;
+
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+
+  const stem = decoded.replace(/[\\/]/g, '_').replace(/\.pdf$/i, '').trim();
+  return stem.length > 0 ? stem : null;
+}
+
 export function suggestFilename(
   pdfPath: string | null,
   scope: 'page' | 'document',
   page: number,
   ext: 'json' | 'csv',
+  sourceUrl?: string | null,
 ): string {
-  const base = (pdfPath?.split(/[\\/]/).pop() ?? 'document').replace(/\.pdf$/i, '');
+  // URL documents are downloaded to a temp file with a hash in its name, so
+  // prefer the name the user recognises from the URL they opened.
+  const base = urlStem(sourceUrl) ?? localStem(pdfPath);
   return scope === 'page' ? `${base}-p${page}.${ext}` : `${base}-all.${ext}`;
 }

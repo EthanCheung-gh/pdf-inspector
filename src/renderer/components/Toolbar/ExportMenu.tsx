@@ -50,7 +50,7 @@ export const ExportMenu: React.FC = () => {
 
       const content = format === 'json' ? pagesToJson(pages, store.metadata) : pagesToCsv(pages);
       const result = await ipc.saveFile({
-        defaultPath: suggestFilename(store.filePath, scope, store.currentPage, format),
+        defaultPath: suggestFilename(store.filePath, scope, store.currentPage, format, store.sourceUrl),
         content,
         filterName: format === 'json' ? 'JSON' : 'CSV',
         extensions: [format],

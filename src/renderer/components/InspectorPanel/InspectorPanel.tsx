@@ -172,7 +172,7 @@ export const InspectorPanel = (): JSX.Element => {
         : objectsToCsv(state.subset.objects, state.currentPage);
     try {
       const result = await ipc.saveFile({
-        defaultPath: suggestFilename(state.filePath, "page", state.currentPage, ext),
+        defaultPath: suggestFilename(state.filePath, "page", state.currentPage, ext, state.sourceUrl),
         content,
         filterName: ext.toUpperCase(),
         extensions: [ext],
@@ -270,10 +270,12 @@ export const InspectorPanel = (): JSX.Element => {
             </h3>
             <div className={styles.sectionContent}>
               {subset.source === "region" && (
-                <div className={styles.row}>
+                <div className={styles.row} role="radiogroup" aria-label="Region match mode">
                   <label className={styles.checkLabel}>
                     <input
-                      type="checkbox"
+                      type="radio"
+                      name="region-mode"
+                      value="intersect"
                       checked={subset.mode === "intersect"}
                       onChange={() => applyRegionMode("intersect")}
                     />
@@ -281,7 +283,9 @@ export const InspectorPanel = (): JSX.Element => {
                   </label>
                   <label className={styles.checkLabel}>
                     <input
-                      type="checkbox"
+                      type="radio"
+                      name="region-mode"
+                      value="contain"
                       checked={subset.mode === "contain"}
                       onChange={() => applyRegionMode("contain")}
                     />

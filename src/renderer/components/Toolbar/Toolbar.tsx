@@ -1,9 +1,11 @@
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { ipc } from '../../services/ipc-client';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { usePdfStore } from '../../store/pdf-store';
 import { SearchBox } from './SearchBox';
 import { ExportMenu } from './ExportMenu';
+import { OpenUrlDialog } from './OpenUrlDialog';
+import type { OpenedFromUrl } from './OpenUrlDialog';
 import styles from './Toolbar.module.css';
 
 const OVERLAYS = [
@@ -18,6 +20,7 @@ const OVERLAYS = [
 
 export const Toolbar: React.FC = () => {
   const openRequestIdRef = useRef(0);
+  const [urlDialogOpen, setUrlDialogOpen] = useState(false);
   const currentPage = usePdfStore((state) => state.currentPage);
   const pageCount = usePdfStore((state) => state.pageCount);
   const zoom = usePdfStore((state) => state.zoom);
@@ -25,6 +28,7 @@ export const Toolbar: React.FC = () => {
   const overlayVisibility = usePdfStore((state) => state.overlayVisibility);
   const isLoading = usePdfStore((state) => state.isLoading);
   const filePath = usePdfStore((state) => state.filePath);
+  const sourceUrl = usePdfStore((state) => state.sourceUrl);
   const textSelectionMode = usePdfStore((state) => state.textSelectionMode);
   const regionMode = usePdfStore((state) => state.regionMode);
   const setFile = usePdfStore((state) => state.setFile);
@@ -59,6 +63,17 @@ export const Toolbar: React.FC = () => {
     }
   }, [navigate, setError, setFile, setLoading]);
 
+  const handleUrlOpened = useCallback(
+    async (result: OpenedFromUrl) => {
+      // Invalidate any in-flight local `openPdf` dialog: the URL document is
+      // the newest request and must not be clobbered when that one settles.
+      openRequestIdRef.current += 1;
+      setFile(result.path, result.metadata, result.sourceUrl ?? null);
+      await navigate(1);
+    },
+    [navigate, setFile],
+  );
+
   const handleFitWidth = useCallback(() => {
     if (fitWidthZoom !== null) {
       setFitWidthZoom(fitWidthZoom);
@@ -75,12 +90,22 @@ export const Toolbar: React.FC = () => {
     if (!regionMode) setTextSelectionMode(false);
   }, [regionMode, setRegionMode, setTextSelectionMode]);
 
-  const filename = filePath?.split(/[\\/]/).pop() ?? 'No file open';
+  const displayTitle = sourceUrl ?? filePath ?? undefined;
+  const filename = sourceUrl ?? (filePath ? (filePath.split(/[\\/]/).pop() ?? filePath) : 'No file open');
 
   return (
     <header className={styles.toolbar}>
       <button className={styles.button} type="button" onClick={handleOpen} disabled={isLoading}>
         Open
+      </button>
+      <button
+        className={styles.button}
+        type="button"
+        onClick={() => setUrlDialogOpen(true)}
+        disabled={isLoading}
+        title="Open a PDF from an http(s) URL"
+      >
+        Open URL
       </button>
 
       <span className={styles.separator} />
@@ -178,7 +203,13 @@ export const Toolbar: React.FC = () => {
       <div className={styles.spacer} />
       <ExportMenu />
       <SearchBox />
-      <span className={styles.filename} title={filePath ?? undefined}>{filename}</span>
+      <span className={styles.filename} title={displayTitle}>{filename}</span>
+
+      <OpenUrlDialog
+        open={urlDialogOpen}
+        onClose={() => setUrlDialogOpen(false)}
+        onOpened={handleUrlOpened}
+      />
     </header>
   );
 };

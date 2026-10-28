@@ -1,9 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ipc } from '../../services/ipc-client';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { usePdfStore } from '../../store/pdf-store';
 import type { FontStat } from '../../types/ipc-protocol';
 import styles from './FontsTab.module.css';
+
+type FontRequest = { filePath: string };
 
 export const FontsTab: React.FC = () => {
   const filePath = usePdfStore((s) => s.filePath);
@@ -14,25 +16,35 @@ export const FontsTab: React.FC = () => {
   const setFilterCriteria = usePdfStore((s) => s.setFilterCriteria);
   const { navigate } = usePageNavigation();
   const [localError, setLocalError] = useState<string | null>(null);
+  // Identifies the request that is allowed to update state. Re-renders caused by
+  // isLoading or fontStats changes must not start a duplicate analyzeFonts call,
+  // but the in-flight request must still be able to publish its result.
+  const inFlightRef = useRef<FontRequest | null>(null);
 
   useEffect(() => {
     if (!filePath || fontStats !== null || localError !== null) return;
     if (isLoading) return;
-    let cancelled = false;
+    // A request for the same document is already running.
+    if (inFlightRef.current?.filePath === filePath) return;
+
+    const request: FontRequest = { filePath };
+    inFlightRef.current = request;
 
     void (async () => {
       try {
         const result = await ipc.analyzeFonts();
-        if (!cancelled) setFontStats(result.fonts);
+        // Ignore results that were superseded (e.g. another document was opened).
+        if (inFlightRef.current !== request) return;
+        setFontStats(result.fonts);
+        setError(null);
       } catch (error) {
-        if (!cancelled) {
-          setLocalError(error instanceof Error ? error.message : 'Failed to analyze fonts');
-          setError('Failed to analyze fonts. Please try again.');
-        }
+        if (inFlightRef.current !== request) return;
+        setLocalError(error instanceof Error ? error.message : 'Failed to analyze fonts');
+        setError('Failed to analyze fonts. Please try again.');
+      } finally {
+        if (inFlightRef.current === request) inFlightRef.current = null;
       }
     })();
-
-    return () => { cancelled = true; };
   }, [filePath, fontStats, isLoading, localError, setError, setFontStats]);
 
   const handleRetry = (): void => {

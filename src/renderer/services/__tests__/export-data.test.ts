@@ -101,6 +101,60 @@ describe('suggestFilename', () => {
     expect(suggestFilename(null, 'page', 1, 'json')).toBe('document-p1.json');
     expect(suggestFilename('/a/b.txt', 'document', 1, 'csv')).toBe('b.txt-all.csv');
   });
+
+  it('keeps the local basename when no source URL is given', () => {
+    expect(suggestFilename('/tmp/report-1a2b3c4d.pdf', 'page', 2, 'json', null)).toBe(
+      'report-1a2b3c4d-p2.json',
+    );
+    expect(suggestFilename('/tmp/report-1a2b3c4d.pdf', 'document', 1, 'csv', undefined)).toBe(
+      'report-1a2b3c4d-all.csv',
+    );
+  });
+
+  it('prefers the URL stem over the temp file name', () => {
+    expect(
+      suggestFilename('/tmp/report-1a2b3c4d.pdf', 'page', 1, 'json', 'https://example.com/docs/report.pdf'),
+    ).toBe('report-p1.json');
+    expect(
+      suggestFilename('/tmp/report-1a2b3c4d.pdf', 'document', 1, 'csv', 'https://example.com/docs/report.PDF'),
+    ).toBe('report-all.csv');
+  });
+
+  it('strips query and hash and decodes the URL segment', () => {
+    expect(
+      suggestFilename(
+        '/tmp/My%20Report-1a2b3c4d.pdf',
+        'page',
+        4,
+        'csv',
+        'https://example.com/files/My%20Report.pdf?token=abc#page=4',
+      ),
+    ).toBe('My Report-p4.csv');
+  });
+
+  it('falls back to the temp basename when the URL has no file name', () => {
+    expect(suggestFilename('/tmp/Q1-9f8e7d6c.pdf', 'document', 1, 'json', 'https://example.com/')).toBe(
+      'Q1-9f8e7d6c-all.json',
+    );
+    expect(
+      suggestFilename('/tmp/Q1-9f8e7d6c.pdf', 'page', 2, 'csv', 'https://example.com/downloads/'),
+    ).toBe('Q1-9f8e7d6c-p2.csv');
+  });
+
+  it('does not throw on malformed percent-encoding and falls back to the temp basename', () => {
+    expect(() =>
+      suggestFilename('/tmp/report-1a2b3c4d.pdf', 'page', 1, 'json', 'https://example.com/bad%E0%A4%A.pdf'),
+    ).not.toThrow();
+    expect(
+      suggestFilename('/tmp/report-1a2b3c4d.pdf', 'page', 1, 'json', 'https://example.com/bad%E0%A4%A.pdf'),
+    ).toBe('report-1a2b3c4d-p1.json');
+  });
+
+  it('does not let an encoded path separator escape into the filename', () => {
+    expect(
+      suggestFilename('/tmp/report-1a2b3c4d.pdf', 'page', 1, 'json', 'https://example.com/a%2Fb.pdf'),
+    ).toBe('a_b-p1.json');
+  });
 });
 
 const objects: PdfObject[] = [

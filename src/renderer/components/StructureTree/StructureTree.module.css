@@ -121,6 +121,13 @@
   background: #2d6db5;
 }
 
+.truncationHint {
+  padding: 4px 10px 4px 29px;
+  color: #6f7b87;
+  font-size: 10px;
+  font-style: italic;
+}
+
 .pageButton:focus-visible,
 .objectButton:focus-visible {
   outline: 2px solid #5b9cff;
