@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageData, PdfMetadata, PdfRect, PdfWord } from '../../types/pdf-objects';
 import { usePdfStore } from '../../store/pdf-store';
 
+const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
+
 vi.mock('../../hooks/usePageNavigation', () => ({
-  usePageNavigation: () => ({ navigate: vi.fn() }),
+  usePageNavigation: () => ({ navigate }),
 }));
 
 import { StructureTree } from './StructureTree';
@@ -61,10 +63,25 @@ const pageData = (overrides: Partial<PageData> = {}): PageData => ({
   ...overrides,
 });
 
+const wordOnPage = (page: number, text: string): PdfWord => ({
+  ...makeWord(0),
+  page,
+  text,
+});
+
+const pageButton = (page: number): HTMLElement =>
+  screen.getByRole('button', { name: new RegExp(`Page ${page}$`) });
+
 describe('StructureTree', () => {
   afterEach(cleanup);
 
   beforeEach(() => {
+    // The mocked navigate mirrors the real hook's store side of a page change,
+    // so page-scoped state (active page, page data) behaves like production.
+    navigate.mockReset();
+    navigate.mockImplementation(async (page: number) => {
+      usePdfStore.getState().setPage(page);
+    });
     usePdfStore.setState({
       filePath: '/tmp/test.pdf',
       metadata,
@@ -114,5 +131,92 @@ describe('StructureTree', () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+
+  it('toggles the active page groups on repeated clicks without navigating', () => {
+    const words = [wordOnPage(1, 'page-one-word')];
+    usePdfStore.setState({ pageCount: 2, pageData: pageData({ words }), allObjects: words });
+
+    render(React.createElement(StructureTree));
+
+    const button = pageButton(1);
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    expect(button.getAttribute('aria-current')).toBe('page');
+    expect(button.textContent).toContain('▾');
+    expect(screen.getByRole('button', { name: 'page-one-word' })).toBeTruthy();
+
+    fireEvent.click(button);
+
+    expect(screen.queryByRole('button', { name: 'page-one-word' })).toBeNull();
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(button.getAttribute('aria-current')).toBe('page');
+    expect(button.textContent).toContain('▸');
+    expect(navigate).not.toHaveBeenCalled();
+
+    fireEvent.click(button);
+
+    expect(screen.getByRole('button', { name: 'page-one-word' })).toBeTruthy();
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    expect(button.textContent).toContain('▾');
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('navigates to another page and keeps that page expanded', async () => {
+    const words = [wordOnPage(1, 'page-one-word')];
+    usePdfStore.setState({ pageCount: 2, pageData: pageData({ words }), allObjects: words });
+
+    render(React.createElement(StructureTree));
+
+    fireEvent.click(pageButton(1));
+    expect(screen.queryByRole('button', { name: 'page-one-word' })).toBeNull();
+
+    fireEvent.click(pageButton(2));
+
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith(2));
+    expect(navigate).toHaveBeenCalledTimes(1);
+
+    expect(screen.queryByRole('button', { name: 'page-one-word' })).toBeNull();
+    expect(pageButton(1).getAttribute('aria-current')).toBeNull();
+    expect(pageButton(2).getAttribute('aria-current')).toBe('page');
+    expect(pageButton(2).getAttribute('aria-expanded')).toBe('false');
+    expect(pageButton(2).textContent).toContain('▸');
+
+    const pageTwoWords = [wordOnPage(2, 'page-two-word')];
+    await act(async () => {
+      usePdfStore.setState({
+        currentPage: 2,
+        pageData: pageData({ words: pageTwoWords }),
+        allObjects: pageTwoWords,
+      });
+    });
+
+    expect(screen.getByRole('button', { name: 'page-two-word' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'page-one-word' })).toBeNull();
+    expect(pageButton(2).getAttribute('aria-expanded')).toBe('true');
+    expect(pageButton(2).textContent).toContain('▾');
+  });
+
+  it('starts a newly active page expanded even when the previous page was collapsed', () => {
+    const words = [wordOnPage(1, 'page-one-word')];
+    usePdfStore.setState({ pageCount: 2, pageData: pageData({ words }), allObjects: words });
+
+    render(React.createElement(StructureTree));
+
+    fireEvent.click(pageButton(1));
+    expect(pageButton(1).getAttribute('aria-expanded')).toBe('false');
+
+    const pageTwoWords = [wordOnPage(2, 'page-two-word')];
+    act(() => {
+      usePdfStore.setState({
+        currentPage: 2,
+        pageData: pageData({ words: pageTwoWords }),
+        allObjects: pageTwoWords,
+      });
+    });
+
+    expect(screen.getByRole('button', { name: 'page-two-word' })).toBeTruthy();
+    expect(pageButton(2).getAttribute('aria-expanded')).toBe('true');
+    expect(pageButton(2).textContent).toContain('▾');
+    expect(screen.queryByRole('button', { name: 'page-one-word' })).toBeNull();
   });
 });

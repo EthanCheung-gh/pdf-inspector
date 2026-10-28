@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { usePdfStore } from '../../store/pdf-store';
 import { PageData, PdfObject, PdfObjectType } from '../../types/pdf-objects';
@@ -58,6 +58,15 @@ export const StructureTree: React.FC = () => {
   const selectedObject = usePdfStore((state) => state.selectedObject);
   const setSelectedObject = usePdfStore((state) => state.setSelectedObject);
   const { navigate } = usePageNavigation();
+  // Page whose groups the user collapsed. Only the active page can be
+  // collapsed, so a single page number is enough state.
+  const [collapsedPage, setCollapsedPage] = useState<number | null>(null);
+
+  // Any navigation (tree, toolbar, bookmark, search) starts the new page
+  // expanded, so a collapse never follows the user to another page.
+  useEffect(() => {
+    setCollapsedPage(null);
+  }, [currentPage]);
 
   if (!filePath || !metadata || pageCount === 0) {
     return <div className={styles.emptyState}>Open a PDF to view its structure.</div>;
@@ -90,25 +99,38 @@ export const StructureTree: React.FC = () => {
     }
   };
 
+  // Clicking the already active page only toggles its groups; visiting another
+  // page keeps the existing navigation flow (and loads it expanded).
+  const handlePageClick = (pageNumber: number): void => {
+    if (pageNumber === currentPage) {
+      setCollapsedPage((previous) => (previous === pageNumber ? null : pageNumber));
+      return;
+    }
+
+    void navigate(pageNumber);
+  };
+
   return (
     <nav className={styles.tree} aria-label="PDF page structure">
       {Array.from({ length: pageCount }, (_, index) => {
         const pageNumber = index + 1;
         const isActive = pageNumber === currentPage;
+        const isExpanded = isActive && pageData !== null && collapsedPage !== pageNumber;
 
         return (
           <div className={styles.page} key={pageNumber}>
             <button
               className={`${styles.pageButton} ${isActive ? styles.activePage : ''}`}
               type="button"
-              onClick={() => void navigate(pageNumber)}
+              onClick={() => handlePageClick(pageNumber)}
               aria-current={isActive ? 'page' : undefined}
+              aria-expanded={isExpanded}
             >
-              <span className={styles.pageIcon}>▸</span>
+              <span className={styles.pageIcon}>{isExpanded ? '▾' : '▸'}</span>
               Page {pageNumber}
             </button>
 
-            {isActive && pageData && (
+            {isExpanded && (
               <div className={styles.groups}>
                 {groups.map((group) => {
                   const type = group.objects[0]?.type;
