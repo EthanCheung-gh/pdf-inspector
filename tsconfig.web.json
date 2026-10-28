@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src/web", "src/renderer/vite-env.d.ts"],
+  "references": []
+}

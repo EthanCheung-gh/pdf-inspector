@@ -2,6 +2,9 @@ node_modules/
 dist/
 release/
 dist-sidecar/
+dist-web/
+dist-web-server/
+web-samples/
 sidecar/build/
 .venv/
 .superpowers/
