@@ -1,17 +1,30 @@
 from typing import Optional
 import base64
 import re
+from io import BytesIO
 
 import pdfplumber
 from pdfplumber.page import Page
+
+# Image formats the renderer (Chromium) can display straight from a data: URL.
+DIRECT_IMAGE_FORMATS = frozenset({'png', 'jpeg', 'gif', 'webp'})
+
+# JPEG2000 codestream / JP2 container signatures.
+_JPX_SIGNATURES = (b'\x00\x00\x00\x0cjP  \r\n\x87\n', b'\xff\x4f\xff\x51')
+_JBIG2_SIGNATURE = b'\x97JB2\r\n\x1a\n'
 
 
 class PdfExtractor:
     """Wraps pdfplumber to extract page-level structured data."""
 
     @staticmethod
-    def _detect_image_format(data: bytes) -> str:
-        """Identify a supported image format from its byte signature."""
+    def _detect_image_format(data: bytes) -> Optional[str]:
+        """Identify an image format from its byte signature.
+
+        Returns a browser-renderable name for PNG/JPEG/GIF/WebP, 'jpx' or
+        'jbig2' for JPEG2000/JBIG2 payloads (both PDF-native and not directly
+        renderable), and None when the signature is unknown.
+        """
         if data.startswith(b'\x89PNG\r\n\x1a\n'):
             return 'png'
         if data.startswith(b'\xff\xd8\xff'):
@@ -20,19 +33,167 @@ class PdfExtractor:
             return 'gif'
         if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
             return 'webp'
-        return 'jpeg'
+        if data.startswith(_JPX_SIGNATURES):
+            return 'jpx'
+        if data.startswith(_JBIG2_SIGNATURE):
+            return 'jbig2'
+        return None
+
+    @staticmethod
+    def _transcode_to_png(data: bytes) -> Optional[bytes]:
+        """Re-encode anything Pillow can decode as PNG; None if that is impossible."""
+        try:
+            from PIL import Image
+        except Exception:
+            return None
+        try:
+            with Image.open(BytesIO(data)) as image:
+                if image.mode not in ('1', 'L', 'LA', 'P', 'RGB', 'RGBA'):
+                    # CMYK, I;16, F, ... have no direct PNG equivalent.
+                    image = image.convert('RGBA' if 'A' in image.mode else 'RGB')
+                out = BytesIO()
+                image.save(out, format='PNG')
+                return out.getvalue()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _word_y_range(
+        word: dict,
+        page_height: float,
+        mediabox_top: float,
+    ) -> tuple[float, float]:
+        """Return a word's (y0, y1) in the same PDF-space coords as page.chars.
+
+        pdfplumber's WordExtractor only reports top/bottom, derived from the char
+        boxes as ``top = page.height - y1 + mediabox_top`` and
+        ``bottom = page.height - y0 + mediabox_top`` (Page.process_object). The
+        inverse therefore has to add the MediaBox vertical origin back, otherwise
+        words are displaced by |mediabox_top| relative to chars/rects/lines on
+        pages whose MediaBox does not start at y = 0.
+        """
+        y0 = word.get('y0')
+        y1 = word.get('y1')
+        if y0 is None:
+            y0 = page_height + mediabox_top - float(word['bottom'])
+        if y1 is None:
+            y1 = page_height + mediabox_top - float(word['top'])
+        return float(y0), float(y1)
+
+    @classmethod
+    def _encode_for_preview(cls, data: bytes) -> dict:
+        """Build the {'base64', 'format'} payload the renderer can display.
+
+        Directly renderable formats pass through untouched; every other format
+        is transcoded to PNG; payloads that cannot be decoded yield {'error'}.
+        """
+        fmt = cls._detect_image_format(data)
+        if fmt in DIRECT_IMAGE_FORMATS:
+            return {'base64': base64.b64encode(data).decode('ascii'), 'format': fmt}
+
+        png = cls._transcode_to_png(data)
+        if png is not None:
+            return {'base64': base64.b64encode(png).decode('ascii'), 'format': 'png'}
+
+        return {'error': f'Unsupported image format: {fmt or "unknown"}'}
+
+    @staticmethod
+    def _resolve_pdf_value(value):
+        """Follow a pdfminer PDFObjRef (or any ``.resolve()`` wrapper) to its target.
+
+        Returns None when resolution fails so callers can skip a broken object
+        instead of failing the whole request.
+        """
+        resolve = getattr(value, 'resolve', None)
+        if callable(resolve):
+            try:
+                return resolve()
+            except Exception:
+                return None
+        return value
+
+    @classmethod
+    def _base_font_name(cls, font_obj) -> Optional[str]:
+        """Return a font dictionary's BaseFont as a plain string, or None.
+
+        pdfminer represents BaseFont as a PSLiteral, so ``.name`` is the reliable
+        accessor; ``str(PSLiteral('Helvetica'))`` is ``"/'Helvetica'"`` and is only
+        used as a last-resort fallback.
+        """
+        getter = getattr(font_obj, 'get', None)
+        if not callable(getter):
+            return None
+        try:
+            base_font = cls._resolve_pdf_value(getter('BaseFont'))
+        except Exception:
+            return None
+        if base_font is None:
+            return None
+
+        name = getattr(base_font, 'name', None)
+        if isinstance(name, bytes):
+            name = name.decode('latin-1', 'replace')
+        if isinstance(name, str) and name:
+            return name
+        if isinstance(base_font, bytes):
+            text = base_font.decode('latin-1', 'replace').strip()
+            return text or None
+        if isinstance(base_font, str):
+            return base_font or None
+
+        try:
+            text = str(base_font).strip()
+        except Exception:
+            return None
+        # PSLiteral fallback form: "/'Helvetica'" -> "Helvetica".
+        if text.startswith('/'):
+            text = text[1:]
+        text = text.strip().strip("'").strip()
+        return text or None
+
+    def _collect_font_names(self) -> list[str]:
+        """Collect BaseFont names from page font resources, without page layout.
+
+        Walking ``page.chars`` requires full text layout for every page, which
+        times out on large PDFs. The resource dictionaries already list every
+        font referenced by a page, so reading them is enough for metadata.
+        Any per-page or per-font failure is skipped: metadata must never fail
+        because of one malformed font resource.
+        """
+        names: set[str] = set()
+        for page in self._pdf.pages:
+            try:
+                page_obj = getattr(page, 'page_obj', None)
+                resources = self._resolve_pdf_value(getattr(page_obj, 'resources', None))
+                if not isinstance(resources, dict):
+                    continue
+                font_resources = self._resolve_pdf_value(resources.get('Font'))
+                if not isinstance(font_resources, dict):
+                    continue
+                for font_ref in list(font_resources.values()):
+                    try:
+                        font_obj = self._resolve_pdf_value(font_ref)
+                        if not isinstance(font_obj, dict):
+                            continue
+                        name = self._base_font_name(font_obj)
+                    except Exception:
+                        continue
+                    if name:
+                        names.add(name)
+            except Exception:
+                # A malformed page (or resources accessor) must not break metadata.
+                continue
+        return sorted(names)
 
     def __init__(self, path: str, password: Optional[str] = None):
         self._path = path
         self._password = password
         self._pdf = pdfplumber.open(path, password=password)
+        # analyze_fonts() needs a full char walk; memoize it for the document.
+        self._font_stats_cache: Optional[dict] = None
 
     def get_metadata(self) -> dict:
         doc = self._pdf.metadata
-        fonts = set()
-        for page in self._pdf.pages:
-            for char in page.chars:
-                fonts.add(char.get('fontname', ''))
         return {
             'pages': len(self._pdf.pages),
             'version': self._pdf.pdf_version if hasattr(self._pdf, 'pdf_version') else 'unknown',
@@ -42,10 +203,16 @@ class PdfExtractor:
             'title': doc.get('Title', ''),
             'author': doc.get('Author', ''),
             'producer': doc.get('Producer', ''),
-            'fonts': sorted(fonts),
+            'fonts': self._collect_font_names(),
         }
 
     def analyze_fonts(self) -> dict:
+        """Character-level font statistics, computed at most once per document."""
+        if self._font_stats_cache is None:
+            self._font_stats_cache = self._compute_font_stats()
+        return self._font_stats_cache
+
+    def _compute_font_stats(self) -> dict:
         fonts: dict[str, dict] = {}
         for page_num, page in enumerate(self._pdf.pages, start=1):
             for c in page.chars:
@@ -83,12 +250,17 @@ class PdfExtractor:
                 'page': page_num,
             })
 
+        page_height = float(page.height)
+        mediabox = getattr(page, 'mediabox', None)
+        mediabox_top = float(mediabox[1]) if mediabox is not None else 0.0
+
         words = []
         for w in page.extract_words():
+            y0, y1 = self._word_y_range(w, page_height, mediabox_top)
             words.append({
                 'type': 'word',
-                'x0': float(w['x0']), 'y0': float(w['y0']),
-                'x1': float(w['x1']), 'y1': float(w['y1']),
+                'x0': float(w['x0']), 'y0': y0,
+                'x1': float(w['x1']), 'y1': y1,
                 'text': w.get('text', ''),
                 'fontname': w.get('fontname', ''),
                 'size': float(w.get('size', 0)),
@@ -149,15 +321,18 @@ class PdfExtractor:
         tables = []
         for tbl in page.find_tables():
             bbox = tbl.bbox
-            cells = []
-            for row in tbl.cells:
-                cells.append([cell.get('text', '') if isinstance(cell, dict) else str(cell) for cell in row])
+            # tbl.cells holds bbox tuples; tbl.extract() holds the actual text.
+            extracted = tbl.extract() or []
+            cells = [
+                ['' if cell is None else str(cell) for cell in (row or [])]
+                for row in extracted
+            ]
             tables.append({
                 'type': 'table',
                 'x0': float(bbox[0]), 'y0': float(bbox[1]),
                 'x1': float(bbox[2]), 'y1': float(bbox[3]),
-                'rows': len(tbl.cells),
-                'cols': len(tbl.cells[0]) if tbl.cells else 0,
+                'rows': len(extracted),
+                'cols': max((len(row) for row in extracted), default=0),
                 'cells': cells,
                 'page': page_num,
             })
@@ -199,13 +374,15 @@ class PdfExtractor:
             return {'error': 'No stream data available'}
 
         try:
-            data = stream.get('data', b'')
-            if isinstance(data, memoryview):
+            data = stream.get('data') if hasattr(stream, 'get') else None
+            if not isinstance(data, (bytes, bytearray, memoryview)):
+                # pdfminer's PDFStream exposes the decoded payload via get_data().
+                data = stream.get_data()
+            if isinstance(data, (bytearray, memoryview)):
                 data = bytes(data)
-            elif not isinstance(data, bytes):
+            if not isinstance(data, bytes):
                 data = b''
-            b64 = base64.b64encode(data).decode('ascii')
-            return {'base64': b64, 'format': self._detect_image_format(data)}
+            return self._encode_for_preview(data)
         except Exception as e:
             return {'error': str(e)}
 
