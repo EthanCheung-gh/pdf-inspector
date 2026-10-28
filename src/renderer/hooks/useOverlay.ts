@@ -62,9 +62,6 @@ export const useOverlay = () => {
       const width = (object.x1 - object.x0) * scaleX;
       const height = (object.y1 - object.y0) * scaleY;
       ctx.strokeRect(x, y, width, height);
-      ctx.font = '11px sans-serif';
-      ctx.textBaseline = 'top';
-      ctx.fillText(object.type, x + 2, y + 2);
     });
 
     if (regionRect) {
@@ -79,7 +76,9 @@ export const useOverlay = () => {
       ctx.strokeRect(x, y, w, h);
     }
 
-    if (subset) {
+    // Filter subsets already draw only the selected objects, so an extra pass
+    // would just double their outlines. The orange highlight belongs to regions.
+    if (subset && subset.source === 'region') {
       const memberSet = new Set(subset.objects);
       ctx.strokeStyle = 'rgba(255, 140, 0, 1)';
       ctx.lineWidth = 2;

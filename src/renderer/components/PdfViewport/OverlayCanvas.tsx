@@ -3,6 +3,7 @@ import { useHitTest } from '../../hooks/useHitTest';
 import { useOverlay } from '../../hooks/useOverlay';
 import { useRegionSelect } from '../../hooks/useRegionSelect';
 import { usePdfStore } from '../../store/pdf-store';
+import { effectiveOverlayVisibility, overlayObjects } from '../../services/overlay-visibility';
 
 interface OverlayCanvasProps {
   pageNum: number;
@@ -25,6 +26,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
   const overlayVisibility = usePdfStore((state) => state.overlayVisibility);
   const textSelectionMode = usePdfStore((state) => state.textSelectionMode);
   const subset = usePdfStore((state) => state.subset);
+  const filterCriteria = usePdfStore((state) => state.filterCriteria);
   const regionMode = usePdfStore((state) => state.regionMode);
   const setHoveredObject = usePdfStore((state) => state.setHoveredObject);
   const setSelectedObject = usePdfStore((state) => state.setSelectedObject);
@@ -45,14 +47,27 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
     const context = canvas.getContext('2d');
     if (context) {
       context.scale(dpr, dpr);
-      drawOverlays(context, allObjects, overlayVisibility, pageWidth, pageHeight, pdfWidth, pdfHeight, subset, liveRect);
+      // A property filter draws only its matching objects. Region mode keeps the
+      // full page context (all objects plus the drawn rectangle) unchanged, so the
+      // subset is ignored for drawing there while still being passed for its
+      // region outline.
+      const objects = overlayObjects(allObjects, regionMode ? null : subset);
+      // The toolbar toggles always apply; the Inspector type filter narrows them
+      // only outside region mode, which keeps every toolbar-enabled type visible.
+      const visibility = effectiveOverlayVisibility(
+        overlayVisibility,
+        regionMode ? undefined : filterCriteria.types,
+      );
+      drawOverlays(context, objects, visibility, pageWidth, pageHeight, pdfWidth, pdfHeight, subset, liveRect);
     }
-  }, [allObjects, drawOverlays, overlayVisibility, pageData, pageWidth, pageHeight, pdfWidth, pdfHeight, subset, liveRect]);
+  }, [allObjects, drawOverlays, overlayVisibility, filterCriteria, regionMode, pageData, pageWidth, pageHeight, pdfWidth, pdfHeight, subset, liveRect]);
 
   const getHoveredObject = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
+    // Only hit-test what is actually drawn, otherwise hovering an empty area
+    // while a filter hides objects would still select an invisible one.
     return hitTest(
-      allObjects,
+      overlayObjects(allObjects, regionMode ? null : subset),
       event.clientX - rect.left,
       event.clientY - rect.top,
       pdfWidth,
