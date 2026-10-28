@@ -81,7 +81,9 @@ export const FontsTab: React.FC = () => {
     // Wait for the page's objects to load before filtering, otherwise the
     // subset is computed from the previous page's allObjects.
     await navigate(font.pages[0]);
-    setFilterCriteria({ fontname: font.fontname });
+    // Words now carry font attributes too; keep the font drill-down focused on
+    // character boxes so clicking a font does not double the overlay boxes.
+    setFilterCriteria({ fontname: font.fontname, types: ['char'] });
   };
 
   if (!filePath) {

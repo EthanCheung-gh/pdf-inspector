@@ -283,6 +283,6 @@ describe('FontsTab', () => {
     await flush(2);
 
     expect(navigate).toHaveBeenCalledWith(3);
-    expect(usePdfStore.getState().filterCriteria).toEqual({ fontname: 'Helvetica' });
+    expect(usePdfStore.getState().filterCriteria).toEqual({ fontname: 'Helvetica', types: ['char'] });
   });
 });

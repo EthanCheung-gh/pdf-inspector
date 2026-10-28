@@ -130,3 +130,26 @@ def test_extracted_words_align_with_chars(tmp_path, mediabox, baseline):
 
     # A word can never fall outside the page box the renderer draws it into.
     assert 0.0 <= word["y0"] < word["y1"] <= page["height"]
+
+
+def test_words_carry_font_attributes(tmp_path):
+    """Word objects expose the font/size of their chars (Inspector + filters)."""
+    from reportlab.pdfgen import canvas as rl_canvas
+
+    path = tmp_path / "word-fonts.pdf"
+    doc = rl_canvas.Canvas(str(path))
+    doc.setFont("Helvetica-Bold", 18)
+    doc.drawString(72, 700, "Font Word")
+    doc.save()
+
+    extractor = PdfExtractor(str(path))
+    try:
+        page = extractor.extract_page(1)
+    finally:
+        extractor.close()
+
+    by_text = {word["text"]: word for word in page["words"]}
+    assert by_text["Font"]["fontname"] == "Helvetica-Bold"
+    assert by_text["Font"]["size"] == pytest.approx(18.0)
+    assert by_text["Word"]["fontname"] == "Helvetica-Bold"
+    assert by_text["Word"]["size"] == pytest.approx(18.0)

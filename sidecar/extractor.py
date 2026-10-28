@@ -320,7 +320,10 @@ class PdfExtractor:
         mediabox_top = float(mediabox[1]) if mediabox is not None else 0.0
 
         words = []
-        for w in page.extract_words():
+        # pdfplumber's word dicts do not include font attributes by default;
+        # extra_attrs makes the extractor aggregate them from the word's chars,
+        # so word objects can show/filter by font like chars do.
+        for w in page.extract_words(extra_attrs=['fontname', 'size']):
             y0, y1 = self._word_y_range(w, page_height, mediabox_top)
             words.append({
                 'type': 'word',
