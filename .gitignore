@@ -3,7 +3,10 @@ dist/
 release/
 dist-sidecar/
 sidecar/build/
+.venv/
 .superpowers/
 .codegraph/
 __pycache__/
 *.tsbuildinfo
+.openbitfun/
+/.openbitfun/search/flashgrep-index/
