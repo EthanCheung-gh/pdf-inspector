@@ -10,6 +10,9 @@ import styles from './PdfViewport.module.css';
 /** Zoom difference below which the user is still considered to be in fit mode. */
 const FIT_MODE_TOLERANCE = 0.01;
 
+/** Zoom delta applied per Ctrl/Cmd+wheel notch. */
+export const WHEEL_ZOOM_STEP = 0.1;
+
 export const PdfViewport: React.FC = () => {
   const filePath = usePdfStore((s) => s.filePath);
   const currentPage = usePdfStore((s) => s.currentPage);
@@ -57,6 +60,30 @@ export const PdfViewport: React.FC = () => {
     const observer = new ResizeObserver(measure);
     observer.observe(scrollEl);
     return () => observer.disconnect();
+  }, [scrollEl]);
+
+  // Ctrl/Cmd+wheel (and trackpad pinch, which browsers report as ctrl+wheel)
+  // zooms the document instead of the whole page. Wheel up (deltaY < 0) zooms
+  // in. The listener must be non-passive so preventDefault() suppresses the
+  // browser/Electron page zoom. Plain wheel events are left alone so normal
+  // vertical scrolling keeps working.
+  useEffect(() => {
+    if (!scrollEl) return;
+
+    const handleWheel = (event: WheelEvent): void => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      if (event.deltaY === 0) return;
+
+      const step = event.deltaY < 0 ? WHEEL_ZOOM_STEP : -WHEEL_ZOOM_STEP;
+      // Read the live zoom from the store so the handler never needs to be
+      // re-created (and re-attached) on every zoom change.
+      const state = usePdfStore.getState();
+      state.setZoom(state.zoom + step);
+    };
+
+    scrollEl.addEventListener('wheel', handleWheel, { passive: false });
+    return () => scrollEl.removeEventListener('wheel', handleWheel);
   }, [scrollEl]);
 
   // A new page/document starts at its top-left. Without this the scroll

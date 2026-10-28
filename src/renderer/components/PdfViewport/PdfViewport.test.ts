@@ -14,7 +14,7 @@ vi.mock('./PdfPage', () => ({
   PdfPage: () => React.createElement('div', { 'data-testid': 'pdf-page' }),
 }));
 
-import { PdfViewport } from './PdfViewport';
+import { PdfViewport, WHEEL_ZOOM_STEP } from './PdfViewport';
 
 const metadata = {
   pages: 2,
@@ -72,6 +72,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   usePdfMock.mockReset();
   if (originalClientWidth) {
     Object.defineProperty(HTMLElement.prototype, 'clientWidth', originalClientWidth);
@@ -219,5 +220,139 @@ describe('PdfViewport scroll position', () => {
 
     expect(viewport.scrollTop).toBe(0);
     expect(viewport.scrollLeft).toBe(0);
+  });
+});
+
+/** Renders the viewport, waits for the initial fit, then pins a known zoom. */
+async function renderViewportAtZoom(zoom: number): Promise<HTMLDivElement> {
+  const { container } = render(React.createElement(PdfViewport));
+  await waitFor(() => expect(usePdfStore.getState().fitWidthZoom).not.toBeNull());
+
+  act(() => {
+    usePdfStore.getState().setZoom(zoom);
+  });
+
+  const viewport = container.firstElementChild;
+  if (!(viewport instanceof HTMLDivElement)) {
+    throw new Error('viewport element was not rendered');
+  }
+  expect(viewport.className).toContain('viewport');
+  return viewport;
+}
+
+/** Dispatches a cancelable wheel event on the viewport and returns it. */
+function dispatchWheel(viewport: HTMLDivElement, init: WheelEventInit): WheelEvent {
+  const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, ...init });
+  act(() => {
+    viewport.dispatchEvent(event);
+  });
+  return event;
+}
+
+describe('PdfViewport wheel zoom', () => {
+  it('zooms in on Ctrl+wheel up and suppresses the page zoom', async () => {
+    const viewport = await renderViewportAtZoom(1);
+
+    const event = dispatchWheel(viewport, { deltaY: -100, ctrlKey: true });
+
+    expect(usePdfStore.getState().zoom).toBeCloseTo(1 + WHEEL_ZOOM_STEP, 5);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('zooms out on Ctrl+wheel down and suppresses the page zoom', async () => {
+    const viewport = await renderViewportAtZoom(1);
+
+    const event = dispatchWheel(viewport, { deltaY: 100, ctrlKey: true });
+
+    expect(usePdfStore.getState().zoom).toBeCloseTo(1 - WHEEL_ZOOM_STEP, 5);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('leaves plain wheel events to normal scrolling', async () => {
+    const viewport = await renderViewportAtZoom(1);
+
+    const event = dispatchWheel(viewport, { deltaY: -100 });
+
+    expect(usePdfStore.getState().zoom).toBe(1);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('keeps the zoom when Ctrl+wheel carries no delta', async () => {
+    const viewport = await renderViewportAtZoom(1);
+
+    dispatchWheel(viewport, { deltaY: 0, ctrlKey: true });
+
+    expect(usePdfStore.getState().zoom).toBe(1);
+  });
+
+  it('clamps zooming in at the maximum zoom', async () => {
+    const viewport = await renderViewportAtZoom(5);
+
+    dispatchWheel(viewport, { deltaY: -100, ctrlKey: true });
+
+    expect(usePdfStore.getState().zoom).toBe(5);
+  });
+
+  it('clamps zooming out at the minimum zoom', async () => {
+    const viewport = await renderViewportAtZoom(0.25);
+
+    dispatchWheel(viewport, { deltaY: 100, ctrlKey: true });
+
+    expect(usePdfStore.getState().zoom).toBe(0.25);
+  });
+
+  it('treats Meta+wheel like Ctrl+wheel (macOS)', async () => {
+    const viewport = await renderViewportAtZoom(1);
+
+    const zoomIn = dispatchWheel(viewport, { deltaY: -100, metaKey: true });
+    expect(usePdfStore.getState().zoom).toBeCloseTo(1 + WHEEL_ZOOM_STEP, 5);
+    expect(zoomIn.defaultPrevented).toBe(true);
+
+    const zoomOut = dispatchWheel(viewport, { deltaY: 100, metaKey: true });
+    expect(usePdfStore.getState().zoom).toBeCloseTo(1, 5);
+    expect(zoomOut.defaultPrevented).toBe(true);
+  });
+
+  it('attaches a non-passive wheel listener and removes it on unmount', async () => {
+    const addSpy = vi.spyOn(EventTarget.prototype, 'addEventListener');
+    const removeSpy = vi.spyOn(EventTarget.prototype, 'removeEventListener');
+
+    const { container, unmount } = render(React.createElement(PdfViewport));
+    await waitFor(() => expect(usePdfStore.getState().fitWidthZoom).not.toBeNull());
+    const viewport = container.firstElementChild as HTMLDivElement;
+    act(() => {
+      usePdfStore.getState().setZoom(1);
+    });
+
+    const wheelAdded = addSpy.mock.calls.find(
+      ([type, , options]) =>
+        type === 'wheel' &&
+        typeof options === 'object' &&
+        options !== null &&
+        (options as AddEventListenerOptions).passive === false,
+    );
+    expect(wheelAdded).toBeDefined();
+    const handler = wheelAdded?.[1];
+
+    // Works while mounted...
+    dispatchWheel(viewport, { deltaY: -100, ctrlKey: true });
+    expect(usePdfStore.getState().zoom).toBeCloseTo(1 + WHEEL_ZOOM_STEP, 5);
+
+    // ...and is detached on unmount, so further wheels are inert.
+    act(() => {
+      usePdfStore.getState().setZoom(1);
+    });
+    unmount();
+    expect(
+      removeSpy.mock.calls.some(([type, removed]) => type === 'wheel' && removed === handler),
+    ).toBe(true);
+
+    viewport.dispatchEvent(
+      new WheelEvent('wheel', { deltaY: -100, ctrlKey: true, bubbles: true, cancelable: true }),
+    );
+    expect(usePdfStore.getState().zoom).toBe(1);
+
+    addSpy.mockRestore();
+    removeSpy.mockRestore();
   });
 });
