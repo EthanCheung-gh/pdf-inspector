@@ -59,6 +59,14 @@ export const PdfViewport: React.FC = () => {
     return () => observer.disconnect();
   }, [scrollEl]);
 
+  // A new page/document starts at its top-left. Without this the scroll
+  // position from the previous page survives and the next page opens clipped.
+  useEffect(() => {
+    if (!scrollEl) return;
+    scrollEl.scrollTop = 0;
+    scrollEl.scrollLeft = 0;
+  }, [currentPage, filePath, scrollEl]);
+
   // Apply fit-to-width once per loaded document, using the measured container.
   useEffect(() => {
     if (!pdfDoc || !metadata || containerWidth <= 0) return;

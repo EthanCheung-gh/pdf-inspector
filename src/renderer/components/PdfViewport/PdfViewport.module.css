@@ -2,8 +2,6 @@
   flex: 1;
   background: #1a1a2e;
   display: flex;
-  align-items: center;
-  justify-content: center;
   overflow: auto;
   position: relative;
   /* Keep a stable gutter so a vertical scrollbar appearing/disappearing does not
@@ -17,6 +15,13 @@
   align-items: center;
   gap: 16px;
   padding: 24px;
+  /*
+   * Center when there is room, but resolve to 0 when the page is taller/wider
+   * than the viewport. `align-items/justify-content: center` would place the
+   * overflow above/left of the scroll origin, making the top of a tall page
+   * unreachable (and its first line permanently clipped).
+   */
+  margin: auto;
 }
 
 .emptyState {

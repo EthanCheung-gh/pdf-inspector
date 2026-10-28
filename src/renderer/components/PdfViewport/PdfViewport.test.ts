@@ -203,3 +203,21 @@ describe('PdfViewport fit-width', () => {
     expect(disconnected).toEqual([true]);
   });
 });
+
+describe('PdfViewport scroll position', () => {
+  it('returns to the top when the page or document changes', async () => {
+    const { container } = render(React.createElement(PdfViewport));
+    await waitFor(() => expect(usePdfStore.getState().fitWidthZoom).not.toBeNull());
+
+    const viewport = container.firstElementChild as HTMLDivElement;
+    viewport.scrollTop = 420;
+    viewport.scrollLeft = 30;
+
+    act(() => {
+      usePdfStore.getState().setPage(2);
+    });
+
+    expect(viewport.scrollTop).toBe(0);
+    expect(viewport.scrollLeft).toBe(0);
+  });
+});
