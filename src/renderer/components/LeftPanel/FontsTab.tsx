@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ipc } from '../../services/ipc-client';
-import { analyzeFontsInBatches } from '../../services/font-stats';
+import { analyzeFontsInBatches, formatFontSize } from '../../services/font-stats';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { usePdfStore } from '../../store/pdf-store';
 import type { FontStat } from '../../types/ipc-protocol';
@@ -121,7 +121,7 @@ export const FontsTab: React.FC = () => {
           <button type="button" className={styles.row} onClick={() => void handleClick(font)}>
             <span className={styles.name}>{font.fontname}</span>
             <span className={styles.meta}>
-              {font.pages.length} page{font.pages.length === 1 ? '' : 's'} · {font.charCount} chars · {font.sizeMin}–{font.sizeMax}pt
+              {font.pages.length} page{font.pages.length === 1 ? '' : 's'} · {font.charCount} chars · {formatFontSize(font.sizeMin)}–{formatFontSize(font.sizeMax)}pt
             </span>
             <span className={styles.swatches}>
               {font.colors.slice(0, 4).map((color) => (

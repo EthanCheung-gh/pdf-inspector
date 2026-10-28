@@ -3,6 +3,7 @@ import type { FontStat } from '../../types/ipc-protocol';
 import {
   FONT_ANALYSIS_BATCH_SIZE,
   analyzeFontsInBatches,
+  formatFontSize,
   mergeFontStats,
 } from '../font-stats';
 import type { FontBatchProgress } from '../font-stats';
@@ -214,5 +215,23 @@ describe('analyzeFontsInBatches', () => {
       stat({ fontname: 'Helvetica', pages: [1, 2, 4], charCount: 11, sizeMin: 8, sizeMax: 14, colors: ['#000000', '#ff0000'] }),
       stat({ fontname: 'Times-Roman', pages: [3], charCount: 2, sizeMin: 10, sizeMax: 10, colors: ['#00ff00', '#000000'] }),
     ]);
+  });
+});
+
+describe('formatFontSize', () => {
+  it('hides float noise from pdfplumber sizes', () => {
+    expect(formatFontSize(12.000000000000002)).toBe('12');
+    expect(formatFontSize(10.999999999999998)).toBe('11');
+  });
+
+  it('keeps at most two decimals', () => {
+    expect(formatFontSize(12.5)).toBe('12.5');
+    expect(formatFontSize(12.345)).toBe('12.35');
+    expect(formatFontSize(9.999)).toBe('10');
+  });
+
+  it('handles non-finite values without printing NaN', () => {
+    expect(formatFontSize(Number.NaN)).toBe('0');
+    expect(formatFontSize(Number.POSITIVE_INFINITY)).toBe('0');
   });
 });

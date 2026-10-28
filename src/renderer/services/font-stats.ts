@@ -14,6 +14,20 @@ export interface FontBatchProgress {
   total: number;
 }
 
+/**
+ * Format a PDF font size for display.
+ *
+ * pdfplumber sizes come from float arithmetic (`12.000000000000002`), so the raw
+ * value must be rounded before it reaches the Fonts tab. Two decimals are enough
+ * for the pt values PDFs use, and whole numbers stay whole (`12`, not `12.00`).
+ */
+export function formatFontSize(value: number): string {
+  if (!Number.isFinite(value)) return '0';
+  const fixed = value.toFixed(2);
+  if (!fixed.includes('.')) return fixed;
+  return fixed.replace(/0+$/, '').replace(/\.$/, '');
+}
+
 function cloneStat(stat: FontStat): FontStat {
   return {
     fontname: stat.fontname,
