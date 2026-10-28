@@ -1,6 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { usePdfStore } from '../../store/pdf-store';
+import { isRenderCancelled } from '../../services/pdf-render';
 import { OverlayCanvas } from './OverlayCanvas';
 import { InspectorHighlight } from './InspectorHighlight';
 import { TextLayer } from './TextLayer';
@@ -53,9 +54,9 @@ export const PdfPage: React.FC<PdfPageProps> = ({ pageNum, zoom, pdfDoc }) => {
           renderTaskRef.current = null;
         }
       } catch (error) {
-        if (error instanceof Error && error.message === 'Rendering cancelled') {
-          return;
-        }
+        // Page/zoom changes cancel the in-flight render; that rejection is
+        // expected control flow (the message includes the page number).
+        if (isRenderCancelled(error)) return;
         console.error('Page render error:', error);
       }
     };
