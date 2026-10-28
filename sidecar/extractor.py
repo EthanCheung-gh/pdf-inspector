@@ -206,32 +206,97 @@ class PdfExtractor:
             'fonts': self._collect_font_names(),
         }
 
-    def analyze_fonts(self) -> dict:
-        """Character-level font statistics, computed at most once per document."""
-        if self._font_stats_cache is None:
-            self._font_stats_cache = self._compute_font_stats()
-        return self._font_stats_cache
+    def analyze_fonts(
+        self,
+        start_page: Optional[int] = None,
+        end_page: Optional[int] = None,
+    ) -> dict:
+        """Character-level font statistics for the whole document or a page range.
 
-    def _compute_font_stats(self) -> dict:
+        With no page arguments this keeps the original behaviour: one full-document
+        walk, memoized in ``_font_stats_cache``. A page range (1-based, inclusive)
+        is computed on demand and never reads or populates that cache, so the
+        renderer can request small batches without forcing a full-document walk
+        (and without blocking the next sidecar request on one).
+        """
+        if start_page is None and end_page is None:
+            if self._font_stats_cache is None:
+                self._font_stats_cache = self._compute_font_stats()
+            return self._font_stats_cache
+        return self._compute_font_stats(start_page, end_page)
+
+    def _validate_page_range(
+        self,
+        start_page: Optional[int],
+        end_page: Optional[int],
+    ) -> tuple[int, int]:
+        """Resolve a partially specified 1-based, inclusive page range.
+
+        ``None`` on either side falls back to the document bounds, so one-sided
+        ranges are allowed. Raises ValueError for non-integer bounds (bool is not
+        accepted as an int) and for ranges outside ``1..len(pages)``.
+        """
+        total = len(self._pdf.pages)
+        for value in (start_page, end_page):
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+                raise ValueError(
+                    f'Invalid page range: {start_page!r}-{end_page!r} '
+                    f'(page numbers must be integers, document has {total} pages)'
+                )
+        start = 1 if start_page is None else start_page
+        end = total if end_page is None else end_page
+        if not (1 <= start <= end <= total):
+            raise ValueError(
+                f'Invalid page range: {start}-{end} (document has {total} pages)'
+            )
+        return start, end
+
+    @staticmethod
+    def _accumulate_font_stats(fonts: dict[str, dict], page, page_num: int) -> None:
+        """Fold one page's chars into ``fonts``; the single per-char implementation.
+
+        Both the full-document and the page-range analyses go through here, so a
+        batch's numbers are defined exactly like the full walk's: charCount summed,
+        sizeMin/sizeMax extended, colors kept in first-seen order (deduplicated),
+        pages kept in first-seen ascending order.
+        """
+        for c in page.chars:
+            name = c.get('fontname', '')
+            if not name:
+                continue
+            entry = fonts.setdefault(name, {
+                'fontname': name, 'pages': [], 'charCount': 0,
+                'sizeMin': float(c.get('size', 0)), 'sizeMax': float(c.get('size', 0)),
+                'colors': [],
+            })
+            entry['charCount'] += 1
+            entry['sizeMin'] = min(entry['sizeMin'], float(c.get('size', 0)))
+            entry['sizeMax'] = max(entry['sizeMax'], float(c.get('size', 0)))
+            color = str(c.get('stroking_color', '#000000')) or '#000000'
+            if color not in entry['colors']:
+                entry['colors'].append(color)
+            if page_num not in entry['pages']:
+                entry['pages'].append(page_num)
+
+    def _compute_font_stats(
+        self,
+        start_page: Optional[int] = None,
+        end_page: Optional[int] = None,
+    ) -> dict:
+        """Font statistics for pages ``start_page..end_page`` inclusive.
+
+        Both bounds ``None`` means the whole document (the cached full walk); an
+        empty document therefore yields ``{'fonts': []}``.
+        """
+        pages = self._pdf.pages
+        if start_page is None and end_page is None:
+            first, last = 1, len(pages)
+        else:
+            first, last = self._validate_page_range(start_page, end_page)
+
         fonts: dict[str, dict] = {}
-        for page_num, page in enumerate(self._pdf.pages, start=1):
-            for c in page.chars:
-                name = c.get('fontname', '')
-                if not name:
-                    continue
-                entry = fonts.setdefault(name, {
-                    'fontname': name, 'pages': [], 'charCount': 0,
-                    'sizeMin': float(c.get('size', 0)), 'sizeMax': float(c.get('size', 0)),
-                    'colors': [],
-                })
-                entry['charCount'] += 1
-                entry['sizeMin'] = min(entry['sizeMin'], float(c.get('size', 0)))
-                entry['sizeMax'] = max(entry['sizeMax'], float(c.get('size', 0)))
-                color = str(c.get('stroking_color', '#000000')) or '#000000'
-                if color not in entry['colors']:
-                    entry['colors'].append(color)
-                if page_num not in entry['pages']:
-                    entry['pages'].append(page_num)
+        for page_num in range(first, last + 1):
+            self._accumulate_font_stats(fonts, pages[page_num - 1], page_num)
         return {'fonts': sorted(fonts.values(), key=lambda f: f['charCount'], reverse=True)}
 
     def extract_page(self, page_num: int) -> dict:

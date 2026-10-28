@@ -89,7 +89,9 @@ class SidecarSession:
             return self._require_extractor().get_metadata()
 
         if method == 'analyze_fonts':
-            return self._require_extractor().analyze_fonts()
+            return self._require_extractor().analyze_fonts(
+                params.get('start_page'), params.get('end_page')
+            )
 
         if method == 'get_image_data':
             return self._require_extractor().get_image_data(params['stream_id'])
