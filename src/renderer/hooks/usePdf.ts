@@ -39,7 +39,6 @@ export function usePdf(): UsePdfReturn {
     const store = usePdfStore.getState();
     setLoading(true);
     setError(null);
-    store.setLoading(true);
 
     try {
       if (pdfRef.current) {
@@ -69,26 +68,6 @@ export function usePdf(): UsePdfReturn {
           store.setOutline(null);
         }
       }
-
-      // Calculate fit-width zoom from first page
-      try {
-        const firstPage = await doc.getPage(1);
-        const viewport = firstPage.getViewport({ scale: 1 });
-        const H_PADDING = 48; // 24px each side
-        const containerWidth = store.fitWidthZoom
-          ? (window.innerWidth - 220 - 300) // viewport area: total width minus left panel minus inspector
-          : window.innerWidth - 220; // rough estimate
-
-        const availableWidth = Math.max(containerWidth - H_PADDING, 200);
-        const fitWidthZoom = availableWidth / viewport.width;
-        const clamped = Math.max(0.25, Math.min(5, fitWidthZoom));
-
-        if (loadId === loadIdRef.current) {
-          store.setFitWidthZoom(clamped);
-        }
-      } catch (zoomErr) {
-        console.warn('Failed to calculate fit-width zoom:', zoomErr);
-      }
     } catch (err) {
       if (loadId !== loadIdRef.current) return;
       const message = err instanceof Error ? err.message : 'Failed to load PDF';
@@ -97,7 +76,6 @@ export function usePdf(): UsePdfReturn {
     } finally {
       if (loadId === loadIdRef.current) {
         setLoading(false);
-        store.setLoading(false);
       }
     }
   }, []);

@@ -17,6 +17,7 @@ export const PdfPage: React.FC<PdfPageProps> = ({ pageNum, zoom, pdfDoc }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
   const metadata = usePdfStore((s) => s.metadata);
+  const pageData = usePdfStore((s) => s.pageData);
 
   // Render at device resolution and cancel work that becomes stale.
   useEffect(() => {
@@ -72,8 +73,15 @@ export const PdfPage: React.FC<PdfPageProps> = ({ pageNum, zoom, pdfDoc }) => {
 
   if (!pdfDoc) return null;
 
-  const pageWidth = metadata?.page_w ? metadata.page_w * zoom : 612 * zoom;
-  const pageHeight = metadata?.page_h ? metadata.page_h * zoom : 792 * zoom;
+  // Each page has its own PDF-space size: `pageData` describes the page being
+  // rendered, so it wins over the document-wide metadata (which reflects page 1
+  // and is wrong for mixed-size PDFs). Metadata/Letter fallbacks only apply
+  // while the current page's extraction is still in flight.
+  const pdfWidth = pageData?.width ?? metadata?.page_w ?? 612;
+  const pdfHeight = pageData?.height ?? metadata?.page_h ?? 792;
+
+  const pageWidth = pdfWidth * zoom;
+  const pageHeight = pdfHeight * zoom;
 
   return (
     <div className={styles.pageContainer} style={{ width: pageWidth, height: pageHeight }}>
@@ -83,8 +91,8 @@ export const PdfPage: React.FC<PdfPageProps> = ({ pageNum, zoom, pdfDoc }) => {
         pageNum={pageNum}
         pageWidth={pageWidth}
         pageHeight={pageHeight}
-        pdfWidth={metadata?.page_w || 612}
-        pdfHeight={metadata?.page_h || 792}
+        pdfWidth={pdfWidth}
+        pdfHeight={pdfHeight}
       />
       <InspectorHighlight pageNum={pageNum} />
     </div>

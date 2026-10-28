@@ -9,13 +9,16 @@ export const InspectorHighlight: React.FC<InspectorHighlightProps> = ({ pageNum 
   const hoveredObject = usePdfStore((state) => state.hoveredObject);
   const selectedObject = usePdfStore((state) => state.selectedObject);
   const metadata = usePdfStore((state) => state.metadata);
+  const pageData = usePdfStore((state) => state.pageData);
   const zoom = usePdfStore((state) => state.zoom);
 
   const object = hoveredObject || selectedObject;
-  if (!object || object.page !== pageNum || !metadata) return null;
+  if (!object || object.page !== pageNum) return null;
 
   const isHovered = object === hoveredObject;
-  const pdfHeight = metadata.page_h;
+  // Object coordinates are in the current page's PDF space, so the highlight
+  // must flip the y axis with that page's height (not page 1's).
+  const pdfHeight = pageData?.height ?? metadata?.page_h ?? 792;
 
   return (
     <div

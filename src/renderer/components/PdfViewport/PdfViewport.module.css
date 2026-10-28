@@ -6,6 +6,9 @@
   justify-content: center;
   overflow: auto;
   position: relative;
+  /* Keep a stable gutter so a vertical scrollbar appearing/disappearing does not
+     change clientWidth (and therefore the fit-width zoom) in a feedback loop. */
+  scrollbar-gutter: stable;
 }
 
 .pagesContainer {
