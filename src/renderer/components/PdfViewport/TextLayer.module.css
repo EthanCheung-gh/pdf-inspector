@@ -5,7 +5,36 @@
   overflow: hidden;
   opacity: 1;
   line-height: 1;
+  text-align: initial;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  /* `--scale-factor` is set inline from the PDF.js viewport scale. */
   /* pointer-events and user-select set dynamically by mode via inline style */
+}
+
+/*
+ * PDF.js renders each text run as a <span> positioned in percentages. The
+ * official viewer CSS makes those spans transparent and absolutely positioned;
+ * without it the text layer paints duplicate text over the canvas and ignores
+ * the positions. Our own highlight wrappers must stay inline inside a run.
+ */
+.textLayer :global(span),
+.textLayer :global(br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.textLayer :global(.searchMatch),
+.textLayer :global(.searchMatchCurrent) {
+  position: static;
+  color: transparent;
+  white-space: inherit;
+  cursor: inherit;
 }
 
 .textLayer :global(::selection) {

@@ -91,6 +91,11 @@ export const TextLayer: React.FC<TextLayerProps> = ({ pageNum, pdfDoc, zoom }) =
         if (cancelled) return;
 
         const viewport = page.getViewport({ scale: zoom });
+        // PDF.js lays the text layer out in CSS with `var(--scale-factor)`
+        // (font sizes, width/height). The official viewer sets it on the page
+        // container; doing it here keeps the transparent text layer aligned
+        // with the canvas at every zoom level.
+        container.style.setProperty('--scale-factor', String(viewport.scale));
         container.style.width = `${viewport.width}px`;
         container.style.height = `${viewport.height}px`;
 
