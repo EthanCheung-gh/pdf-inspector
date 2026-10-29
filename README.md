@@ -10,6 +10,7 @@
 | :---: | :---: |
 | ![结构树 + word 过滤叠加层](docs/images/overview.png) | ![对象检查](docs/images/inspector.png) |
 | ![字体分析](docs/images/fonts.png) | ![URL 打开](docs/images/url-dialog.png) |
+| ![按元素类型导出](docs/images/export-dialog.png) | **按元素类型导出**<br>选择当前页/整档、JSON/CSV 与要包含的元素类型；未勾选的类型不会写入文件。 |
 
 *截图来自 Web 构建；桌面端使用同一套 React UI，界面与功能一致。*
 
