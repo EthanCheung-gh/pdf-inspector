@@ -1,9 +1,15 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { objectsToCsv, objectsToJson, suggestFilename } from "../../services/export-data";
+import {
+  EXPORT_OBJECT_TYPES,
+  objectsToCsv,
+  objectsToJson,
+  suggestFilename,
+} from "../../services/export-data";
 import { ipc } from "../../services/ipc-client";
 import { filterByRegion, type FilterCriteria } from "../../services/object-filter";
 import { usePdfStore } from "../../store/pdf-store";
 import type { PdfImage, PdfObject, PdfObjectType, PdfTable } from "../../types/pdf-objects";
+import { ExportTypeSelector } from "../ExportTypeSelector";
 import styles from "./InspectorPanel.module.css";
 
 type TextObject = PdfObject & {
@@ -88,6 +94,8 @@ export const InspectorPanel = (): JSX.Element => {
   const [imageData, setImageData] = useState<{ base64: string; format: string } | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
   const [imageLoading, setImageLoading] = useState(false);
+  // Which object types the Results export contains; every type until changed.
+  const [exportTypes, setExportTypes] = useState<PdfObjectType[]>([...EXPORT_OBJECT_TYPES]);
 
   useEffect(() => {
     let cancelled = false;
@@ -168,8 +176,8 @@ export const InspectorPanel = (): JSX.Element => {
     if (!state.subset || !state.filePath) return;
     const content =
       ext === "json"
-        ? objectsToJson(state.subset.objects, state.metadata, state.currentPage)
-        : objectsToCsv(state.subset.objects, state.currentPage);
+        ? objectsToJson(state.subset.objects, state.metadata, state.currentPage, exportTypes)
+        : objectsToCsv(state.subset.objects, state.currentPage, exportTypes);
     try {
       const result = await ipc.saveFile({
         defaultPath: suggestFilename(state.filePath, "page", state.currentPage, ext, state.sourceUrl),
@@ -311,11 +319,29 @@ export const InspectorPanel = (): JSX.Element => {
                   </button>
                 ))}
               </div>
+              <div className={styles.exportTypes}>
+                <ExportTypeSelector
+                  label="Export types"
+                  compact
+                  selected={exportTypes}
+                  onChange={setExportTypes}
+                />
+              </div>
               <div className={styles.buttonRow}>
-                <button type="button" className={styles.button} onClick={() => void handleExport("json")}>
+                <button
+                  type="button"
+                  className={styles.button}
+                  disabled={exportTypes.length === 0}
+                  onClick={() => void handleExport("json")}
+                >
                   Export JSON
                 </button>
-                <button type="button" className={styles.button} onClick={() => void handleExport("csv")}>
+                <button
+                  type="button"
+                  className={styles.button}
+                  disabled={exportTypes.length === 0}
+                  onClick={() => void handleExport("csv")}
+                >
                   Export CSV
                 </button>
               </div>

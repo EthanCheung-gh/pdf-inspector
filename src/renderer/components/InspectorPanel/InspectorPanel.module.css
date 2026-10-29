@@ -197,6 +197,19 @@
   background: #333c47;
 }
 
+.button:disabled {
+  color: #77818c;
+  background: #232930;
+  border-color: #2e353d;
+  cursor: not-allowed;
+}
+
+/* Compact object-type picker for the Results export. */
+.exportTypes {
+  padding: 6px 8px;
+  border-bottom: 1px solid #303740;
+}
+
 .titleButton {
   margin-left: 8px;
   padding: 1px 8px;

@@ -3,7 +3,7 @@ import { ipc } from '../../services/ipc-client';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { usePdfStore } from '../../store/pdf-store';
 import { SearchBox } from './SearchBox';
-import { ExportMenu } from './ExportMenu';
+import { ExportDialog } from './ExportDialog';
 import { OpenUrlDialog } from './OpenUrlDialog';
 import type { OpenedFromUrl } from './OpenUrlDialog';
 import styles from './Toolbar.module.css';
@@ -201,7 +201,7 @@ export const Toolbar: React.FC = () => {
       </div>
 
       <div className={styles.spacer} />
-      <ExportMenu />
+      <ExportDialog />
       <SearchBox />
       <span className={styles.filename} title={displayTitle}>{filename}</span>
 
