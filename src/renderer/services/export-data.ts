@@ -1,12 +1,69 @@
-import type { PageData, PdfMetadata, PdfObject } from '../types/pdf-objects';
+import type {
+  PageData,
+  PdfChar,
+  PdfCurve,
+  PdfImage,
+  PdfLine,
+  PdfMetadata,
+  PdfObject,
+  PdfObjectType,
+  PdfRect,
+  PdfTable,
+  PdfWord,
+} from '../types/pdf-objects';
 
-export function pagesToJson(pages: PageData[], metadata: PdfMetadata | null): string {
+/** All exportable object types in canonical section order. */
+export const EXPORT_OBJECT_TYPES: PdfObjectType[] = [
+  'char',
+  'word',
+  'rect',
+  'line',
+  'curve',
+  'image',
+  'table',
+];
+
+/**
+ * Canonical, de-duplicated selection. `undefined` means every type; an explicit
+ * empty list stays empty (it means "no object data", not "all"). Unknown type
+ * strings are ignored instead of being rejected.
+ */
+function resolveTypes(types?: readonly PdfObjectType[]): PdfObjectType[] {
+  if (types === undefined) return [...EXPORT_OBJECT_TYPES];
+  const requested = new Set<string>(types);
+  return EXPORT_OBJECT_TYPES.filter((type) => requested.has(type));
+}
+
+function isSelected(selected: readonly PdfObjectType[], type: PdfObjectType): boolean {
+  return selected.includes(type);
+}
+
+function filterObjects(objects: PdfObject[], selected: readonly PdfObjectType[]): PdfObject[] {
+  return objects.filter((o) => isSelected(selected, o.type));
+}
+
+export function pagesToJson(
+  pages: PageData[],
+  metadata: PdfMetadata | null,
+  types?: readonly PdfObjectType[],
+): string {
+  const objectTypes = resolveTypes(types);
   return JSON.stringify(
     {
       metadata,
       exportedAt: new Date().toISOString(),
       pageCount: pages.length,
-      pages,
+      objectTypes,
+      pages: pages.map((page) => ({
+        ...page,
+        chars: isSelected(objectTypes, 'char') ? page.chars : [],
+        words: isSelected(objectTypes, 'word') ? page.words : [],
+        rects: isSelected(objectTypes, 'rect') ? page.rects : [],
+        lines: isSelected(objectTypes, 'line') ? page.lines : [],
+        curves: isSelected(objectTypes, 'curve') ? page.curves : [],
+        images: isSelected(objectTypes, 'image') ? page.images : [],
+        tables: isSelected(objectTypes, 'table') ? page.tables : [],
+      })),
     },
     null,
     2,
@@ -20,136 +77,148 @@ function csvEscape(value: string): string {
   return value;
 }
 
-function csvRow(values: (string | number | boolean)[]): string {
+function csvRow(values: readonly (string | number | boolean)[]): string {
   return values.map((v) => csvEscape(String(v))).join(',');
 }
 
+const BOM = '\uFEFF';
+
 const BBOX = ['page', 'x0', 'y0', 'x1', 'y1'] as const;
 
-/** Single CSV file, one `# <type>` section per object type. BOM-prefixed so Excel decodes UTF-8 correctly. */
-export function pagesToCsv(pages: PageData[]): string {
-  const out: string[] = [];
-
-  out.push('# chars');
-  out.push(csvRow([...BBOX, 'text', 'fontname', 'size', 'color']));
-  for (const page of pages) {
-    for (const c of page.chars) {
-      out.push(csvRow([c.page, c.x0, c.y0, c.x1, c.y1, c.text, c.fontname, c.size, c.color]));
-    }
-  }
-
-  out.push('# words');
-  out.push(csvRow([...BBOX, 'text', 'fontname', 'size']));
-  for (const page of pages) {
-    for (const w of page.words) {
-      out.push(csvRow([w.page, w.x0, w.y0, w.x1, w.y1, w.text, w.fontname, w.size]));
-    }
-  }
-
-  out.push('# rects');
-  out.push(csvRow([...BBOX, 'fill', 'stroke', 'color', 'width']));
-  for (const page of pages) {
-    for (const r of page.rects) {
-      out.push(csvRow([r.page, r.x0, r.y0, r.x1, r.y1, r.fill, r.stroke, r.color, r.width]));
-    }
-  }
-
-  out.push('# lines');
-  out.push(csvRow([...BBOX, 'stroke', 'color', 'width']));
-  for (const page of pages) {
-    for (const l of page.lines) {
-      out.push(csvRow([l.page, l.x0, l.y0, l.x1, l.y1, l.stroke, l.color, l.width]));
-    }
-  }
-
-  out.push('# curves');
-  out.push(csvRow([...BBOX, 'points', 'stroke']));
-  for (const page of pages) {
-    for (const c of page.curves) {
-      out.push(csvRow([c.page, c.x0, c.y0, c.x1, c.y1, JSON.stringify(c.points), c.stroke]));
-    }
-  }
-
-  out.push('# images');
-  out.push(csvRow([...BBOX, 'width', 'height', 'stream_id', 'format']));
-  for (const page of pages) {
-    for (const img of page.images) {
-      out.push(
-        csvRow([img.page, img.x0, img.y0, img.x1, img.y1, img.width, img.height, img.stream_id, img.format]),
-      );
-    }
-  }
-
-  out.push('# tables');
-  out.push(csvRow(['page', 'table_index', 'row', 'col', 'text']));
-  for (const page of pages) {
-    page.tables.forEach((t, tableIndex) => {
-      t.cells.forEach((row, rowIndex) => {
-        row.forEach((text, colIndex) => {
-          out.push(csvRow([t.page, tableIndex, rowIndex, colIndex, text]));
-        });
-      });
-    });
-  }
-
-  // ﻿ prefix so Excel decodes non-ASCII text as UTF-8.
-  return `﻿${out.join('\n')}\n`;
+interface CsvSection {
+  title: string;
+  header: readonly string[];
 }
 
-export function objectsToJson(objects: PdfObject[], metadata: PdfMetadata | null, page: number): string {
-  return JSON.stringify({ metadata, exportedAt: new Date().toISOString(), page, objectCount: objects.length, objects }, null, 2);
+/** Per-type CSV section metadata, keyed by canonical object type. */
+const CSV_SECTIONS: Record<PdfObjectType, CsvSection> = {
+  char: { title: '# chars', header: [...BBOX, 'text', 'fontname', 'size', 'color'] },
+  word: { title: '# words', header: [...BBOX, 'text', 'fontname', 'size'] },
+  rect: { title: '# rects', header: [...BBOX, 'fill', 'stroke', 'color', 'width'] },
+  line: { title: '# lines', header: [...BBOX, 'stroke', 'color', 'width'] },
+  curve: { title: '# curves', header: [...BBOX, 'points', 'stroke'] },
+  image: { title: '# images', header: [...BBOX, 'width', 'height', 'stream_id', 'format'] },
+  table: { title: '# tables', header: ['page', 'table_index', 'row', 'col', 'text'] },
+};
+
+type CsvValues = (string | number | boolean)[];
+
+function charCsvRow(c: PdfChar): CsvValues {
+  return [c.page, c.x0, c.y0, c.x1, c.y1, c.text, c.fontname, c.size, c.color];
 }
 
-export function objectsToCsv(objects: PdfObject[], page: number): string {
-  const out: string[] = [];
+function wordCsvRow(w: PdfWord): CsvValues {
+  return [w.page, w.x0, w.y0, w.x1, w.y1, w.text, w.fontname, w.size];
+}
 
-  out.push('# chars');
-  out.push(csvRow([...BBOX, 'text', 'fontname', 'size', 'color']));
-  for (const c of objects.filter((o): o is Extract<PdfObject, { type: 'char' }> => o.type === 'char')) {
-    out.push(csvRow([c.page, c.x0, c.y0, c.x1, c.y1, c.text, c.fontname, c.size, c.color]));
-  }
+function rectCsvRow(r: PdfRect): CsvValues {
+  return [r.page, r.x0, r.y0, r.x1, r.y1, r.fill, r.stroke, r.color, r.width];
+}
 
-  out.push('# words');
-  out.push(csvRow([...BBOX, 'text', 'fontname', 'size']));
-  for (const w of objects.filter((o): o is Extract<PdfObject, { type: 'word' }> => o.type === 'word')) {
-    out.push(csvRow([w.page, w.x0, w.y0, w.x1, w.y1, w.text, w.fontname, w.size]));
-  }
+function lineCsvRow(l: PdfLine): CsvValues {
+  return [l.page, l.x0, l.y0, l.x1, l.y1, l.stroke, l.color, l.width];
+}
 
-  out.push('# rects');
-  out.push(csvRow([...BBOX, 'fill', 'stroke', 'color', 'width']));
-  for (const r of objects.filter((o): o is Extract<PdfObject, { type: 'rect' }> => o.type === 'rect')) {
-    out.push(csvRow([r.page, r.x0, r.y0, r.x1, r.y1, r.fill, r.stroke, r.color, r.width]));
-  }
+function curveCsvRow(c: PdfCurve): CsvValues {
+  return [c.page, c.x0, c.y0, c.x1, c.y1, JSON.stringify(c.points), c.stroke];
+}
 
-  out.push('# lines');
-  out.push(csvRow([...BBOX, 'stroke', 'color', 'width']));
-  for (const l of objects.filter((o): o is Extract<PdfObject, { type: 'line' }> => o.type === 'line')) {
-    out.push(csvRow([l.page, l.x0, l.y0, l.x1, l.y1, l.stroke, l.color, l.width]));
-  }
+function imageCsvRow(img: PdfImage): CsvValues {
+  return [img.page, img.x0, img.y0, img.x1, img.y1, img.width, img.height, img.stream_id, img.format];
+}
 
-  out.push('# curves');
-  out.push(csvRow([...BBOX, 'points', 'stroke']));
-  for (const c of objects.filter((o): o is Extract<PdfObject, { type: 'curve' }> => o.type === 'curve')) {
-    out.push(csvRow([c.page, c.x0, c.y0, c.x1, c.y1, JSON.stringify(c.points), c.stroke]));
-  }
-
-  out.push('# images');
-  out.push(csvRow([...BBOX, 'width', 'height', 'stream_id', 'format']));
-  for (const img of objects.filter((o): o is Extract<PdfObject, { type: 'image' }> => o.type === 'image')) {
-    out.push(csvRow([img.page, img.x0, img.y0, img.x1, img.y1, img.width, img.height, img.stream_id, img.format]));
-  }
-
-  out.push('# tables');
-  out.push(csvRow(['page', 'table_index', 'row', 'col', 'text']));
-  objects.filter((o): o is Extract<PdfObject, { type: 'table' }> => o.type === 'table').forEach((t, tableIndex) => {
-    t.cells.forEach((row, rowIndex) => {
-      row.forEach((text, colIndex) => {
-        out.push(csvRow([t.page, tableIndex, rowIndex, colIndex, text]));
-      });
+/** One row per cell, keeping the table's position inside the current section. */
+function tableCsvRows(table: PdfTable, tableIndex: number): CsvValues[] {
+  const rows: CsvValues[] = [];
+  table.cells.forEach((row, rowIndex) => {
+    row.forEach((text, colIndex) => {
+      rows.push([table.page, tableIndex, rowIndex, colIndex, text]);
     });
   });
+  return rows;
+}
 
-  return `﻿${out.join('\n')}\n`;
+function objectsOfType<T extends PdfObjectType>(objects: PdfObject[], type: T): Extract<PdfObject, { type: T }>[] {
+  return objects.filter((o) => o.type === type) as Extract<PdfObject, { type: T }>[];
+}
+
+/** Row builders over full pages; table indexes restart per page. */
+const PAGE_CSV_ROWS: Record<PdfObjectType, (pages: PageData[]) => CsvValues[]> = {
+  char: (pages) => pages.flatMap((p) => p.chars.map(charCsvRow)),
+  word: (pages) => pages.flatMap((p) => p.words.map(wordCsvRow)),
+  rect: (pages) => pages.flatMap((p) => p.rects.map(rectCsvRow)),
+  line: (pages) => pages.flatMap((p) => p.lines.map(lineCsvRow)),
+  curve: (pages) => pages.flatMap((p) => p.curves.map(curveCsvRow)),
+  image: (pages) => pages.flatMap((p) => p.images.map(imageCsvRow)),
+  table: (pages) => pages.flatMap((p) => p.tables.flatMap((t, tableIndex) => tableCsvRows(t, tableIndex))),
+};
+
+/** Row builders over a flat object list; table indexes follow the filtered order. */
+const OBJECT_CSV_ROWS: Record<PdfObjectType, (objects: PdfObject[]) => CsvValues[]> = {
+  char: (objects) => objectsOfType(objects, 'char').map(charCsvRow),
+  word: (objects) => objectsOfType(objects, 'word').map(wordCsvRow),
+  rect: (objects) => objectsOfType(objects, 'rect').map(rectCsvRow),
+  line: (objects) => objectsOfType(objects, 'line').map(lineCsvRow),
+  curve: (objects) => objectsOfType(objects, 'curve').map(curveCsvRow),
+  image: (objects) => objectsOfType(objects, 'image').map(imageCsvRow),
+  table: (objects) => objectsOfType(objects, 'table').flatMap((t, tableIndex) => tableCsvRows(t, tableIndex)),
+};
+
+/**
+ * Single CSV document, one `# <type>` section per selected type in canonical
+ * order. BOM-prefixed so Excel decodes UTF-8 correctly; an empty selection
+ * produces just the BOM.
+ */
+function serializeCsvSections(
+  selected: readonly PdfObjectType[],
+  rowsFor: (type: PdfObjectType) => CsvValues[],
+): string {
+  if (selected.length === 0) return BOM;
+
+  const out: string[] = [];
+  for (const type of selected) {
+    out.push(CSV_SECTIONS[type].title);
+    out.push(csvRow(CSV_SECTIONS[type].header));
+    for (const row of rowsFor(type)) out.push(csvRow(row));
+  }
+
+  return `${BOM}${out.join('\n')}\n`;
+}
+
+export function pagesToCsv(pages: PageData[], types?: readonly PdfObjectType[]): string {
+  const selected = resolveTypes(types);
+  return serializeCsvSections(selected, (type) => PAGE_CSV_ROWS[type](pages));
+}
+
+export function objectsToJson(
+  objects: PdfObject[],
+  metadata: PdfMetadata | null,
+  page: number,
+  types?: readonly PdfObjectType[],
+): string {
+  const objectTypes = resolveTypes(types);
+  const selectedObjects = filterObjects(objects, objectTypes);
+  return JSON.stringify(
+    {
+      metadata,
+      exportedAt: new Date().toISOString(),
+      page,
+      objectCount: selectedObjects.length,
+      objectTypes,
+      objects: selectedObjects,
+    },
+    null,
+    2,
+  );
+}
+
+export function objectsToCsv(
+  objects: PdfObject[],
+  page: number,
+  types?: readonly PdfObjectType[],
+): string {
+  const selected = resolveTypes(types);
+  return serializeCsvSections(selected, (type) => OBJECT_CSV_ROWS[type](objects));
 }
 
 function localStem(pdfPath: string | null): string {
