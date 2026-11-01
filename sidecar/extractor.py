@@ -13,6 +13,27 @@ DIRECT_IMAGE_FORMATS = frozenset({'png', 'jpeg', 'gif', 'webp'})
 _JPX_SIGNATURES = (b'\x00\x00\x00\x0cjP  \r\n\x87\n', b'\xff\x4f\xff\x51')
 _JBIG2_SIGNATURE = b'\x97JB2\r\n\x1a\n'
 
+# Subset tag reportlab/Acrobat prepend to an embedded font's BaseFont.
+_SUBSET_PREFIX = re.compile(r'^[A-Z]{6}\+')
+
+# The 14 fonts every conforming PDF reader must provide itself; a document may
+# therefore reference them without embedding anything.
+STANDARD_14_FONTS = frozenset({
+    'Helvetica', 'Helvetica-Bold', 'Helvetica-Oblique', 'Helvetica-BoldOblique',
+    'Times-Roman', 'Times-Bold', 'Times-Italic', 'Times-BoldItalic',
+    'Courier', 'Courier-Bold', 'Courier-Oblique', 'Courier-BoldOblique',
+    'Symbol', 'ZapfDingbats',
+})
+
+# Page boxes a PDF may carry, in the order the UI lists them.
+PAGE_BOX_KEYS = (
+    ('media', 'MediaBox'),
+    ('crop', 'CropBox'),
+    ('trim', 'TrimBox'),
+    ('bleed', 'BleedBox'),
+    ('art', 'ArtBox'),
+)
+
 
 class PdfExtractor:
     """Wraps pdfplumber to extract page-level structured data."""
@@ -113,36 +134,30 @@ class PdfExtractor:
         return value
 
     @classmethod
-    def _base_font_name(cls, font_obj) -> Optional[str]:
-        """Return a font dictionary's BaseFont as a plain string, or None.
+    def _name_text(cls, value) -> Optional[str]:
+        """Return a resolved PDF name/string object as plain text, or None.
 
-        pdfminer represents BaseFont as a PSLiteral, so ``.name`` is the reliable
-        accessor; ``str(PSLiteral('Helvetica'))`` is ``"/'Helvetica'"`` and is only
-        used as a last-resort fallback.
+        pdfminer represents names as PSLiteral, so ``.name`` is the reliable
+        accessor; ``str(PSLiteral('Helvetica'))`` is ``"/'Helvetica'"`` and is
+        only used as a last-resort fallback.
         """
-        getter = getattr(font_obj, 'get', None)
-        if not callable(getter):
-            return None
-        try:
-            base_font = cls._resolve_pdf_value(getter('BaseFont'))
-        except Exception:
-            return None
-        if base_font is None:
+        value = cls._resolve_pdf_value(value)
+        if value is None:
             return None
 
-        name = getattr(base_font, 'name', None)
+        name = getattr(value, 'name', None)
         if isinstance(name, bytes):
             name = name.decode('latin-1', 'replace')
         if isinstance(name, str) and name:
             return name
-        if isinstance(base_font, bytes):
-            text = base_font.decode('latin-1', 'replace').strip()
+        if isinstance(value, bytes):
+            text = value.decode('latin-1', 'replace').strip()
             return text or None
-        if isinstance(base_font, str):
-            return base_font or None
+        if isinstance(value, str):
+            return value or None
 
         try:
-            text = str(base_font).strip()
+            text = str(value).strip()
         except Exception:
             return None
         # PSLiteral fallback form: "/'Helvetica'" -> "Helvetica".
@@ -151,16 +166,157 @@ class PdfExtractor:
         text = text.strip().strip("'").strip()
         return text or None
 
-    def _collect_font_names(self) -> list[str]:
-        """Collect BaseFont names from page font resources, without page layout.
+    @classmethod
+    def _base_font_name(cls, font_obj) -> Optional[str]:
+        """Return a font dictionary's BaseFont as a plain string, or None."""
+        getter = getattr(font_obj, 'get', None)
+        if not callable(getter):
+            return None
+        try:
+            return cls._name_text(getter('BaseFont'))
+        except Exception:
+            return None
 
-        Walking ``page.chars`` requires full text layout for every page, which
-        times out on large PDFs. The resource dictionaries already list every
-        font referenced by a page, so reading them is enough for metadata.
-        Any per-page or per-font failure is skipped: metadata must never fail
-        because of one malformed font resource.
+    @classmethod
+    def _font_descriptor(cls, font_obj) -> tuple[Optional[dict], bool]:
+        """Find the FontDescriptor of a simple font or of a Type0 descendant.
+
+        Returns ``(descriptor, resolved)``. ``resolved`` is False when the
+        document does point at a descriptor but it cannot be read (broken
+        reference), which the caller reports as ``unknown`` instead of guessing
+        "not embedded".
         """
-        names: set[str] = set()
+        candidates = []
+        unresolved = False
+        getter = getattr(font_obj, 'get', None)
+        if callable(getter):
+            own = getter('FontDescriptor')
+            if own is not None:
+                candidates.append(own)
+            descendants = cls._resolve_pdf_value(getter('DescendantFonts'))
+            if isinstance(descendants, dict):
+                # Malformed but seen in the wild: a single descendant, not an array.
+                descendants = [descendants]
+            if isinstance(descendants, (list, tuple)):
+                for descendant in descendants:
+                    resolved = cls._resolve_pdf_value(descendant)
+                    if not isinstance(resolved, dict):
+                        # The descendant (and its descriptor) cannot be read.
+                        unresolved = True
+                        continue
+                    descendant_descriptor = resolved.get('FontDescriptor')
+                    if descendant_descriptor is not None:
+                        candidates.append(descendant_descriptor)
+
+        for candidate in candidates:
+            descriptor = cls._resolve_pdf_value(candidate)
+            if isinstance(descriptor, dict):
+                return descriptor, True
+        return None, not candidates and not unresolved
+
+    @classmethod
+    def _font_file_type(cls, descriptor) -> Optional[str]:
+        """Classify the embedded font program of a descriptor, if any.
+
+        ``/FontFile`` holds a Type1 program, ``/FontFile2`` a TrueType one and
+        ``/FontFile3`` a CFF/OpenType one whose exact flavour is in its
+        ``/Subtype``. FontFile3 is CFF-flavoured when the subtype is unknown, so
+        that is the fallback rather than None.
+        """
+        if not isinstance(descriptor, dict):
+            return None
+        try:
+            if descriptor.get('FontFile2') is not None:
+                return 'TrueType'
+            font_file3 = descriptor.get('FontFile3')
+            if font_file3 is not None:
+                stream = cls._resolve_pdf_value(font_file3)
+                # pdfminer's PDFStream is not a dict; its attributes are in .attrs.
+                stream_attrs = getattr(stream, 'attrs', stream)
+                subtype = None
+                stream_get = getattr(stream_attrs, 'get', None)
+                if callable(stream_get):
+                    subtype = cls._name_text(stream_get('Subtype'))
+                if subtype == 'OpenType':
+                    return 'OpenType'
+                return 'CFF'
+            if descriptor.get('FontFile') is not None:
+                return 'Type1'
+        except Exception:
+            return None
+        return None
+
+    @classmethod
+    def _font_encoding(cls, font_obj) -> Optional[str]:
+        """Return the font's encoding name: literal, or a dictionary's BaseEncoding."""
+        getter = getattr(font_obj, 'get', None)
+        if not callable(getter):
+            return None
+        try:
+            encoding = cls._resolve_pdf_value(getter('Encoding'))
+            if isinstance(encoding, dict):
+                return cls._name_text(encoding.get('BaseEncoding'))
+            return cls._name_text(encoding)
+        except Exception:
+            return None
+
+    @classmethod
+    def _font_info(cls, font_obj) -> Optional[dict]:
+        """Build one ``FontInfo`` entry from a font resource dictionary.
+
+        Never raises for a malformed font: unreadable descriptors degrade to
+        ``embedding: 'unknown'`` and a font without a BaseFont yields None.
+        """
+        name = cls._base_font_name(font_obj)
+        if not name:
+            return None
+
+        descriptor, descriptor_resolved = cls._font_descriptor(font_obj)
+        font_file_type = cls._font_file_type(descriptor)
+        embedded = font_file_type is not None
+
+        if embedded:
+            embedding = 'embedded'
+        elif not descriptor_resolved:
+            # A descriptor exists but cannot be read: do not claim "not embedded".
+            embedding = 'unknown'
+        elif descriptor is None and name in STANDARD_14_FONTS:
+            embedding = 'standard14'
+        else:
+            embedding = 'not-embedded'
+
+        getter = getattr(font_obj, 'get', None)
+        subtype = None
+        has_to_unicode = False
+        if callable(getter):
+            try:
+                subtype = cls._name_text(getter('Subtype'))
+            except Exception:
+                subtype = None
+            try:
+                has_to_unicode = cls._resolve_pdf_value(getter('ToUnicode')) is not None
+            except Exception:
+                has_to_unicode = False
+
+        return {
+            'fontname': name,
+            'subtype': subtype,
+            'embedded': embedded,
+            'embedding': embedding,
+            'subset': bool(_SUBSET_PREFIX.match(name)),
+            'encoding': cls._font_encoding(font_obj),
+            'hasToUnicode': has_to_unicode,
+            'fontFileType': font_file_type,
+        }
+
+    def _iter_font_dicts(self):
+        """Yield every resolvable font dictionary referenced by page resources.
+
+        This is the single traversal shared by the name and the detail scans, so
+        both see exactly the same fonts with the same per-page/per-font
+        exception protection. Walking ``page.chars`` instead would require full
+        text layout of every page, which times out on large PDFs.
+        """
         for page in self._pdf.pages:
             try:
                 page_obj = getattr(page, 'page_obj', None)
@@ -173,17 +329,52 @@ class PdfExtractor:
                 for font_ref in list(font_resources.values()):
                     try:
                         font_obj = self._resolve_pdf_value(font_ref)
-                        if not isinstance(font_obj, dict):
-                            continue
-                        name = self._base_font_name(font_obj)
                     except Exception:
                         continue
-                    if name:
-                        names.add(name)
+                    if isinstance(font_obj, dict):
+                        yield font_obj
             except Exception:
                 # A malformed page (or resources accessor) must not break metadata.
                 continue
+
+    def _collect_font_names(self) -> list[str]:
+        """Collect BaseFont names from page font resources, without page layout.
+
+        Any per-page or per-font failure is skipped: metadata must never fail
+        because of one malformed font resource.
+        """
+        names: set[str] = set()
+        for font_obj in self._iter_font_dicts():
+            try:
+                name = self._base_font_name(font_obj)
+            except Exception:
+                continue
+            if name:
+                names.add(name)
         return sorted(names)
+
+    def _collect_font_info(self) -> list[dict]:
+        """Font embedding details, deduplicated by fontname and cached.
+
+        Reads only resource dictionaries (see ``_iter_font_dicts``), so metadata
+        stays cheap. The first occurrence of a fontname wins; a font that cannot
+        be described at all is skipped rather than reported half-way.
+        """
+        cache = getattr(self, '_font_info_cache', None)
+        if cache is None:
+            info_by_name: dict[str, dict] = {}
+            for font_obj in self._iter_font_dicts():
+                try:
+                    info = self._font_info(font_obj)
+                except Exception:
+                    continue
+                if not info:
+                    continue
+                info_by_name.setdefault(info['fontname'], info)
+            cache = [info_by_name[name] for name in sorted(info_by_name)]
+            self._font_info_cache = cache
+        # Hand out copies so a caller cannot mutate the cached document state.
+        return [dict(entry) for entry in cache]
 
     def __init__(self, path: str, password: Optional[str] = None):
         self._path = path
@@ -191,6 +382,8 @@ class PdfExtractor:
         self._pdf = pdfplumber.open(path, password=password)
         # analyze_fonts() needs a full char walk; memoize it for the document.
         self._font_stats_cache: Optional[dict] = None
+        # get_metadata() scans font resources once and reuses the result.
+        self._font_info_cache: Optional[list[dict]] = None
 
     def get_metadata(self) -> dict:
         doc = self._pdf.metadata
@@ -204,6 +397,7 @@ class PdfExtractor:
             'author': doc.get('Author', ''),
             'producer': doc.get('Producer', ''),
             'fonts': self._collect_font_names(),
+            'fontInfo': self._collect_font_info(),
         }
 
     def analyze_fonts(
@@ -299,6 +493,252 @@ class PdfExtractor:
             self._accumulate_font_stats(fonts, pages[page_num - 1], page_num)
         return {'fonts': sorted(fonts.values(), key=lambda f: f['charCount'], reverse=True)}
 
+    # --- page geometry -----------------------------------------------------
+
+    @classmethod
+    def _normalize_box(cls, raw) -> Optional[dict]:
+        """Turn a PDF rectangle array into a ``PageBox``, or None when unusable.
+
+        Corners are ordered so renderers can assume ``x0 <= x1`` / ``y0 <= y1``;
+        the values themselves are the raw PDF points, never adjusted.
+        """
+        raw = cls._resolve_pdf_value(raw)
+        if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+            return None
+        try:
+            values = [float(cls._resolve_pdf_value(value)) for value in raw]
+        except (TypeError, ValueError):
+            return None
+        x0, y0, x1, y1 = values
+        return {
+            'x0': min(x0, x1), 'y0': min(y0, y1),
+            'x1': max(x0, x1), 'y1': max(y0, y1),
+        }
+
+    @classmethod
+    def _page_rotation(cls, attrs: dict) -> int:
+        """Read ``/Rotate`` and normalize it to 0/90/180/270.
+
+        ``/Rotate`` is often an indirect object (``/Rotate 5 0 R``), so the
+        reference is resolved before the numeric conversion. Non-multiples of 90
+        (and unreadable values) are reported as 0: the renderer cannot express
+        them, and guessing would misplace every overlay.
+        """
+        raw = cls._resolve_pdf_value(attrs.get('Rotate'))
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return 0
+        value %= 360
+        return value if value in (0, 90, 180, 270) else 0
+
+    @classmethod
+    def _page_geometry(cls, page) -> dict:
+        """Page rotation plus the five page boxes, read from the page dictionary.
+
+        The values are the raw, unrotated PDF attributes (what other tools show
+        in a preflight report), while ``PageData.width/height`` keep following
+        pdfplumber's rotation-aware page size. Missing boxes stay None; MediaBox
+        is mandatory in PDF, so a document that omits it gets a derived fallback
+        instead of a null.
+        """
+        page_obj = getattr(page, 'page_obj', None)
+        attrs = cls._resolve_pdf_value(getattr(page_obj, 'attrs', None))
+        if not isinstance(attrs, dict):
+            attrs = {}
+
+        rotation = cls._page_rotation(attrs)
+
+        boxes: dict[str, Optional[dict]] = {}
+        for key, attr_name in PAGE_BOX_KEYS:
+            try:
+                boxes[key] = cls._normalize_box(attrs.get(attr_name))
+            except Exception:
+                boxes[key] = None
+
+        if boxes.get('media') is None:
+            width = float(getattr(page, 'width', 0) or 0)
+            height = float(getattr(page, 'height', 0) or 0)
+            if rotation in (90, 270):
+                # pdfplumber already swapped width/height for the rotation.
+                width, height = height, width
+            boxes['media'] = {'x0': 0.0, 'y0': 0.0, 'x1': width, 'y1': height}
+
+        return {
+            'rotation': rotation,
+            'boxes': {
+                'media': boxes['media'],
+                'crop': boxes.get('crop'),
+                'trim': boxes.get('trim'),
+                'bleed': boxes.get('bleed'),
+                'art': boxes.get('art'),
+            },
+        }
+
+    # --- table geometry ----------------------------------------------------
+
+    @staticmethod
+    def _pdf_y_range(
+        top: float,
+        bottom: float,
+        page_height: float,
+        mediabox_top: float,
+    ) -> tuple[float, float]:
+        """Invert pdfplumber's top-left ``top``/``bottom`` into PDF-space y values."""
+        return (
+            page_height + mediabox_top - float(bottom),
+            page_height + mediabox_top - float(top),
+        )
+
+    @classmethod
+    def _table_bbox_to_pdf(
+        cls,
+        bbox,
+        page_height: float,
+        mediabox_top: float,
+    ) -> Optional[dict]:
+        """Convert a pdfplumber top-left bbox to the chars/words bottom-left frame.
+
+        pdfplumber reports table and cell bboxes as ``(x0, top, x1, bottom)``,
+        i.e. y measured down from the top of the MediaBox, while chars, words and
+        rects are exposed in pdfminer's page frame (y up from the bottom, shifted
+        by the MediaBox origin). Drawing or hit-testing a table with the
+        unconverted box is therefore vertically mirrored; this is the same
+        inversion ``_word_y_range`` performs for words.
+        """
+        if bbox is None:
+            return None
+        try:
+            x0, top, x1, bottom = (float(value) for value in bbox)
+        except (TypeError, ValueError):
+            return None
+        y0, y1 = cls._pdf_y_range(top, bottom, page_height, mediabox_top)
+        return {
+            'x0': min(x0, x1), 'y0': min(y0, y1),
+            'x1': max(x0, x1), 'y1': max(y0, y1),
+        }
+
+    @classmethod
+    def _cell_bbox_to_pdf(
+        cls,
+        bbox,
+        page_height: float,
+        mediabox_top: float,
+    ) -> Optional[dict]:
+        """Convert one cell bbox; ``None`` (a missing cell) stays ``None``."""
+        return cls._table_bbox_to_pdf(bbox, page_height, mediabox_top)
+
+    @classmethod
+    def _table_cell_geometry(
+        cls,
+        tbl,
+        extracted: list,
+        page_height: float,
+        mediabox_top: float,
+    ) -> tuple[list[list[Optional[dict]]], list[list[Optional[dict]]]]:
+        """Build ``cellBoxes`` / ``cellSpans`` aligned to ``tbl.extract()`` rows.
+
+        Both matrices have exactly the shape of the extracted text matrix, so a
+        merged, missing or unreadable cell can never shift the row it belongs to.
+        A cell whose bbox spans several grid positions keeps the box on its
+        top-left anchor and is marked as covering the other positions (null box,
+        null span); when the grid lines do not line up the span stays null rather
+        than inventing one.
+        """
+        grid: list[list] = []
+        for row in getattr(tbl, 'rows', None) or []:
+            grid.append(list(getattr(row, 'cells', None) or []))
+
+        row_count = max(len(extracted), len(grid))
+        col_count = max(
+            [len(row) for row in extracted] + [len(row) for row in grid] + [0]
+        )
+        cell_boxes: list[list[Optional[dict]]] = [
+            [None] * col_count for _ in range(row_count)
+        ]
+        cell_spans: list[list[Optional[dict]]] = [
+            [None] * col_count for _ in range(row_count)
+        ]
+        if not grid or not col_count:
+            return cell_boxes, cell_spans
+
+        # Pass 1: every cell that exists gets its converted box, so a problem in
+        # the span inference below can never cost a box.
+        for row_index, row_cells in enumerate(grid):
+            if row_index >= row_count:
+                break
+            for col_index, bbox in enumerate(row_cells):
+                if bbox is None or col_index >= col_count:
+                    continue
+                cell_boxes[row_index][col_index] = cls._cell_bbox_to_pdf(
+                    bbox, page_height, mediabox_top
+                )
+
+        table_bbox = getattr(tbl, 'bbox', None) or (0, 0, 0, 0)
+        # Grid lines of the table, in pdfplumber's top-left coordinates. A cell
+        # spanning several positions ends on a line further along its axis.
+        try:
+            xs = sorted(
+                {float(cell[0]) for row in grid for cell in row if cell}
+                | {float(table_bbox[2])}
+            )
+            tops = sorted(
+                {float(cell[1]) for row in grid for cell in row if cell}
+                | {float(table_bbox[3])}
+            )
+        except (TypeError, ValueError, IndexError):
+            # Unusable cell geometry: keep the boxes, report no spans at all.
+            return cell_boxes, cell_spans
+
+        def line_index(lines: list[float], target: float) -> Optional[int]:
+            for index, line in enumerate(lines):
+                if abs(line - target) <= 0.5:
+                    return index
+            return None
+
+        # Pass 2: best-effort spans, with covered positions nulled out.
+        for row_index, row_cells in enumerate(grid):
+            if row_index >= row_count:
+                break
+            for col_index, bbox in enumerate(row_cells):
+                if bbox is None or col_index >= col_count:
+                    continue
+                try:
+                    x0, top, x1, bottom = (float(value) for value in bbox)
+                except (TypeError, ValueError):
+                    continue
+                start_col = line_index(xs, x0)
+                end_col = line_index(xs, x1)
+                start_row = line_index(tops, top)
+                end_row = line_index(tops, bottom)
+                if (
+                    None in (start_col, end_col, start_row, end_row)
+                    or start_col != col_index
+                    or start_row != row_index
+                    or end_col <= start_col
+                    or end_row <= start_row
+                ):
+                    # The grid does not line up: keep the box, do not guess a span.
+                    continue
+                row_span = end_row - start_row
+                col_span = end_col - start_col
+                cell_spans[row_index][col_index] = {
+                    'rowSpan': row_span, 'colSpan': col_span,
+                }
+                for covered_row in range(row_index, min(row_index + row_span, row_count)):
+                    covered_cells = grid[covered_row]
+                    for covered_col in range(col_index, min(col_index + col_span, col_count)):
+                        if (covered_row, covered_col) == (row_index, col_index):
+                            continue
+                        covered = (
+                            covered_cells[covered_col]
+                            if covered_col < len(covered_cells) else None
+                        )
+                        if covered is None or covered == bbox:
+                            cell_boxes[covered_row][covered_col] = None
+                            cell_spans[covered_row][covered_col] = None
+        return cell_boxes, cell_spans
+
     def extract_page(self, page_num: int) -> dict:
         page: Page = self._pdf.pages[page_num - 1]  # pdfplumber is 0-indexed
 
@@ -318,6 +758,7 @@ class PdfExtractor:
         page_height = float(page.height)
         mediabox = getattr(page, 'mediabox', None)
         mediabox_top = float(mediabox[1]) if mediabox is not None else 0.0
+        geometry = self._page_geometry(page)
 
         words = []
         # pdfplumber's word dicts do not include font attributes by default;
@@ -388,20 +829,29 @@ class PdfExtractor:
 
         tables = []
         for tbl in page.find_tables():
-            bbox = tbl.bbox
             # tbl.cells holds bbox tuples; tbl.extract() holds the actual text.
             extracted = tbl.extract() or []
             cells = [
                 ['' if cell is None else str(cell) for cell in (row or [])]
                 for row in extracted
             ]
+            # pdfplumber's table/cell bboxes are top-left; chars, words and the
+            # overlay canvas are bottom-left, so convert before exposing them.
+            bbox = self._table_bbox_to_pdf(tbl.bbox, page_height, mediabox_top) or {
+                'x0': 0.0, 'y0': 0.0, 'x1': 0.0, 'y1': 0.0,
+            }
+            cell_boxes, cell_spans = self._table_cell_geometry(
+                tbl, extracted, page_height, mediabox_top
+            )
             tables.append({
                 'type': 'table',
-                'x0': float(bbox[0]), 'y0': float(bbox[1]),
-                'x1': float(bbox[2]), 'y1': float(bbox[3]),
+                'x0': bbox['x0'], 'y0': bbox['y0'],
+                'x1': bbox['x1'], 'y1': bbox['y1'],
                 'rows': len(extracted),
                 'cols': max((len(row) for row in extracted), default=0),
                 'cells': cells,
+                'cellBoxes': cell_boxes,
+                'cellSpans': cell_spans,
                 'page': page_num,
             })
 
@@ -414,6 +864,8 @@ class PdfExtractor:
         return {
             'width': float(page.width),
             'height': float(page.height),
+            'rotation': geometry['rotation'],
+            'boxes': geometry['boxes'],
             'chars': chars,
             'words': words,
             'rects': rects,

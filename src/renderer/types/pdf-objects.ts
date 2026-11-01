@@ -58,13 +58,42 @@ export interface PdfTable extends PdfBaseObject {
   rows: number;
   cols: number;
   cells: string[][];
+  /**
+   * Cell rectangles aligned to `cells`, in the same bottom-left PDF coordinates
+   * as chars/words. `null` marks a covered (merged-away) or missing cell.
+   */
+  cellBoxes?: (PageBox | null)[][];
+  /** Row/column span per cell; `null` when the span could not be determined. */
+  cellSpans?: ({ rowSpan: number; colSpan: number } | null)[][];
 }
 
 export type PdfObject = PdfChar | PdfWord | PdfRect | PdfLine | PdfCurve | PdfImage | PdfTable;
 
+/** A rectangle in unrotated PDF points (y grows upwards from the bottom). */
+export interface PageBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+export interface PageBoxes {
+  media: PageBox;
+  crop: PageBox | null;
+  trim: PageBox | null;
+  bleed: PageBox | null;
+  art: PageBox | null;
+}
+
+export type PageRotation = 0 | 90 | 180 | 270;
+
 export interface PageData {
   width: number;
   height: number;
+  /** Clockwise page rotation; absent in data produced by older sidecars. */
+  rotation?: PageRotation;
+  /** Raw page boxes; absent in data produced by older sidecars. */
+  boxes?: PageBoxes;
   chars: PdfChar[];
   words: PdfWord[];
   rects: PdfRect[];
@@ -72,6 +101,19 @@ export interface PageData {
   curves: PdfCurve[];
   images: PdfImage[];
   tables: PdfTable[];
+}
+
+export interface FontInfo {
+  fontname: string;
+  /** Type1 / TrueType / Type0 / Type3 ... */
+  subtype: string | null;
+  embedded: boolean;
+  embedding: 'embedded' | 'standard14' | 'not-embedded' | 'unknown';
+  /** Six-uppercase-letter subset tag, e.g. `ABCDEF+Foo`. */
+  subset: boolean;
+  encoding: string | null;
+  hasToUnicode: boolean;
+  fontFileType: 'Type1' | 'TrueType' | 'CFF' | 'OpenType' | null;
 }
 
 export interface PdfMetadata {
@@ -84,6 +126,8 @@ export interface PdfMetadata {
   author: string;
   producer: string;
   fonts: string[];
+  /** Embedding details per font; absent in data produced by older sidecars. */
+  fontInfo?: FontInfo[];
 }
 
 export interface PdfOutlineItem {
