@@ -1,11 +1,27 @@
 import { create } from 'zustand';
-import { PdfObject, PdfMetadata, PageData, PdfOutlineItem } from '../types/pdf-objects';
+import { PdfObject, PdfMetadata, PageData, PdfOutlineItem, PageBox } from '../types/pdf-objects';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { SearchMatch } from '../services/pdf-search';
 import type { FontStat } from '../types/ipc-protocol';
 import type { FontBatchProgress } from '../services/font-stats';
 import { ObjectSubset, FilterCriteria, filterByProperties } from '../services/object-filter';
 import { MAX_FIT_WIDTH_ZOOM, MIN_FIT_WIDTH_ZOOM } from '../services/page-geometry';
+
+/**
+ * One cell of a table, identified by its place inside `PageData.tables`.
+ *
+ * `bbox` is the cell rectangle in the same bottom-left PDF coordinates as the
+ * other objects, or `null` when the page data carries no `cellBoxes` for the
+ * table (older sidecars) — the Inspector grid then works text-only and the
+ * canvas has nothing to highlight.
+ */
+export interface TableCellRef {
+  page: number;
+  tableIndex: number;
+  row: number;
+  col: number;
+  bbox: PageBox | null;
+}
 
 export interface PdfState {
   // File state
@@ -24,6 +40,10 @@ export interface PdfState {
   allObjects: PdfObject[];
   hoveredObject: PdfObject | null;
   selectedObject: PdfObject | null;
+
+  // Table cell selection (only meaningful while a table is the current object)
+  hoveredTableCell: TableCellRef | null;
+  selectedTableCell: TableCellRef | null;
 
   // UI state
   overlayVisibility: Record<string, boolean>;
@@ -65,6 +85,8 @@ export interface PdfState {
   setPageData: (data: PageData) => void;
   setHoveredObject: (obj: PdfObject | null) => void;
   setSelectedObject: (obj: PdfObject | null) => void;
+  setHoveredTableCell: (cell: TableCellRef | null) => void;
+  setSelectedTableCell: (cell: TableCellRef | null) => void;
   toggleOverlay: (type: string) => void;
   /** Replace/merge several overlay toggles at once (Layers All/None/Solo). */
   setOverlayVisibility: (visibility: Record<string, boolean>) => void;
@@ -106,6 +128,8 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   allObjects: [],
   hoveredObject: null,
   selectedObject: null,
+  hoveredTableCell: null,
+  selectedTableCell: null,
 
   overlayVisibility: {
     char: true,
@@ -148,6 +172,8 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       allObjects: [],
       hoveredObject: null,
       selectedObject: null,
+      hoveredTableCell: null,
+      selectedTableCell: null,
       error: null,
       pdfDocRef: null,
       outline: null,
@@ -173,6 +199,8 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       allObjects: [],
       hoveredObject: null,
       selectedObject: null,
+      hoveredTableCell: null,
+      selectedTableCell: null,
       subset: null,
     }),
 
@@ -195,7 +223,17 @@ export const usePdfStore = create<PdfState>((set, get) => ({
     }),
 
   setHoveredObject: (obj) => set({ hoveredObject: obj }),
-  setSelectedObject: (obj) => set({ selectedObject: obj }),
+  // Cell state only makes sense while a table stays selected: any other
+  // selection (including none) drops it so a stale cell can never be
+  // highlighted for a non-table object.
+  setSelectedObject: (obj) =>
+    set(
+      obj && obj.type === 'table'
+        ? { selectedObject: obj }
+        : { selectedObject: obj, hoveredTableCell: null, selectedTableCell: null },
+    ),
+  setHoveredTableCell: (cell) => set({ hoveredTableCell: cell }),
+  setSelectedTableCell: (cell) => set({ selectedTableCell: cell }),
   toggleOverlay: (type) =>
     set((state) => ({
       overlayVisibility: {
@@ -214,7 +252,13 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   setLoading: (loading) => set({ isLoading: loading }),
   setSidecarRunning: (running) => set({ sidecarRunning: running }),
   setError: (error) => set({ error }),
-  clearSelection: () => set({ hoveredObject: null, selectedObject: null }),
+  clearSelection: () =>
+    set({
+      hoveredObject: null,
+      selectedObject: null,
+      hoveredTableCell: null,
+      selectedTableCell: null,
+    }),
   setPdfDocRef: (doc) => set({ pdfDocRef: doc }),
   setOutline: (outline) => set({ outline }),
   setFitWidthZoom: (zoom) => {

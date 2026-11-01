@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { ipc } from "../../services/ipc-client";
 import { usePdfStore } from "../../store/pdf-store";
 import type { PdfImage, PdfObject, PdfObjectType, PdfTable } from "../../types/pdf-objects";
+import { TableGrid, resolveTableIndex } from "./TableGrid";
 import styles from "./InspectorPanel.module.css";
 
 type TextObject = PdfObject & {
@@ -70,6 +71,7 @@ const Row = ({ label, children }: RowProps): JSX.Element => (
 export const InspectTab = (): JSX.Element => {
   const hoveredObject = usePdfStore((state) => state.hoveredObject);
   const selectedObject = usePdfStore((state) => state.selectedObject);
+  const pageData = usePdfStore((state) => state.pageData);
   // Hovering previews an object without changing the selection; keep that
   // precedence exactly as it was before the tab split.
   const object = hoveredObject ?? selectedObject;
@@ -126,6 +128,10 @@ export const InspectTab = (): JSX.Element => {
 
   const width = object ? object.x1 - object.x0 : 0;
   const height = object ? object.y1 - object.y0 : 0;
+  // Tables need their position inside the page's `tables` array so the store's
+  // cell state (page + tableIndex) and the canvas grid can address the same
+  // table. -1 means the object is not on the currently loaded page.
+  const tableIndex = object && isTable(object) ? resolveTableIndex(pageData?.tables, object) : -1;
 
   return (
     <div className={styles.content}>
@@ -173,6 +179,7 @@ export const InspectTab = (): JSX.Element => {
             <Section title="Table">
               <Row label="Rows">{object.rows}</Row>
               <Row label="Columns">{object.cols}</Row>
+              {tableIndex >= 0 && <TableGrid table={object} tableIndex={tableIndex} />}
             </Section>
           )}
 

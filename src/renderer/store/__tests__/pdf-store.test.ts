@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { usePdfStore } from '../pdf-store';
 import { filterByRegion } from '../../services/object-filter';
-import type { PdfChar } from '../../types/pdf-objects';
+import type { PdfChar, PdfTable, PageData } from '../../types/pdf-objects';
 
 const metadata = {
   pages: 10,
@@ -28,6 +28,8 @@ describe('pdf-store', () => {
       allObjects: [],
       hoveredObject: null,
       selectedObject: null,
+      hoveredTableCell: null,
+      selectedTableCell: null,
       overlayVisibility: {
         char: true, word: true, rect: true, line: true, curve: true, image: true, table: true,
       },
@@ -358,5 +360,119 @@ describe('fontProgress', () => {
     usePdfStore.getState().setFontProgress({ done: 10, total: 25 });
     usePdfStore.getState().setFile('/x.pdf', { pages: 1, version: '1.7', encrypted: false, page_w: 100, page_h: 100, title: '', author: '', producer: '', fonts: [] });
     expect(usePdfStore.getState().fontProgress).toBeNull();
+  });
+});
+
+const table = (x0 = 10, y0 = 20, x1 = 110, y1 = 120): PdfTable => ({
+  type: 'table', page: 1, x0, y0, x1, y1, rows: 1, cols: 2, cells: [['a', 'b']],
+});
+
+const cell = (row = 0, col = 1) =>
+  ({
+    page: 1,
+    tableIndex: 0,
+    row,
+    col,
+    bbox: { x0: 10, y0: 20, x1: 60, y1: 40 },
+  }) as const;
+
+const pageWithTables = (tables: PdfTable[]): PageData => ({
+  width: 200, height: 300,
+  chars: [], words: [], rects: [], lines: [], curves: [], images: [], tables,
+});
+
+describe('table cell state', () => {
+  beforeEach(() => {
+    usePdfStore.setState({
+      pageData: pageWithTables([table()]),
+      allObjects: [table()],
+      hoveredObject: null,
+      selectedObject: null,
+      hoveredTableCell: null,
+      selectedTableCell: null,
+    });
+  });
+
+  it('defaults to no hovered or selected cell', () => {
+    const initial = usePdfStore.getInitialState();
+    expect(initial.hoveredTableCell).toBeNull();
+    expect(initial.selectedTableCell).toBeNull();
+  });
+
+  it('sets and clears each cell reference independently', () => {
+    usePdfStore.getState().setHoveredTableCell(cell(0, 0));
+    expect(usePdfStore.getState().hoveredTableCell).toEqual(cell(0, 0));
+    expect(usePdfStore.getState().selectedTableCell).toBeNull();
+
+    usePdfStore.getState().setSelectedTableCell(cell(0, 1));
+    expect(usePdfStore.getState().selectedTableCell).toEqual(cell(0, 1));
+    expect(usePdfStore.getState().hoveredTableCell).toEqual(cell(0, 0));
+
+    usePdfStore.getState().setHoveredTableCell(null);
+    usePdfStore.getState().setSelectedTableCell(null);
+    expect(usePdfStore.getState().hoveredTableCell).toBeNull();
+    expect(usePdfStore.getState().selectedTableCell).toBeNull();
+  });
+
+  it('keeps the cell state when a table is selected', () => {
+    const target = table();
+    usePdfStore.setState({ allObjects: [target], selectedObject: null });
+    usePdfStore.getState().setSelectedTableCell(cell());
+
+    usePdfStore.getState().setSelectedObject(target);
+
+    expect(usePdfStore.getState().selectedObject).toBe(target);
+    expect(usePdfStore.getState().selectedTableCell).toEqual(cell());
+  });
+
+  it('clears the cell state when the selected object is not a table', () => {
+    usePdfStore.getState().setHoveredTableCell(cell(0, 0));
+    usePdfStore.getState().setSelectedTableCell(cell(0, 1));
+
+    usePdfStore.getState().setSelectedObject(char('Helvetica', 12));
+    expect(usePdfStore.getState().hoveredTableCell).toBeNull();
+    expect(usePdfStore.getState().selectedTableCell).toBeNull();
+
+    usePdfStore.getState().setHoveredTableCell(cell(0, 0));
+    usePdfStore.getState().setSelectedTableCell(cell(0, 1));
+    usePdfStore.getState().setSelectedObject(null);
+    expect(usePdfStore.getState().hoveredTableCell).toBeNull();
+    expect(usePdfStore.getState().selectedTableCell).toBeNull();
+  });
+
+  it('clearSelection clears the cell state (Esc)', () => {
+    usePdfStore.getState().setHoveredTableCell(cell(0, 0));
+    usePdfStore.getState().setSelectedTableCell(cell(0, 1));
+
+    usePdfStore.getState().clearSelection();
+
+    const state = usePdfStore.getState();
+    expect(state.hoveredTableCell).toBeNull();
+    expect(state.selectedTableCell).toBeNull();
+  });
+
+  it('setPage clears the cell state', () => {
+    usePdfStore.getState().setHoveredTableCell(cell(0, 0));
+    usePdfStore.getState().setSelectedTableCell(cell(0, 1));
+
+    usePdfStore.getState().setPage(2);
+
+    const state = usePdfStore.getState();
+    expect(state.hoveredTableCell).toBeNull();
+    expect(state.selectedTableCell).toBeNull();
+  });
+
+  it('setFile clears the cell state', () => {
+    usePdfStore.getState().setHoveredTableCell(cell(0, 0));
+    usePdfStore.getState().setSelectedTableCell(cell(0, 1));
+
+    usePdfStore.getState().setFile('/x.pdf', {
+      pages: 1, version: '1.7', encrypted: false, page_w: 100, page_h: 100,
+      title: '', author: '', producer: '', fonts: [],
+    });
+
+    const state = usePdfStore.getState();
+    expect(state.hoveredTableCell).toBeNull();
+    expect(state.selectedTableCell).toBeNull();
   });
 });

@@ -1,0 +1,125 @@
+/* Table cell grid. Lives next to the Inspect tab's generic rows so the Table
+   section keeps its existing look while the grid gets its own compact tokens
+   (readable at the 280px minimum panel width). */
+
+.wrapper {
+  border-top: 1px solid #303740;
+}
+
+.gridScroll {
+  max-height: 220px;
+  overflow: auto;
+  background: #161a1f;
+}
+
+/* Columns never collapse below 58px; wider tables scroll horizontally instead
+   of crushing the text. */
+.grid {
+  display: grid;
+  min-width: 100%;
+  align-items: stretch;
+}
+
+.cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: flex-start;
+  min-width: 0;
+  min-height: 24px;
+  padding: 3px 5px;
+  overflow: hidden;
+  color: #e1e6eb;
+  background: transparent;
+  border: 0;
+  border-right: 1px solid #2b323b;
+  border-bottom: 1px solid #2b323b;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.3;
+  text-align: left;
+}
+
+.cellButton {
+  cursor: crosshair;
+}
+
+.cellButton:hover {
+  background: #223142;
+}
+
+.cellButton:focus-visible {
+  outline: 2px solid #7fb2e8;
+  outline-offset: -2px;
+}
+
+.cellHovered {
+  background: #223142;
+  box-shadow: inset 0 0 0 1px #7fb2e8;
+}
+
+.cellSelected {
+  background: #3a3111;
+  box-shadow: inset 0 0 0 1px #ffd700;
+}
+
+/* Merged-away position: keeps its slot so the text matrix does not shift. */
+.covered {
+  align-items: center;
+  justify-content: center;
+  color: #6b7280;
+  background: repeating-linear-gradient(
+    45deg,
+    #1b2026,
+    #1b2026 4px,
+    #232a32 4px,
+    #232a32 8px
+  );
+  cursor: default;
+}
+
+.coveredMark {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.cellText {
+  max-width: 100%;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spanBadge {
+  color: #ffd700;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.details {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 2px 8px;
+  padding: 6px 8px;
+  border-top: 1px solid #303740;
+  font-size: 10px;
+}
+
+.detailLabel {
+  color: #8e99a6;
+}
+
+.detailValue {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #e1e6eb;
+  font-variant-numeric: tabular-nums;
+}
+
+.hint {
+  padding: 6px 8px;
+  color: #77818c;
+  font-size: 10px;
+}
