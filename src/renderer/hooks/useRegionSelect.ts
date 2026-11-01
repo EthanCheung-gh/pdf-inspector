@@ -1,6 +1,7 @@
 import type React from 'react';
 import { useCallback, useRef, useState } from 'react';
 import { usePdfStore } from '../store/pdf-store';
+import { useWorkspaceStore } from '../store/workspace-store';
 import { filterByRegion, type BBox } from '../services/object-filter';
 
 export function screenToPdf(
@@ -73,6 +74,9 @@ export const useRegionSelect = (
     );
     const mode = usePdfStore.getState().subset?.source === 'region' ? usePdfStore.getState().subset!.mode : 'intersect';
     setSubset({ source: 'region', mode, objects: filterByRegion(allObjects, bbox, mode), bbox });
+    // A completed region drag produces a result set that the user is about to
+    // inspect/export, so bring the Results tab forward.
+    useWorkspaceStore.getState().setInspectorTab('results');
   }, [allObjects, pageWidth, pageHeight, pdfWidth, pdfHeight, regionMode, setSubset]);
 
   return { handlers: { onMouseDown, onMouseMove, onMouseUp }, liveRect, dragging, wasDragRef };

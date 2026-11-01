@@ -1,0 +1,31 @@
+.splitter {
+  position: relative;
+  flex: 0 0 6px;
+  align-self: stretch;
+  width: 6px;
+  background: #242a31;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+  transition: background 120ms ease;
+}
+
+.splitter::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 1px;
+  background: #353b43;
+  content: "";
+}
+
+.splitter:hover,
+.splitter.dragging {
+  background: #33404d;
+}
+
+.splitter:focus-visible {
+  background: #33404d;
+  box-shadow: inset 0 0 0 2px #5a9fd4;
+}

@@ -3,6 +3,7 @@ import { ipc } from '../../services/ipc-client';
 import { analyzeFontsInBatches, formatFontSize } from '../../services/font-stats';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { usePdfStore } from '../../store/pdf-store';
+import { useWorkspaceStore } from '../../store/workspace-store';
 import type { FontStat } from '../../types/ipc-protocol';
 import styles from './FontsTab.module.css';
 
@@ -84,6 +85,9 @@ export const FontsTab: React.FC = () => {
     // Words now carry font attributes too; keep the font drill-down focused on
     // character boxes so clicking a font does not double the overlay boxes.
     setFilterCriteria({ fontname: font.fontname, types: ['char'] });
+    // The filter is applied immediately; show it instead of leaving the
+    // Inspector on Inspect/Results where the user cannot see or clear it.
+    useWorkspaceStore.getState().setInspectorTab('filter');
   };
 
   if (!filePath) {

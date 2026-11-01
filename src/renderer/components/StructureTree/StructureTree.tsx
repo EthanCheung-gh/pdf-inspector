@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { usePdfStore } from '../../store/pdf-store';
+import { useWorkspaceStore } from '../../store/workspace-store';
 import { PageData, PdfObject, PdfObjectType } from '../../types/pdf-objects';
 import styles from './StructureTree.module.css';
 
@@ -57,6 +58,7 @@ export const StructureTree: React.FC = () => {
   const pageData = usePdfStore((state) => state.pageData);
   const selectedObject = usePdfStore((state) => state.selectedObject);
   const setSelectedObject = usePdfStore((state) => state.setSelectedObject);
+  const setInspectorTab = useWorkspaceStore((state) => state.setInspectorTab);
   const { navigate } = usePageNavigation();
   // Page whose groups the user collapsed. Only the active page can be
   // collapsed, so a single page number is enough state.
@@ -86,6 +88,7 @@ export const StructureTree: React.FC = () => {
   const handleObjectClick = async (object: PdfObject): Promise<void> => {
     if (object.page === currentPage) {
       setSelectedObject(object);
+      setInspectorTab('inspect');
       return;
     }
 
@@ -95,7 +98,10 @@ export const StructureTree: React.FC = () => {
     const freshData = usePdfStore.getState().pageData;
     if (freshData && freshData !== dataBefore) {
       const freshObject = getPageObjects(freshData).find((candidate) => objectsMatch(candidate, object));
-      if (freshObject) setSelectedObject(freshObject);
+      if (freshObject) {
+        setSelectedObject(freshObject);
+        setInspectorTab('inspect');
+      }
     }
   };
 

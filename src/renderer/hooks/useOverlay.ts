@@ -1,18 +1,12 @@
 import { useCallback } from 'react';
 import { PdfObject } from '../types/pdf-objects';
 import type { BBox, ObjectSubset } from '../services/object-filter';
-
-const OVERLAY_COLORS: Record<PdfObject['type'], string> = {
-  char: 'rgba(80, 200, 80, 0.5)',
-  word: 'rgba(80, 120, 255, 0.5)',
-  rect: 'rgba(200, 100, 200, 0.5)',
-  line: 'rgba(255, 80, 80, 0.6)',
-  curve: 'rgba(255, 160, 50, 0.6)',
-  image: 'rgba(80, 220, 220, 0.5)',
-  table: 'rgba(80, 160, 255, 0.5)',
-};
+import { OVERLAY_COLORS } from '../services/overlay-style';
+import { useWorkspaceStore } from '../store/workspace-store';
 
 export const useOverlay = () => {
+  const overlayOpacity = useWorkspaceStore((state) => state.overlayOpacity);
+
   const drawOverlays = useCallback((
     ctx: CanvasRenderingContext2D,
     objects: PdfObject[],
@@ -28,6 +22,11 @@ export const useOverlay = () => {
 
     const scaleX = pageWidth / pdfWidth;
     const scaleY = pageHeight / pdfHeight;
+
+    // The opacity control dims the object boxes only. Region rectangles and
+    // selection highlights below reset the alpha back to 1 so they stay
+    // legible regardless of the layer opacity.
+    ctx.globalAlpha = overlayOpacity;
 
     objects.forEach((object) => {
       if (!visibleTypes[object.type]) return;
@@ -64,6 +63,8 @@ export const useOverlay = () => {
       ctx.strokeRect(x, y, width, height);
     });
 
+    ctx.globalAlpha = 1;
+
     if (regionRect) {
       const x = regionRect.x0 * scaleX;
       const y = pageHeight - regionRect.y1 * scaleY;
@@ -96,7 +97,7 @@ export const useOverlay = () => {
         ctx.strokeRect(x, y, (object.x1 - object.x0) * scaleX, (object.y1 - object.y0) * scaleY);
       });
     }
-  }, []);
+  }, [overlayOpacity]);
 
   return { drawOverlays };
 };

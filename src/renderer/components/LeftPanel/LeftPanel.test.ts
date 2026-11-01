@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { usePdfStore } from '../../store/pdf-store';
+import { useWorkspaceStore } from '../../store/workspace-store';
 
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
 
@@ -23,20 +24,22 @@ describe('LeftPanel', () => {
       pageCount: 0,
       outline: null,
       pdfDocRef: null,
+      pageData: null,
       fontStats: null,
       fontProgress: null,
       error: null,
       isLoading: false,
     });
+    useWorkspaceStore.setState({ leftTab: 'objects', overlayOpacity: 1 });
   });
 
-  it('switches between Structure and Bookmarks tabs', () => {
+  it('switches between Objects and Outline tabs', () => {
     render(React.createElement(LeftPanel));
 
-    expect(screen.getByRole('tab', { name: 'Structure' }).getAttribute('aria-selected')).toBe('true');
-    fireEvent.click(screen.getByRole('tab', { name: 'Bookmarks' }));
+    expect(screen.getByRole('tab', { name: 'Objects' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(screen.getByRole('tab', { name: 'Outline' }));
 
-    expect(screen.getByRole('tab', { name: 'Bookmarks' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: 'Outline' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByText('No bookmarks found in this document.')).toBeTruthy();
   });
 
@@ -51,7 +54,7 @@ describe('LeftPanel', () => {
     });
     render(React.createElement(LeftPanel));
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Bookmarks' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Outline' }));
     fireEvent.click(screen.getByRole('button', { name: 'Chapter 3' }));
 
     await waitFor(() => expect(pdfDoc.getDestination).toHaveBeenCalledWith('chapter-three'));
@@ -71,7 +74,7 @@ describe('LeftPanel', () => {
     });
     render(React.createElement(LeftPanel));
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Bookmarks' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Outline' }));
     fireEvent.click(screen.getByRole('button', { name: 'Appendix' }));
 
     await waitFor(() => expect(pdfDoc.getPageIndex).toHaveBeenCalledWith(pageRef));
@@ -90,7 +93,7 @@ describe('LeftPanel', () => {
     });
     render(React.createElement(LeftPanel));
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Bookmarks' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Outline' }));
     fireEvent.click(screen.getByRole('button', { name: 'Broken bookmark' }));
 
     expect(pdfDoc.getPageIndex).not.toHaveBeenCalled();
@@ -109,7 +112,7 @@ describe('LeftPanel', () => {
     });
     render(React.createElement(LeftPanel));
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Bookmarks' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Outline' }));
 
     expect(screen.getByText('This document has 2001 bookmarks. The outline is too large to display.')).toBeTruthy();
   });
@@ -128,7 +131,7 @@ describe('LeftPanel', () => {
     const hint = screen.getByText(fontsHint);
     expect(hint.closest('[hidden]')).toBeNull();
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Structure' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Objects' }));
 
     // Still mounted, but inside the hidden wrapper: no remount, so an in-flight
     // analysis keeps running instead of restarting from page 1.
@@ -137,11 +140,16 @@ describe('LeftPanel', () => {
     const hiddenWrapper = hiddenHint.closest('[hidden]');
     expect(hiddenWrapper).not.toBeNull();
     expect(hiddenWrapper?.hasAttribute('hidden')).toBe(true);
-    expect(screen.getByRole('tab', { name: 'Structure' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: 'Objects' }).getAttribute('aria-selected')).toBe('true');
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Bookmarks' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Outline' }));
     expect(screen.getByText(fontsHint)).toBe(hint);
     expect(hint.closest('[hidden]')).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Layers' }));
+    expect(screen.getByText(fontsHint)).toBe(hint);
+    expect(hint.closest('[hidden]')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'All' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('tab', { name: 'Fonts' }));
     expect(screen.getByText(fontsHint)).toBe(hint);
@@ -149,8 +157,78 @@ describe('LeftPanel', () => {
 
     // Tab semantics survive the extra wrapper.
     const tabs = screen.getAllByRole('tab');
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['Structure', 'Bookmarks', 'Fonts']);
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Objects', 'Outline', 'Fonts', 'Layers']);
     expect(screen.getByRole('tab', { name: 'Fonts' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('tabpanel')).toBeTruthy();
+  });
+
+  it('mounts the Layers panel up front and hides it while another tab is active', () => {
+    render(React.createElement(LeftPanel));
+
+    // Mounted eagerly (like Fonts, but without a first-visit gate) so the
+    // component-local Solo state is never thrown away.
+    const allButton = screen.getByRole('button', { name: 'All', hidden: true });
+    expect(allButton.closest('[hidden]')).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Layers' }));
+
+    expect(screen.getByRole('button', { name: 'All' }).closest('[hidden]')).toBeNull();
+    expect(useWorkspaceStore.getState().leftTab).toBe('layers');
+  });
+
+  it('keeps a Solo selection and its snapshot across tab switches', () => {
+    const beforeSolo = { ...usePdfStore.getState().overlayVisibility };
+    render(React.createElement(LeftPanel));
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Layers' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Solo Words' }));
+    expect(usePdfStore.getState().overlayVisibility.word).toBe(true);
+    expect(
+      screen.getByRole('button', { name: 'Solo Words' }).getAttribute('aria-pressed'),
+    ).toBe('true');
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Objects' }));
+
+    // Still mounted inside the hidden wrapper, still Soloed.
+    const hiddenSolo = screen.getByRole('button', { name: 'Solo Words', hidden: true });
+    expect(hiddenSolo.closest('[hidden]')).not.toBeNull();
+    expect(hiddenSolo.getAttribute('aria-pressed')).toBe('true');
+    expect(
+      Object.entries(usePdfStore.getState().overlayVisibility)
+        .filter(([, visible]) => visible)
+        .map(([type]) => type),
+    ).toEqual(['word']);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Layers' }));
+
+    const restoredSolo = screen.getByRole('button', { name: 'Solo Words' });
+    expect(restoredSolo.getAttribute('aria-pressed')).toBe('true');
+
+    // The pre-Solo snapshot survived too, so turning Solo off restores it.
+    fireEvent.click(restoredSolo);
+    expect(usePdfStore.getState().overlayVisibility).toEqual(beforeSolo);
+    expect(
+      screen.getByRole('button', { name: 'Solo Words' }).getAttribute('aria-pressed'),
+    ).toBe('false');
+  });
+
+  it('offers a header button that hides the panel without breaking tab semantics', () => {
+    useWorkspaceStore.setState({ leftCollapsed: false });
+    render(React.createElement(LeftPanel));
+
+    // The tablist must stay a flat list of tabs: the collapse button lives in
+    // the surrounding row, not inside `role="tablist"`.
+    const tablist = screen.getByRole('tablist');
+    expect(tablist.querySelectorAll('[role="tab"]')).toHaveLength(4);
+    expect(within(tablist).queryByRole('button', { name: 'Hide left panel' })).toBeNull();
+
+    const collapse = screen.getByRole('button', { name: 'Hide left panel' });
+    expect(collapse.getAttribute('title')).toBe('Hide left panel');
+
+    fireEvent.click(collapse);
+    expect(useWorkspaceStore.getState().leftCollapsed).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide left panel' }));
+    expect(useWorkspaceStore.getState().leftCollapsed).toBe(false);
   });
 });

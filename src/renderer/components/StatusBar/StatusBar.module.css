@@ -9,10 +9,84 @@
   background: #1e2329;
   border-top: 1px solid #353b43;
   font-size: 12px;
+  overflow: hidden;
 }
 
 .documentStatus {
   white-space: nowrap;
+}
+
+.selectionSummary {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  max-width: 24ch;
+  overflow: hidden;
+  color: #cbd3dc;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selectionType {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  color: #e1e6eb;
+  background: #2a313a;
+  border: 1px solid #353b43;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.filterSummary {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 46ch;
+  color: #aeb7c2;
+  white-space: nowrap;
+}
+
+.filterLabel {
+  flex: 0 0 auto;
+  color: #8e99a6;
+}
+
+/* The active criteria can be long (font + size + color + types); ellipsize the
+   token list while `title`/`aria-label` keep the full summary available. */
+.filterText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clearButton {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  color: #cbd3dc;
+  background: #2a313a;
+  border: 1px solid #353b43;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.clearButton:hover {
+  color: #fff;
+  background: #333c47;
+}
+
+.clearButton:focus-visible {
+  outline: 2px solid #7fb2e8;
+  outline-offset: 1px;
 }
 
 .spacer {

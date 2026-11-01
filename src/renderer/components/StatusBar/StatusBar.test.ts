@@ -1,10 +1,23 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { PdfWord } from '../../types/pdf-objects';
 import { usePdfStore } from '../../store/pdf-store';
 
 import { StatusBar } from './StatusBar';
+
+const selectedWord: PdfWord = {
+  type: 'word',
+  page: 3,
+  x0: 10,
+  y0: 10,
+  x1: 40,
+  y1: 20,
+  text: 'selected',
+  fontname: 'Inter',
+  size: 12,
+};
 
 describe('StatusBar', () => {
   afterEach(cleanup);
@@ -21,6 +34,8 @@ describe('StatusBar', () => {
       exportProgress: null,
       error: null,
       fontProgress: null,
+      filterCriteria: {},
+      selectedObject: null,
     });
   });
 
@@ -60,5 +75,65 @@ describe('StatusBar', () => {
     expect(screen.getByRole('alert').textContent).toBe('Error: sidecar exploded');
     expect(screen.getByRole('status').textContent).toBe('Analyzing fonts 7/9…');
     expect(screen.getByText(/Sidecar offline/)).toBeTruthy();
+  });
+
+  it('summarizes active filters and clears them from the bar', () => {
+    usePdfStore.setState({
+      filterCriteria: {
+        fontname: 'Inter',
+        sizeMin: 12,
+        sizeMax: 18,
+        color: '#000000',
+        types: ['word', 'rect'],
+      },
+    });
+
+    render(React.createElement(StatusBar));
+
+    // A named group (not a bare labelled span) so assistive tech exposes the
+    // summary reliably.
+    const summary = screen.getByRole('group', {
+      name: 'Active filters: Inter · 12–18pt · #000000 · 2 types',
+    });
+    expect(summary).toBe(screen.getByLabelText('Active filters: Inter · 12–18pt · #000000 · 2 types'));
+    expect(summary.textContent).toContain('Filter:');
+    expect(summary.textContent).toContain('Inter · 12–18pt · #000000 · 2 types');
+    // The full summary is available as a tooltip when the bar ellipsizes it.
+    expect(summary.getAttribute('title')).toBe('Filter: Inter · 12–18pt · #000000 · 2 types');
+
+    fireEvent.click(within(summary).getByRole('button', { name: 'Clear' }));
+
+    expect(usePdfStore.getState().filterCriteria).toEqual({});
+    expect(screen.queryByLabelText(/^Active filters:/)).toBeNull();
+    expect(screen.queryByRole('group', { name: /^Active filters:/ })).toBeNull();
+    expect(screen.getByText('Page 3/12 · 0 objects')).toBeTruthy();
+  });
+
+  it('does not reserve space for a filter summary when no filter is active', () => {
+    render(React.createElement(StatusBar));
+
+    expect(screen.queryByLabelText(/^Active filters:/)).toBeNull();
+    expect(screen.queryByRole('group', { name: /^Active filters:/ })).toBeNull();
+    expect(screen.queryByText('Filter:')).toBeNull();
+  });
+
+  it('shows the selected object type and page only while something is selected', () => {
+    render(React.createElement(StatusBar));
+    expect(screen.queryByLabelText(/^Selected /)).toBeNull();
+
+    act(() => {
+      usePdfStore.setState({ selectedObject: selectedWord });
+    });
+
+    const summary = screen.getByRole('group', { name: 'Selected word on page 3' });
+    expect(summary).toBe(screen.getByLabelText('Selected word on page 3'));
+    expect(summary.textContent).toContain('word');
+    expect(summary.textContent).toContain('page 3');
+
+    act(() => {
+      usePdfStore.setState({ selectedObject: null });
+    });
+    expect(screen.queryByLabelText(/^Selected /)).toBeNull();
+    expect(screen.queryByRole('group', { name: /^Selected / })).toBeNull();
   });
 });

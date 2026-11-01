@@ -1,0 +1,151 @@
+.panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 8px;
+  border-bottom: 1px solid #303740;
+}
+
+.title {
+  color: #8e99a6;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.bulkActions {
+  display: flex;
+  gap: 4px;
+}
+
+.bulkButton,
+.soloButton,
+.eyeButton {
+  padding: 2px 6px;
+  color: #aeb7c2;
+  background: #252b32;
+  border: 1px solid #3b434d;
+  border-radius: 3px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.bulkButton:hover,
+.soloButton:hover,
+.eyeButton:hover {
+  color: #fff;
+  background: #353e49;
+}
+
+.bulkButton:focus-visible,
+.soloButton:focus-visible,
+.eyeButton:focus-visible {
+  outline: 2px solid #5b9cff;
+  outline-offset: 1px;
+}
+
+.list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 2px 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) 28px auto 22px;
+  gap: 6px;
+  align-items: center;
+  min-height: 27px;
+  padding: 2px 8px;
+}
+
+.row:hover {
+  background: #262d35;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+}
+
+.label {
+  min-width: 0;
+  overflow: hidden;
+  color: #cbd3dc;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.count {
+  color: #8e99a6;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.soloButton {
+  color: #8e99a6;
+}
+
+.soloButton.soloActive {
+  color: #fff;
+  background: #2d6db5;
+  border-color: #4b93e6;
+}
+
+.eyeButton {
+  padding: 2px 4px;
+  color: #6f7882;
+  font-size: 12px;
+  text-align: center;
+}
+
+.eyeButton.eyeVisible {
+  color: #9fd3a3;
+}
+
+.opacityRow {
+  display: grid;
+  grid-template-columns: auto 34px minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  padding: 7px 8px;
+  border-top: 1px solid #303740;
+}
+
+.opacityLabel {
+  color: #8e99a6;
+  font-size: 11px;
+}
+
+.opacityValue {
+  color: #aeb7c2;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.slider {
+  width: 100%;
+  min-width: 0;
+  accent-color: #5b9cff;
+  cursor: pointer;
+}

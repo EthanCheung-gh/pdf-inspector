@@ -1,0 +1,60 @@
+/*
+ * A narrow strip between the canvas and the window edge. It takes part in the
+ * workspace flex row (it never overlays the canvas), so showing a pane from the
+ * rail shrinks the canvas and fit-width recalculates.
+ */
+.rail {
+  flex: 0 0 26px;
+  align-self: stretch;
+  width: 26px;
+  min-width: 26px;
+  background: #1b2026;
+  border-left: 1px solid #2b323a;
+  border-right: 1px solid #2b323a;
+}
+
+/* The whole rail is one hit target; the label reads bottom-up along the edge. */
+.button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  padding: 8px 0;
+  border: none;
+  background: transparent;
+  color: #9aa6b2;
+  font: inherit;
+  cursor: pointer;
+  outline: none;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.button:hover {
+  background: #33404d;
+  color: #d7dce2;
+}
+
+.button:focus-visible {
+  background: #33404d;
+  color: #d7dce2;
+  box-shadow: inset 0 0 0 2px #5a9fd4;
+}
+
+.arrow {
+  flex: 0 0 auto;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  max-height: 100%;
+  overflow: hidden;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

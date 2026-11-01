@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FontStat } from '../../types/ipc-protocol';
 import { usePdfStore } from '../../store/pdf-store';
+import { useWorkspaceStore } from '../../store/workspace-store';
 
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
 
@@ -81,6 +82,7 @@ describe('FontsTab', () => {
       error: null,
       filterCriteria: {},
     });
+    useWorkspaceStore.setState({ inspectorTab: 'inspect' });
   });
 
   it('analyzes the document in 10-page batches and merges the results', async () => {
@@ -284,5 +286,6 @@ describe('FontsTab', () => {
 
     expect(navigate).toHaveBeenCalledWith(3);
     expect(usePdfStore.getState().filterCriteria).toEqual({ fontname: 'Helvetica', types: ['char'] });
+    expect(useWorkspaceStore.getState().inspectorTab).toBe('filter');
   });
 });

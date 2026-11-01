@@ -66,6 +66,8 @@ export interface PdfState {
   setHoveredObject: (obj: PdfObject | null) => void;
   setSelectedObject: (obj: PdfObject | null) => void;
   toggleOverlay: (type: string) => void;
+  /** Replace/merge several overlay toggles at once (Layers All/None/Solo). */
+  setOverlayVisibility: (visibility: Record<string, boolean>) => void;
   setLoading: (loading: boolean) => void;
   setSidecarRunning: (running: boolean) => void;
   setError: (error: string | null) => void;
@@ -199,6 +201,13 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       overlayVisibility: {
         ...state.overlayVisibility,
         [type]: !state.overlayVisibility[type],
+      },
+    })),
+  setOverlayVisibility: (visibility) =>
+    set((state) => ({
+      overlayVisibility: {
+        ...state.overlayVisibility,
+        ...visibility,
       },
     })),
 

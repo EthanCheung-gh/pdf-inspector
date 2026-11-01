@@ -1,429 +1,148 @@
-import { useEffect, useState, type ReactNode } from "react";
-import {
-  EXPORT_OBJECT_TYPES,
-  objectsToCsv,
-  objectsToJson,
-  suggestFilename,
-} from "../../services/export-data";
-import { ipc } from "../../services/ipc-client";
-import { filterByRegion, type FilterCriteria } from "../../services/object-filter";
+import { useId, useRef, useState, type KeyboardEvent } from "react";
+import { EXPORT_OBJECT_TYPES } from "../../services/export-data";
+import { describeFilterCriteria } from "../../services/filter-summary";
 import { usePdfStore } from "../../store/pdf-store";
-import type { PdfImage, PdfObject, PdfObjectType, PdfTable } from "../../types/pdf-objects";
-import { ExportTypeSelector } from "../ExportTypeSelector";
+import {
+  INSPECTOR_TABS,
+  useWorkspaceStore,
+  type InspectorTab,
+} from "../../store/workspace-store";
+import type { PdfObjectType } from "../../types/pdf-objects";
+import { FilterTab } from "./FilterTab";
+import { InspectTab } from "./InspectTab";
+import { ResultsTab } from "./ResultsTab";
 import styles from "./InspectorPanel.module.css";
 
-type TextObject = PdfObject & {
-  text: string;
+const TAB_LABELS: Record<InspectorTab, string> = {
+  inspect: "Inspect",
+  filter: "Filter",
+  results: "Results",
 };
-
-type FontObject = PdfObject & {
-  fontname: string;
-  size: number;
-  color?: string;
-};
-
-const OBJECT_TYPES: PdfObjectType[] = ["char", "word", "rect", "line", "curve", "image", "table"];
-
-const badgeClassNames: Record<PdfObjectType, string> = {
-  char: styles.badgeChar,
-  word: styles.badgeWord,
-  rect: styles.badgeRect,
-  line: styles.badgeLine,
-  curve: styles.badgeCurve,
-  image: styles.badgeImage,
-  table: styles.badgeTable,
-};
-
-const isTextObject = (object: PdfObject): object is TextObject => "text" in object;
-
-const hasFontInfo = (object: PdfObject): object is FontObject =>
-  "fontname" in object && "size" in object;
-
-const isImage = (object: PdfObject): object is PdfImage => object.type === "image";
-
-const isTable = (object: PdfObject): object is PdfTable => object.type === "table";
-
-const formatNumber = (value: number): string =>
-  Number.isInteger(value) ? value.toString() : value.toFixed(2);
-
-const imageMimeTypes = new Set(["png", "jpeg", "gif", "webp"]);
-
-const getImageMimeSubtype = (format: string | undefined): string => {
-  const subtype = format?.toLowerCase()?.replace("jpg", "jpeg");
-  return subtype && imageMimeTypes.has(subtype) ? subtype : "jpeg";
-};
-
-interface SectionProps {
-  title: string;
-  children: ReactNode;
-}
-
-const Section = ({ title, children }: SectionProps): JSX.Element => (
-  <section className={styles.section}>
-    <h3 className={styles.sectionTitle}>{title}</h3>
-    <div className={styles.sectionContent}>{children}</div>
-  </section>
-);
-
-interface RowProps {
-  label: string;
-  children: ReactNode;
-}
-
-const Row = ({ label, children }: RowProps): JSX.Element => (
-  <div className={styles.row}>
-    <span className={styles.label}>{label}</span>
-    <span className={styles.value}>{children}</span>
-  </div>
-);
 
 export const InspectorPanel = (): JSX.Element => {
-  const hoveredObject = usePdfStore((state) => state.hoveredObject);
-  const selectedObject = usePdfStore((state) => state.selectedObject);
-  const allObjects = usePdfStore((state) => state.allObjects);
+  const inspectorTab = useWorkspaceStore((state) => state.inspectorTab);
+  const setInspectorTab = useWorkspaceStore((state) => state.setInspectorTab);
+  const toggleRightCollapsed = useWorkspaceStore((state) => state.toggleRightCollapsed);
   const filterCriteria = usePdfStore((state) => state.filterCriteria);
   const subset = usePdfStore((state) => state.subset);
-  const setFilterCriteria = usePdfStore((state) => state.setFilterCriteria);
-  const setSubset = usePdfStore((state) => state.setSubset);
-  const clearSubset = usePdfStore((state) => state.clearSubset);
-  const setSelectedObject = usePdfStore((state) => state.setSelectedObject);
-  const object = hoveredObject ?? selectedObject;
-  const image = object && isImage(object) ? object : null;
-  const imageStreamId = image?.stream_id;
-  const imageFormat = image?.format;
-  const [imageData, setImageData] = useState<{ base64: string; format: string } | null>(null);
-  const [imageError, setImageError] = useState<string | null>(null);
-  const [imageLoading, setImageLoading] = useState(false);
   // Which object types the Results export contains; every type until changed.
+  // Kept in the shell so the value survives tab switches (the panels also stay
+  // mounted, mirroring the Fonts keep-alive pattern in LeftPanel).
   const [exportTypes, setExportTypes] = useState<PdfObjectType[]>([...EXPORT_OBJECT_TYPES]);
+  const baseId = useId();
+  const tabRefs = useRef<Partial<Record<InspectorTab, HTMLButtonElement | null>>>({});
 
-  useEffect(() => {
-    let cancelled = false;
+  const filterCount = describeFilterCriteria(filterCriteria).count;
+  const resultsCount = subset ? subset.objects.length : null;
+  const counts: Record<InspectorTab, number | null> = {
+    inspect: null,
+    filter: filterCount > 0 ? filterCount : null,
+    results: resultsCount,
+  };
 
-    const loadImage = async () => {
-      if (!imageStreamId) {
-        setImageData(null);
-        setImageError(null);
-        setImageLoading(false);
+  const tabId = (tab: InspectorTab): string => `${baseId}-${tab}-tab`;
+  const panelId = (tab: InspectorTab): string => `${baseId}-${tab}-panel`;
+
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {
+    let nextIndex: number;
+    switch (event.key) {
+      case "ArrowRight":
+        nextIndex = (index + 1) % INSPECTOR_TABS.length;
+        break;
+      case "ArrowLeft":
+        nextIndex = (index - 1 + INSPECTOR_TABS.length) % INSPECTOR_TABS.length;
+        break;
+      case "Home":
+        nextIndex = 0;
+        break;
+      case "End":
+        nextIndex = INSPECTOR_TABS.length - 1;
+        break;
+      default:
         return;
-      }
-
-      setImageData(null);
-      setImageError(null);
-      setImageLoading(true);
-
-      try {
-        const result = await ipc.getImageData(imageStreamId);
-        if (cancelled) return;
-
-        if (result.error || !result.base64) {
-          setImageError(result.error ?? "Image data is unavailable.");
-          return;
-        }
-
-        setImageData({
-          base64: result.base64,
-          format: getImageMimeSubtype(result.format ?? imageFormat),
-        });
-      } catch (error) {
-        if (!cancelled) {
-          setImageError(error instanceof Error ? error.message : "Unable to load image preview.");
-        }
-      } finally {
-        if (!cancelled) setImageLoading(false);
-      }
-    };
-
-    void loadImage();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [imageFormat, imageStreamId]);
-
-  const fontnames = Array.from(
-    new Set(allObjects.flatMap((o) => ("fontname" in o ? [o.fontname] : []))),
-  ).sort();
-  const colorOptions = Array.from(
-    new Set(allObjects.flatMap((o) => ("color" in o ? [String(o.color)] : []))),
-  ).sort();
-
-  const patchCriteria = (patch: FilterCriteria): void => {
-    setFilterCriteria({ ...filterCriteria, ...patch });
-  };
-
-  const toggleType = (type: PdfObjectType): void => {
-    const current = filterCriteria.types ?? [];
-    const next = current.includes(type)
-      ? current.filter((t) => t !== type)
-      : [...current, type];
-    patchCriteria({ types: next.length > 0 ? next : undefined });
-  };
-
-  const parseSize = (value: string): number | undefined => {
-    if (value === "") return undefined;
-    const parsed = Number(value);
-    return Number.isNaN(parsed) ? undefined : parsed;
-  };
-
-  const applyRegionMode = (mode: "intersect" | "contain"): void => {
-    if (!subset || !subset.bbox) return;
-    setSubset({ ...subset, mode, objects: filterByRegion(allObjects, subset.bbox, mode) });
-  };
-
-  const handleExport = async (ext: "json" | "csv"): Promise<void> => {
-    const state = usePdfStore.getState();
-    if (!state.subset || !state.filePath) return;
-    const content =
-      ext === "json"
-        ? objectsToJson(state.subset.objects, state.metadata, state.currentPage, exportTypes)
-        : objectsToCsv(state.subset.objects, state.currentPage, exportTypes);
-    try {
-      const result = await ipc.saveFile({
-        defaultPath: suggestFilename(state.filePath, "page", state.currentPage, ext, state.sourceUrl),
-        content,
-        filterName: ext.toUpperCase(),
-        extensions: [ext],
-      });
-      if (!result.canceled && result.error) {
-        usePdfStore.getState().setError(result.error);
-      }
-    } catch (error) {
-      usePdfStore.getState().setError(error instanceof Error ? error.message : "Export failed");
     }
-  };
 
-  const width = object ? object.x1 - object.x0 : 0;
-  const height = object ? object.y1 - object.y0 : 0;
+    event.preventDefault();
+    const nextTab = INSPECTOR_TABS[nextIndex];
+    setInspectorTab(nextTab);
+    tabRefs.current[nextTab]?.focus();
+  };
 
   return (
     <aside className={styles.panel} aria-label="Object inspector">
-      <h2 className={styles.title}>Inspector</h2>
-      <div className={styles.content}>
-        <Section title="Filter">
-          <div className={styles.filterTypes}>
-            {OBJECT_TYPES.map((type) => (
-              <label key={type} className={styles.checkLabel}>
-                <input
-                  type="checkbox"
-                  checked={filterCriteria.types?.includes(type) ?? false}
-                  onChange={() => toggleType(type)}
-                />
-                {type}
-              </label>
-            ))}
-          </div>
-          <Row label="Font">
-            <select
-              className={styles.select}
-              value={filterCriteria.fontname ?? ""}
-              onChange={(event) =>
-                patchCriteria({ fontname: event.target.value || undefined })
-              }
-            >
-              <option value="">Any font</option>
-              {fontnames.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </Row>
-          <Row label="Size">
-            <span className={styles.sizeInputs}>
-              <input
-                className={styles.numberInput}
-                type="number"
-                placeholder="Min"
-                value={filterCriteria.sizeMin ?? ""}
-                onChange={(event) => patchCriteria({ sizeMin: parseSize(event.target.value) })}
-              />
-              <input
-                className={styles.numberInput}
-                type="number"
-                placeholder="Max"
-                value={filterCriteria.sizeMax ?? ""}
-                onChange={(event) => patchCriteria({ sizeMax: parseSize(event.target.value) })}
-              />
-            </span>
-          </Row>
-          <Row label="Color">
-            <select
-              className={styles.select}
-              value={filterCriteria.color ?? ""}
-              onChange={(event) => patchCriteria({ color: event.target.value || undefined })}
-            >
-              <option value="">Any color</option>
-              {colorOptions.map((color) => (
-                <option key={color} value={color}>
-                  {color}
-                </option>
-              ))}
-            </select>
-          </Row>
-          <div className={styles.buttonRow}>
-            <button type="button" className={styles.button} onClick={() => setFilterCriteria({})}>
-              Clear filter
-            </button>
-          </div>
-        </Section>
+      {/* The tablist keeps only tabs; the collapse control is its sibling so the
+          keyed tab navigation stays a single, unambiguous group. */}
+      <div className={styles.header}>
+        <div className={styles.tabs} role="tablist" aria-label="Inspector tabs">
+          {INSPECTOR_TABS.map((tab, index) => {
+            const active = inspectorTab === tab;
+            const count = counts[tab];
+            const label = TAB_LABELS[tab];
 
-        {subset && (
-          <section className={styles.section}>
-            <h3 className={styles.sectionTitle}>
-              Results ({subset.objects.length} · {subset.source})
-              <button type="button" className={styles.titleButton} onClick={clearSubset}>
-                Clear
+            return (
+              <button
+                key={tab}
+                ref={(node) => {
+                  tabRefs.current[tab] = node;
+                }}
+                className={`${styles.tab} ${active ? styles.activeTab : ""}`}
+                type="button"
+                role="tab"
+                id={tabId(tab)}
+                aria-selected={active}
+                aria-controls={panelId(tab)}
+                aria-label={count === null ? label : `${label} (${count})`}
+                tabIndex={active ? 0 : -1}
+                onClick={() => setInspectorTab(tab)}
+                onKeyDown={(event) => handleTabKeyDown(event, index)}
+              >
+                <span>{label}</span>
+                {count !== null && (
+                  <span className={styles.tabCount} aria-hidden="true">
+                    {count}
+                  </span>
+                )}
               </button>
-            </h3>
-            <div className={styles.sectionContent}>
-              {subset.source === "region" && (
-                <div className={styles.row} role="radiogroup" aria-label="Region match mode">
-                  <label className={styles.checkLabel}>
-                    <input
-                      type="radio"
-                      name="region-mode"
-                      value="intersect"
-                      checked={subset.mode === "intersect"}
-                      onChange={() => applyRegionMode("intersect")}
-                    />
-                    Intersect
-                  </label>
-                  <label className={styles.checkLabel}>
-                    <input
-                      type="radio"
-                      name="region-mode"
-                      value="contain"
-                      checked={subset.mode === "contain"}
-                      onChange={() => applyRegionMode("contain")}
-                    />
-                    Contain
-                  </label>
-                </div>
-              )}
-              <div className={styles.resultList}>
-                {subset.objects.length === 0 && (
-                  <div className={styles.resultsEmpty}>No objects in selection/filter.</div>
-                )}
-                {subset.objects.map((item, index) => (
-                  <button
-                    key={index}
-                    type="button"
-                    className={styles.resultItem}
-                    onClick={() => setSelectedObject(item)}
-                  >
-                    [{item.type}]{" "}
-                    {"text" in item
-                      ? item.text
-                      : `${item.x0},${item.y0} → ${item.x1},${item.y1}`}
-                  </button>
-                ))}
-              </div>
-              <div className={styles.exportTypes}>
-                <ExportTypeSelector
-                  label="Export types"
-                  compact
-                  selected={exportTypes}
-                  onChange={setExportTypes}
-                />
-              </div>
-              <div className={styles.buttonRow}>
-                <button
-                  type="button"
-                  className={styles.button}
-                  disabled={exportTypes.length === 0}
-                  onClick={() => void handleExport("json")}
-                >
-                  Export JSON
-                </button>
-                <button
-                  type="button"
-                  className={styles.button}
-                  disabled={exportTypes.length === 0}
-                  onClick={() => void handleExport("csv")}
-                >
-                  Export CSV
-                </button>
-              </div>
-            </div>
-          </section>
-        )}
+            );
+          })}
+        </div>
+        <button
+          className={styles.collapseButton}
+          type="button"
+          aria-label="Hide right panel"
+          title="Hide right panel"
+          onClick={toggleRightCollapsed}
+        >
+          <span aria-hidden="true">›</span>
+        </button>
+      </div>
 
-        {!object && (
-          <div className={styles.emptyState}>
-            Hover over or select an object to inspect its properties.
-          </div>
-        )}
-
-        {object && (
-          <>
-            <Section title="Object">
-              <Row label="Type">
-                <span className={`${styles.badge} ${badgeClassNames[object.type]}`}>{object.type}</span>
-              </Row>
-              <Row label="Page">{object.page}</Row>
-              {isTextObject(object) && <Row label="Text">{object.text}</Row>}
-            </Section>
-
-            <Section title="Position">
-              <Row label="x0">{formatNumber(object.x0)}</Row>
-              <Row label="y0">{formatNumber(object.y0)}</Row>
-              <Row label="x1">{formatNumber(object.x1)}</Row>
-              <Row label="y1">{formatNumber(object.y1)}</Row>
-              <Row label="Width">{formatNumber(width)}</Row>
-              <Row label="Height">{formatNumber(height)}</Row>
-            </Section>
-
-            {hasFontInfo(object) && (
-              <Section title="Font">
-                <Row label="Name">{object.fontname}</Row>
-                <Row label="Size">{formatNumber(object.size)}</Row>
-                {object.color && (
-                  <Row label="Color">
-                    <span className={styles.colorValue}>
-                      <span className={styles.colorSwatch} style={{ backgroundColor: object.color }} />
-                      {object.color}
-                    </span>
-                  </Row>
-                )}
-              </Section>
-            )}
-
-            {isTable(object) && (
-              <Section title="Table">
-                <Row label="Rows">{object.rows}</Row>
-                <Row label="Columns">{object.cols}</Row>
-              </Section>
-            )}
-
-            {isImage(object) && (
-              <Section title="Image">
-                <Row label="Width">{object.width}</Row>
-                <Row label="Height">{object.height}</Row>
-                <Row label="Format">{object.format}</Row>
-                <Row label="Preview">
-                  {imageLoading && "Loading image preview..."}
-                  {imageError && imageError}
-                  {imageData && (
-                    <img
-                      src={`data:image/${imageData.format};base64,${imageData.base64}`}
-                      alt="PDF image preview"
-                      style={{ display: "block", maxWidth: "100%", maxHeight: 240, objectFit: "contain" }}
-                      onError={() => {
-                        setImageData(null);
-                        setImageError("Unable to display image preview.");
-                      }}
-                    />
-                  )}
-                </Row>
-              </Section>
-            )}
-
-            <Section title="Raw JSON">
-              <pre className={styles.json}>{JSON.stringify(object, null, 2)}</pre>
-            </Section>
-          </>
-        )}
+      <div
+        className={styles.tabPanel}
+        role="tabpanel"
+        id={panelId("inspect")}
+        aria-labelledby={tabId("inspect")}
+        hidden={inspectorTab !== "inspect"}
+      >
+        <InspectTab />
+      </div>
+      <div
+        className={styles.tabPanel}
+        role="tabpanel"
+        id={panelId("filter")}
+        aria-labelledby={tabId("filter")}
+        hidden={inspectorTab !== "filter"}
+      >
+        <FilterTab />
+      </div>
+      <div
+        className={styles.tabPanel}
+        role="tabpanel"
+        id={panelId("results")}
+        aria-labelledby={tabId("results")}
+        hidden={inspectorTab !== "results"}
+      >
+        <ResultsTab exportTypes={exportTypes} onExportTypesChange={setExportTypes} />
       </div>
     </aside>
   );

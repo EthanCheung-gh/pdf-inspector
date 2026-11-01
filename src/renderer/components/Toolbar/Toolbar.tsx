@@ -1,22 +1,14 @@
 import React, { useCallback, useRef, useState } from 'react';
 import { ipc } from '../../services/ipc-client';
+import { OVERLAY_LAYER_TOTAL, overlayVisibleCount } from '../../services/overlay-style';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { usePdfStore } from '../../store/pdf-store';
+import { useWorkspaceStore } from '../../store/workspace-store';
 import { SearchBox } from './SearchBox';
 import { ExportDialog } from './ExportDialog';
 import { OpenUrlDialog } from './OpenUrlDialog';
 import type { OpenedFromUrl } from './OpenUrlDialog';
 import styles from './Toolbar.module.css';
-
-const OVERLAYS = [
-  ['Chars', 'char'],
-  ['Words', 'word'],
-  ['Lines', 'line'],
-  ['Curves', 'curve'],
-  ['Rects', 'rect'],
-  ['Tables', 'table'],
-  ['Images', 'image'],
-] as const;
 
 export const Toolbar: React.FC = () => {
   const openRequestIdRef = useRef(0);
@@ -38,8 +30,24 @@ export const Toolbar: React.FC = () => {
   const setFitWidthZoom = usePdfStore((state) => state.setFitWidthZoom);
   const setTextSelectionMode = usePdfStore((state) => state.setTextSelectionMode);
   const setRegionMode = usePdfStore((state) => state.setRegionMode);
-  const toggleOverlay = usePdfStore((state) => state.toggleOverlay);
+  const leftCollapsed = useWorkspaceStore((state) => state.leftCollapsed);
+  const rightCollapsed = useWorkspaceStore((state) => state.rightCollapsed);
+  const focusMode = useWorkspaceStore((state) => state.focusMode);
+  const leftTab = useWorkspaceStore((state) => state.leftTab);
+  const setLeftTab = useWorkspaceStore((state) => state.setLeftTab);
+  const setLeftCollapsed = useWorkspaceStore((state) => state.setLeftCollapsed);
+  const setRightCollapsed = useWorkspaceStore((state) => state.setRightCollapsed);
+  const setFocusMode = useWorkspaceStore((state) => state.setFocusMode);
+  const toggleFocusMode = useWorkspaceStore((state) => state.toggleFocusMode);
   const { navigate } = usePageNavigation();
+
+  // A pane is visible only when it is expanded *and* focus mode is off. The
+  // toolbar buttons model that visible state directly instead of blindly
+  // flipping `collapsed`, so clicking a pane while hidden by focus mode brings
+  // it back and leaves focus mode.
+  const leftVisible = !leftCollapsed && !focusMode;
+  const rightVisible = !rightCollapsed && !focusMode;
+  const layersActive = leftTab === 'layers' && leftVisible;
 
   const handleOpen = useCallback(async () => {
     const openRequestId = ++openRequestIdRef.current;
@@ -89,6 +97,32 @@ export const Toolbar: React.FC = () => {
     setRegionMode(!regionMode);
     if (!regionMode) setTextSelectionMode(false);
   }, [regionMode, setRegionMode, setTextSelectionMode]);
+
+  const handleLayers = useCallback(() => {
+    setLeftTab('layers');
+    setLeftCollapsed(false);
+    setFocusMode(false);
+  }, [setFocusMode, setLeftCollapsed, setLeftTab]);
+
+  const handleLeftPanelToggle = useCallback(() => {
+    if (leftVisible) {
+      setLeftCollapsed(true);
+      return;
+    }
+    setLeftCollapsed(false);
+    setFocusMode(false);
+  }, [leftVisible, setFocusMode, setLeftCollapsed]);
+
+  const handleRightPanelToggle = useCallback(() => {
+    if (rightVisible) {
+      setRightCollapsed(true);
+      return;
+    }
+    setRightCollapsed(false);
+    setFocusMode(false);
+  }, [rightVisible, setFocusMode, setRightCollapsed]);
+
+  const visibleLayerCount = overlayVisibleCount(overlayVisibility);
 
   const displayTitle = sourceUrl ?? filePath ?? undefined;
   const filename = sourceUrl ?? (filePath ? (filePath.split(/[\\/]/).pop() ?? filePath) : 'No file open');
@@ -163,22 +197,6 @@ export const Toolbar: React.FC = () => {
 
       <span className={styles.separator} />
 
-      <div className={styles.group} role="group" aria-label="Overlay visibility">
-        {OVERLAYS.map(([label, type]) => (
-          <button
-            className={`${styles.button} ${overlayVisibility[type] ? styles.active : ''}`}
-            type="button"
-            key={type}
-            onClick={() => toggleOverlay(type)}
-            aria-pressed={overlayVisibility[type]}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      <span className={styles.separator} />
-
       <div className={styles.group} role="group" aria-label="Text selection">
         <button
           className={`${styles.button} ${textSelectionMode ? styles.active : ''}`}
@@ -197,6 +215,48 @@ export const Toolbar: React.FC = () => {
           title="Toggle region selection mode (R)"
         >
           Region
+        </button>
+      </div>
+
+      <span className={styles.separator} />
+
+      <div className={styles.group} role="group" aria-label="Workspace layout">
+        <button
+          className={`${styles.button} ${focusMode ? styles.active : ''}`}
+          type="button"
+          onClick={toggleFocusMode}
+          aria-pressed={focusMode}
+          title="Toggle focus mode (F)"
+        >
+          Focus
+        </button>
+        <button
+          className={`${styles.button} ${layersActive ? styles.paneVisible : ''}`}
+          type="button"
+          onClick={handleLayers}
+          title="Open the Layers panel"
+        >
+          Layers {visibleLayerCount}/{OVERLAY_LAYER_TOTAL}
+        </button>
+        <button
+          className={`${styles.button} ${leftVisible ? styles.paneVisible : ''}`}
+          type="button"
+          onClick={handleLeftPanelToggle}
+          aria-pressed={leftVisible}
+          aria-label="Left panel"
+          title={leftVisible ? 'Hide left panel' : 'Show left panel'}
+        >
+          Left
+        </button>
+        <button
+          className={`${styles.button} ${rightVisible ? styles.paneVisible : ''}`}
+          type="button"
+          onClick={handleRightPanelToggle}
+          aria-pressed={rightVisible}
+          aria-label="Right panel"
+          title={rightVisible ? 'Hide right panel' : 'Show right panel'}
+        >
+          Right
         </button>
       </div>
 

@@ -1,9 +1,9 @@
 .panel {
   display: flex;
-  flex: 0 0 280px;
+  flex: 1 1 auto;
   flex-direction: column;
-  width: 280px;
-  min-width: 280px;
+  width: 100%;
+  min-width: 0;
   color: #cbd3dc;
   background: #1e2329;
   border-left: 1px solid #353b43;
@@ -11,15 +11,120 @@
   overflow: hidden;
 }
 
-.title {
-  margin: 0;
-  padding: 13px 14px 11px;
-  color: #8e99a6;
+/* Header row: the tab strip takes the remaining width and the collapse control
+   keeps a fixed 24px square so the three labels stay legible at the 280px
+   minimum panel width. The divider lives on the row, not the tablist. */
+.header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
   border-bottom: 1px solid #353b43;
+}
+
+.tabs {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.tab {
+  display: inline-flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 2px;
+  overflow: hidden;
+  color: #8e99a6;
+  background: transparent;
+  border: 0;
+  font: inherit;
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: #cbd3dc;
+  background: #2d353f;
+}
+
+.tab:focus-visible {
+  outline: 2px solid #7fb2e8;
+  outline-offset: -2px;
+}
+
+.tab.activeTab {
+  color: #fff;
+  background: #274e76;
+}
+
+.tabCount {
+  min-width: 16px;
+  padding: 0 4px;
+  color: inherit;
+  background: rgb(255 255 255 / 14%);
+  border-radius: 8px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: normal;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* Mirrors the toolbar's right-pane toggle so the panel can be hidden from the
+   panel itself; width stays inside the 22–26px budget. */
+.collapseButton {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 4px;
+  padding: 0;
+  color: #8e99a6;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.collapseButton:hover {
+  color: #e1e6eb;
+  background: #2a313a;
+  border-color: #353b43;
+}
+
+.collapseButton:focus-visible {
+  outline: 2px solid #7fb2e8;
+  outline-offset: 1px;
+}
+
+/*
+ * Each tab stays mounted while inactive so local state (notably the Results
+ * export type selection and the image preview) survives tab switches. The
+ * explicit [hidden] rule is needed because the author-level `display: flex`
+ * outranks the user-agent `[hidden] { display: none }` rule.
+ */
+.tabPanel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tabPanel[hidden] {
+  display: none;
 }
 
 .content {

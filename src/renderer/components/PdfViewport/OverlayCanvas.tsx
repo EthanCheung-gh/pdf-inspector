@@ -3,6 +3,7 @@ import { useHitTest } from '../../hooks/useHitTest';
 import { useOverlay } from '../../hooks/useOverlay';
 import { useRegionSelect } from '../../hooks/useRegionSelect';
 import { usePdfStore } from '../../store/pdf-store';
+import { useWorkspaceStore } from '../../store/workspace-store';
 import { effectiveOverlayVisibility, overlayObjects } from '../../services/overlay-visibility';
 
 interface OverlayCanvasProps {
@@ -30,6 +31,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
   const regionMode = usePdfStore((state) => state.regionMode);
   const setHoveredObject = usePdfStore((state) => state.setHoveredObject);
   const setSelectedObject = usePdfStore((state) => state.setSelectedObject);
+  const setInspectorTab = useWorkspaceStore((state) => state.setInspectorTab);
   const { drawOverlays } = useOverlay();
   const { hitTest } = useHitTest();
   const { handlers, liveRect, dragging, wasDragRef } = useRegionSelect(pageWidth, pageHeight, pdfWidth, pdfHeight);
@@ -90,7 +92,11 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
       onClick={() => {
         // Skip the click fired right after a region drag so it does not select a stale hovered object.
         if (wasDragRef.current) return;
-        setSelectedObject(usePdfStore.getState().hoveredObject);
+        const hovered = usePdfStore.getState().hoveredObject;
+        setSelectedObject(hovered);
+        // A canvas selection always opens the object details; an empty click
+        // only clears the selection and leaves the current tab alone.
+        if (hovered) setInspectorTab('inspect');
       }}
       onMouseLeave={() => { if (!dragging) setHoveredObject(null); }}
       style={{

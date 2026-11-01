@@ -11,8 +11,66 @@
 .main {
   display: flex;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+/*
+ * Width and flex-basis come from the workspace store as inline styles. The
+ * pane wrapper is allowed to shrink (min-width: 0) but never grows past the
+ * configured width, so the canvas keeps all remaining horizontal space.
+ */
+.pane {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* The author-level display:flex above outranks the UA [hidden] rule. */
+.pane[hidden] {
+  display: none;
+}
+
+/*
+ * Canvas column. The wrapper is only a positioning context so focus mode can
+ * float a restore button over the canvas; the button itself is absolutely
+ * positioned and therefore takes no flex width.
+ */
+.canvas {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.focusRestore {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 5;
+  padding: 4px 10px;
+  border: 1px solid #3a4450;
+  border-radius: 4px;
+  background: rgba(36, 42, 49, 0.92);
+  color: #d7dce2;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.focusRestore:hover {
+  background: #33404d;
+  border-color: #4a5866;
+}
+
+.focusRestore:focus-visible {
+  border-color: #5a9fd4;
+  box-shadow: 0 0 0 2px rgba(90, 159, 212, 0.6);
 }
 
 :global(html),
