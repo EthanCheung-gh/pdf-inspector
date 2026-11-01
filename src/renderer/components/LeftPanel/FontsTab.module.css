@@ -1,12 +1,12 @@
 .hint {
   padding: 8px;
-  color: #888;
+  color: #8e99a6;
   font-size: 12px;
 }
 
 .stateBox {
   padding: 8px;
-  color: #888;
+  color: #8e99a6;
   font-size: 12px;
   display: flex;
   flex-direction: column;
@@ -16,52 +16,178 @@
 
 .retry {
   padding: 2px 8px;
-  font-size: 12px;
+  color: #cbd3dc;
+  background: #252b32;
+  border: 1px solid #3b434d;
+  border-radius: 3px;
   cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.retry:hover {
+  color: #fff;
+  background: #353e49;
+}
+
+.retry:focus-visible {
+  outline: 2px solid #5b9cff;
+  outline-offset: 1px;
 }
 
 .progress {
   width: 100%;
+  accent-color: #5b9cff;
+}
+
+/* The list and the summary share the panel height; only the list scrolls. */
+.panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.summary {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  color: #8e99a6;
+  border-bottom: 1px solid #303740;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+/* Non-embedded fonts are a portability problem, not a hard failure: amber
+ * text plus the ⚠ glyph keeps the message readable without relying on colour. */
+.summaryWarning {
+  color: #e0b36a;
+  background: rgba(224, 179, 106, 0.08);
+  border-bottom-color: rgba(224, 179, 106, 0.35);
+}
+
+.summaryIcon {
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.summaryText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .list {
+  flex: 1;
+  min-height: 0;
   list-style: none;
   margin: 0;
-  padding: 4px;
+  padding: 2px 0;
   overflow-y: auto;
-  max-height: calc(100% - 8px);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 
+.item {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Row = clickable button + independent details toggle. */
 .row {
   display: flex;
+  align-items: stretch;
+}
+
+.row:hover {
+  background: #262d35;
+}
+
+.rowButton {
+  display: flex;
+  flex: 1;
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
-  width: 100%;
+  min-width: 0;
   text-align: left;
   border: none;
   background: transparent;
-  padding: 6px 8px;
+  color: inherit;
+  padding: 5px 4px 5px 8px;
   cursor: pointer;
   font: inherit;
 }
 
-.row:hover {
-  background: rgba(0, 0, 0, 0.06);
+.rowButton:focus-visible {
+  outline: 2px solid #5b9cff;
+  outline-offset: -2px;
 }
 
 .name {
+  max-width: 100%;
+  color: #cbd3dc;
   font-weight: 600;
   font-size: 12px;
-  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.badgeSuccess {
+  color: #9ed9ae;
+  background: rgba(158, 217, 174, 0.12);
+  border-color: rgba(158, 217, 174, 0.35);
+}
+
+.badgeDanger {
+  color: #e2a2a7;
+  background: rgba(226, 162, 167, 0.12);
+  border-color: rgba(226, 162, 167, 0.4);
+}
+
+.badgeWarning {
+  color: #e0b36a;
+  background: rgba(224, 179, 106, 0.12);
+  border-color: rgba(224, 179, 106, 0.35);
+}
+
+.badgeMuted {
+  color: #aeb7c2;
+  background: rgba(174, 183, 194, 0.1);
+  border-color: rgba(174, 183, 194, 0.28);
+}
+
+.badgeInfo {
+  color: #8fb8e8;
+  background: rgba(143, 184, 232, 0.12);
+  border-color: rgba(143, 184, 232, 0.32);
 }
 
 .meta {
-  color: #888;
-  font-size: 11px;
+  color: #8e99a6;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .swatches {
@@ -74,5 +200,63 @@
   display: inline-block;
   width: 12px;
   height: 12px;
-  border: 1px solid rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+}
+
+/* Kept out of the row button so expanding never navigates or filters. */
+.detailsToggle {
+  display: flex;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: #6f7882;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.detailsToggle:hover {
+  color: #cbd3dc;
+  background: #2d353f;
+}
+
+.detailsToggle:focus-visible {
+  outline: 2px solid #5b9cff;
+  outline-offset: -2px;
+}
+
+.details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 5px 8px 7px;
+  background: #191d22;
+  border-top: 1px solid #303740;
+}
+
+.detailRow {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 6px;
+  align-items: baseline;
+}
+
+.detailRow dt {
+  color: #8e99a6;
+  font-size: 10px;
+}
+
+.detailRow dd {
+  min-width: 0;
+  margin: 0;
+  color: #cbd3dc;
+  font-size: 10px;
+  overflow-wrap: anywhere;
 }

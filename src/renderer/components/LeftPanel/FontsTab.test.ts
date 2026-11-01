@@ -3,6 +3,7 @@ import React from 'react';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FontStat } from '../../types/ipc-protocol';
+import type { FontInfo, PdfMetadata } from '../../types/pdf-objects';
 import { usePdfStore } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
 
@@ -36,6 +37,75 @@ const otherFont: FontStat = {
   sizeMax: 9,
   colors: ['#111111'],
 };
+
+const embeddedStat: FontStat = {
+  fontname: 'ABCDEF+Inter',
+  pages: [1],
+  charCount: 10,
+  sizeMin: 9,
+  sizeMax: 9,
+  colors: ['#000000'],
+};
+
+const customStat: FontStat = {
+  fontname: 'CustomSans',
+  pages: [2],
+  charCount: 5,
+  sizeMin: 10,
+  sizeMax: 10,
+  colors: ['#000000'],
+};
+
+const baseMetadata: PdfMetadata = {
+  pages: 10,
+  version: '1.7',
+  encrypted: false,
+  page_w: 612,
+  page_h: 792,
+  title: '',
+  author: '',
+  producer: '',
+  fonts: [],
+};
+
+/** Standard 14: no font file, so no descriptor-backed embedding. */
+const helveticaInfo: FontInfo = {
+  fontname: 'Helvetica',
+  subtype: 'Type1',
+  embedded: false,
+  embedding: 'standard14',
+  subset: false,
+  encoding: 'WinAnsiEncoding',
+  hasToUnicode: false,
+  fontFileType: null,
+};
+
+/** Embedded Type0 subset with a CFF font program. */
+const interInfo: FontInfo = {
+  fontname: 'ABCDEF+Inter',
+  subtype: 'Type0',
+  embedded: true,
+  embedding: 'embedded',
+  subset: true,
+  encoding: 'Identity-H',
+  hasToUnicode: true,
+  fontFileType: 'CFF',
+};
+
+const notEmbeddedInfo: FontInfo = {
+  fontname: 'CustomSans',
+  subtype: 'Type3',
+  embedded: false,
+  embedding: 'not-embedded',
+  subset: false,
+  encoding: null,
+  hasToUnicode: false,
+  fontFileType: null,
+};
+
+function metadataWithFontInfo(fontInfo: FontInfo[]): PdfMetadata {
+  return { ...baseMetadata, fonts: fontInfo.map((info) => info.fontname), fontInfo };
+}
 
 type FontsResponse = { fonts: FontStat[] };
 
@@ -75,6 +145,7 @@ describe('FontsTab', () => {
     vi.resetAllMocks();
     usePdfStore.setState({
       filePath: '/tmp/test.pdf',
+      metadata: null,
       pageCount: 25,
       fontStats: null,
       fontProgress: null,
@@ -261,6 +332,42 @@ describe('FontsTab', () => {
     expect(usePdfStore.getState().error).toBeNull();
   });
 
+  it('does not restart the analysis when metadata font info arrives in flight', async () => {
+    const first = deferred<FontsResponse>();
+    vi.mocked(ipc.analyzeFonts)
+      .mockReturnValueOnce(first.promise)
+      .mockImplementation(statPerRange(4));
+
+    render(React.createElement(FontsTab));
+    expect(vi.mocked(ipc.analyzeFonts).mock.calls).toEqual([[1, 10]]);
+
+    // The resource-dictionary font info comes with the metadata, independently
+    // of the batched char analysis, and may land while a batch is pending.
+    act(() => { usePdfStore.setState({ metadata: metadataWithFontInfo([helveticaInfo, interInfo]) }); });
+    act(() => { usePdfStore.setState({ metadata: metadataWithFontInfo([helveticaInfo]) }); });
+
+    // Metadata is deliberately absent from the effect deps: no new request and
+    // no restart at page 1 while the first batch is in flight.
+    expect(vi.mocked(ipc.analyzeFonts).mock.calls).toEqual([[1, 10]]);
+    expect(usePdfStore.getState().fontProgress).toEqual({ done: 0, total: 25 });
+
+    await act(async () => {
+      first.resolve({ fonts: [font] });
+      await first.promise;
+    });
+    await flush();
+
+    // The same run continued with the remaining batches.
+    expect(vi.mocked(ipc.analyzeFonts).mock.calls).toEqual([
+      [1, 10],
+      [11, 20],
+      [21, 25],
+    ]);
+    expect(usePdfStore.getState().fontStats).not.toBeNull();
+    // The late font info is still applied to the finished rows.
+    expect(screen.getByText('Standard 14')).toBeTruthy();
+  });
+
   it('reports when the document has no text fonts', async () => {
     usePdfStore.setState({ pageCount: 5 });
     vi.mocked(ipc.analyzeFonts).mockResolvedValue({ fonts: [] });
@@ -280,6 +387,167 @@ describe('FontsTab', () => {
 
     render(React.createElement(FontsTab));
     await flush();
+
+    fireEvent.click(screen.getByRole('button', { name: /Helvetica/ }));
+    await flush(2);
+
+    expect(navigate).toHaveBeenCalledWith(3);
+    expect(usePdfStore.getState().filterCriteria).toEqual({ fontname: 'Helvetica', types: ['char'] });
+    expect(useWorkspaceStore.getState().inspectorTab).toBe('filter');
+  });
+
+  it('joins the analyzed fonts with metadata font info and badges each row', async () => {
+    usePdfStore.setState({
+      pageCount: 10,
+      metadata: metadataWithFontInfo([helveticaInfo, interInfo]),
+    });
+    vi.mocked(ipc.analyzeFonts).mockResolvedValue({
+      fonts: [font, embeddedStat, customStat],
+    });
+
+    render(React.createElement(FontsTab));
+    await flush();
+
+    // Standard 14 + Type1 for Helvetica.
+    expect(screen.getByText('Standard 14')).toBeTruthy();
+    expect(screen.getByText('Type1')).toBeTruthy();
+    // Embedded subset: the subset tag outranks the raw subtype in the row.
+    expect(screen.getByText('Embedded')).toBeTruthy();
+    expect(screen.getByText('Subset')).toBeTruthy();
+    // No resource info for this font: fall back to Unknown instead of crashing.
+    expect(screen.getByText('Unknown')).toBeTruthy();
+  });
+
+  it('summarizes the font count and warns about non-embedded fonts', async () => {
+    usePdfStore.setState({
+      pageCount: 10,
+      metadata: metadataWithFontInfo([helveticaInfo, interInfo, notEmbeddedInfo]),
+    });
+    vi.mocked(ipc.analyzeFonts).mockResolvedValue({
+      fonts: [font, embeddedStat, customStat],
+    });
+
+    render(React.createElement(FontsTab));
+    await flush();
+
+    // One Standard 14 font is named separately from the one that is missing.
+    const summary = screen.getByText('3 fonts · 1 not embedded · 1 standard 14');
+    expect(summary.parentElement?.className).toContain('summaryWarning');
+    expect(screen.getByText('Not embedded')).toBeTruthy();
+    expect(screen.getByText('Standard 14')).toBeTruthy();
+  });
+
+  it('counts Standard 14 fonts instead of reporting them as not embedded', async () => {
+    const standardNames = [
+      'Helvetica',
+      'Helvetica-Bold',
+      'Helvetica-Oblique',
+      'Times-Roman',
+      'Times-Bold',
+      'Courier',
+      'Symbol',
+      'ZapfDingbats',
+    ];
+    const stats: FontStat[] = standardNames.map((fontname) => ({
+      fontname,
+      pages: [1],
+      charCount: 3,
+      sizeMin: 10,
+      sizeMax: 10,
+      colors: ['#000000'],
+    }));
+    const infos: FontInfo[] = standardNames.map((fontname) => ({
+      ...helveticaInfo,
+      fontname,
+    }));
+
+    usePdfStore.setState({ pageCount: 10, metadata: metadataWithFontInfo(infos) });
+    vi.mocked(ipc.analyzeFonts).mockResolvedValue({ fonts: stats });
+
+    render(React.createElement(FontsTab));
+    await flush();
+
+    const summary = screen.getByText('8 fonts · 0 not embedded · 8 standard 14');
+    // Standard 14 is not a warning: nothing is missing from the document.
+    expect(summary.parentElement?.className).not.toContain('summaryWarning');
+    expect(screen.getAllByText('Standard 14')).toHaveLength(8);
+    expect(screen.queryByText('Not embedded')).toBeNull();
+  });
+
+  it('keeps the plain two-part summary when no font is Standard 14', async () => {
+    usePdfStore.setState({
+      pageCount: 10,
+      metadata: metadataWithFontInfo([interInfo, notEmbeddedInfo]),
+    });
+    vi.mocked(ipc.analyzeFonts).mockResolvedValue({ fonts: [embeddedStat, customStat] });
+
+    render(React.createElement(FontsTab));
+    await flush();
+
+    const summary = screen.getByText('2 fonts · 1 not embedded');
+    expect(summary.parentElement?.className).toContain('summaryWarning');
+    expect(screen.queryByText(/standard 14/)).toBeNull();
+  });
+
+  it('shows no summary when the metadata carries no font info', async () => {
+    usePdfStore.setState({ pageCount: 10, metadata: null });
+    vi.mocked(ipc.analyzeFonts).mockResolvedValue({ fonts: [font, otherFont] });
+
+    render(React.createElement(FontsTab));
+    await flush();
+
+    expect(screen.queryByText(/not embedded/)).toBeNull();
+    expect(screen.getAllByText('Unknown')).toHaveLength(2);
+  });
+
+  it('expands font details without navigating or filtering', async () => {
+    usePdfStore.setState({
+      pageCount: 10,
+      metadata: metadataWithFontInfo([helveticaInfo, interInfo]),
+    });
+    vi.mocked(ipc.analyzeFonts).mockResolvedValue({ fonts: [font, embeddedStat] });
+
+    render(React.createElement(FontsTab));
+    await flush();
+
+    const toggles = screen.getAllByRole('button', { name: 'Font details' });
+    expect(toggles).toHaveLength(2);
+    expect(toggles[1].getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.click(toggles[1]);
+    await flush(2);
+
+    expect(toggles[1].getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('Identity-H')).toBeTruthy();
+    expect(screen.getByText('Type0')).toBeTruthy();
+    expect(screen.getByText('CFF')).toBeTruthy();
+    expect(navigate).not.toHaveBeenCalled();
+    expect(usePdfStore.getState().filterCriteria).toEqual({});
+    expect(useWorkspaceStore.getState().inspectorTab).toBe('inspect');
+
+    fireEvent.click(toggles[1]);
+    await flush(2);
+
+    expect(toggles[1].getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('Identity-H')).toBeNull();
+  });
+
+  it('keeps the row click working while another font details are expanded', async () => {
+    usePdfStore.setState({
+      pageCount: 10,
+      metadata: metadataWithFontInfo([helveticaInfo, interInfo]),
+    });
+    vi.mocked(ipc.analyzeFonts).mockResolvedValue({
+      fonts: [{ ...font, pages: [3, 4] }, embeddedStat],
+    });
+
+    render(React.createElement(FontsTab));
+    await flush();
+
+    // Expand the second font: its details must not navigate or filter.
+    fireEvent.click(screen.getAllByRole('button', { name: 'Font details' })[1]);
+    await flush(2);
+    expect(navigate).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: /Helvetica/ }));
     await flush(2);
