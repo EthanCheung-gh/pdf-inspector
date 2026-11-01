@@ -1,0 +1,99 @@
+/* The panel itself scrolls; the tab keeps its own scrollbar so the header and
+   tab strip never move at the 280px minimum width. */
+.pageTab {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.unitToggle {
+  display: inline-flex;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid #353b43;
+  border-radius: 3px;
+}
+
+.unitButton {
+  min-width: 34px;
+  padding: 2px 8px;
+  color: #8e99a6;
+  background: #161a1f;
+  border: 0;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.unitButton + .unitButton {
+  border-left: 1px solid #353b43;
+}
+
+.unitButton:hover {
+  color: #e1e6eb;
+  background: #2a313a;
+}
+
+.unitButton:focus-visible {
+  outline: 2px solid #7fb2e8;
+  outline-offset: -2px;
+}
+
+.unitButtonActive {
+  color: #fff;
+  background: #274e76;
+}
+
+/* Rotated pages have no object overlay (see PdfPage); this explains the gap
+   without turning it into an error. */
+.rotationWarning {
+  margin: 4px 0 8px;
+  padding: 5px 8px;
+  color: #e8c98a;
+  background: #2a2417;
+  border-left: 2px solid #c79a3c;
+  border-radius: 2px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.boxRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 8px;
+  border-bottom: 1px solid #303740;
+}
+
+.boxRow:last-child {
+  border-bottom: 0;
+}
+
+.boxLabel {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  color: #e1e6eb;
+  cursor: pointer;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border: 1px solid rgb(255 255 255 / 35%);
+  border-radius: 2px;
+}
+
+.boxValue {
+  flex: 1 1 100%;
+  min-width: 0;
+  color: #b8c2cd;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  text-align: right;
+}

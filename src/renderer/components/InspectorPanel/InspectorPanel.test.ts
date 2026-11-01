@@ -51,6 +51,7 @@ describe('InspectorPanel region results', () => {
       hoveredObject: null,
       selectedObject: null,
       filterCriteria: {},
+      pageData: null,
       subset: {
         source: 'region',
         mode: 'intersect',
@@ -156,6 +157,7 @@ describe('InspectorPanel export types', () => {
       sourceUrl: null,
       metadata: null,
       currentPage: 1,
+      pageData: null,
       allObjects: exportObjects,
       hoveredObject: null,
       selectedObject: null,
@@ -236,6 +238,7 @@ describe('InspectorPanel tabs', () => {
       sourceUrl: null,
       metadata: null,
       currentPage: 1,
+      pageData: null,
       allObjects: exportObjects,
       hoveredObject: null,
       selectedObject: null,
@@ -251,7 +254,7 @@ describe('InspectorPanel tabs', () => {
     });
   });
 
-  it('opens on Inspect while keeping the other two panels mounted but hidden', () => {
+  it('opens on Inspect while keeping the other three panels mounted but hidden', () => {
     render(React.createElement(InspectorPanel));
 
     const inspect = screen.getByRole('tab', { name: 'Inspect' });
@@ -262,11 +265,12 @@ describe('InspectorPanel tabs', () => {
     ).toBeTruthy();
 
     const panels = screen.getAllByRole('tabpanel', { hidden: true });
-    expect(panels).toHaveLength(3);
+    expect(panels).toHaveLength(4);
     expect(panels.filter((panel) => !panel.hasAttribute('hidden'))).toHaveLength(1);
     expect(screen.getByRole('tabpanel', { name: 'Inspect' })).toBeTruthy();
     expect(screen.queryByRole('tabpanel', { name: /^Filter/ })).toBeNull();
     expect(screen.queryByRole('tabpanel', { name: /^Results/ })).toBeNull();
+    expect(screen.queryByRole('tabpanel', { name: /^Page/ })).toBeNull();
   });
 
   it('switches tabs with arrow keys, Home and End, moving focus with the selection', () => {
@@ -283,15 +287,16 @@ describe('InspectorPanel tabs', () => {
     fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'ArrowLeft' });
     expect(useWorkspaceStore.getState().inspectorTab).toBe('inspect');
 
+    // Page is the fourth tab, so ArrowLeft from Inspect wraps to it.
     fireEvent.keyDown(inspect, { key: 'ArrowLeft' });
-    expect(useWorkspaceStore.getState().inspectorTab).toBe('results');
-    expect(screen.getByRole('tab', { name: /^Results/ }).getAttribute('aria-selected')).toBe('true');
+    expect(useWorkspaceStore.getState().inspectorTab).toBe('page');
+    expect(screen.getByRole('tab', { name: /^Page/ }).getAttribute('aria-selected')).toBe('true');
 
-    fireEvent.keyDown(screen.getByRole('tab', { name: /^Results/ }), { key: 'Home' });
+    fireEvent.keyDown(screen.getByRole('tab', { name: /^Page/ }), { key: 'Home' });
     expect(useWorkspaceStore.getState().inspectorTab).toBe('inspect');
 
     fireEvent.keyDown(inspect, { key: 'End' });
-    expect(useWorkspaceStore.getState().inspectorTab).toBe('results');
+    expect(useWorkspaceStore.getState().inspectorTab).toBe('page');
   });
 
   it('shows the active condition count and the result count on the tabs', () => {
@@ -358,7 +363,9 @@ describe('InspectorPanel tabs', () => {
     expect(screen.getByRole('tabpanel', { name: 'Inspect' })).toBeTruthy();
     expect(screen.queryByRole('tabpanel', { name: /^Results/ })).toBeNull();
     // The Inspect panel now shows the selected object's page.
-    expect(screen.getByText('Page')).toBeTruthy();
+    expect(
+      within(screen.getByRole('tabpanel', { name: 'Inspect' })).getByText('Page'),
+    ).toBeTruthy();
   });
 
   it('opens the Results panel when a region selection switches the workspace tab', () => {
@@ -379,8 +386,8 @@ describe('InspectorPanel tabs', () => {
     render(React.createElement(InspectorPanel));
 
     const tablist = screen.getByRole('tablist', { name: 'Inspector tabs' });
-    // Only the three tabs belong to the tablist; the collapse control is a sibling.
-    expect(within(tablist).getAllByRole('tab')).toHaveLength(3);
+    // Only the four tabs belong to the tablist; the collapse control is a sibling.
+    expect(within(tablist).getAllByRole('tab')).toHaveLength(4);
     expect(within(tablist).queryByRole('button', { name: 'Hide right panel' })).toBeNull();
 
     const collapse = screen.getByRole('button', { name: 'Hide right panel' });
@@ -394,7 +401,7 @@ describe('InspectorPanel tabs', () => {
     expect(useWorkspaceStore.getState().rightCollapsed).toBe(false);
   });
 
-  it('keeps all three tab labels rendered next to the header collapse button', () => {
+  it('keeps all four tab labels rendered next to the header collapse button', () => {
     usePdfStore.setState({
       filterCriteria: { fontname: 'F1', types: ['word'] },
       subset: { source: 'filter', mode: 'intersect', objects: [exportWord] },
@@ -405,7 +412,45 @@ describe('InspectorPanel tabs', () => {
     const labels = within(tablist)
       .getAllByRole('tab')
       .map((tab) => tab.querySelector('span')?.textContent);
-    expect(labels).toEqual(['Inspect', 'Filter', 'Results']);
-    expect(within(tablist).getAllByRole('tab')).toHaveLength(3);
+    expect(labels).toEqual(['Inspect', 'Filter', 'Results', 'Page']);
+    expect(within(tablist).getAllByRole('tab')).toHaveLength(4);
+  });
+
+  it('opens the Page tab and keeps the other panels mounted', () => {
+    usePdfStore.setState({
+      pageData: {
+        width: 612,
+        height: 792,
+        rotation: 0,
+        boxes: {
+          media: { x0: 0, y0: 0, x1: 612, y1: 792 },
+          crop: { x0: 0, y0: 0, x1: 600, y1: 780 },
+          trim: null,
+          bleed: null,
+          art: null,
+        },
+        chars: [],
+        words: [],
+        rects: [],
+        lines: [],
+        curves: [],
+        images: [],
+        tables: [],
+      },
+    });
+
+    render(React.createElement(InspectorPanel));
+    openTab(/^Page/);
+
+    const pagePanel = screen.getByRole('tabpanel', { name: 'Page' });
+    expect(pagePanel.hasAttribute('hidden')).toBe(false);
+    expect(within(pagePanel).getByText('612 × 792 pt')).toBeTruthy();
+    expect(within(pagePanel).getByText('0°')).toBeTruthy();
+    expect(within(pagePanel).getByText('0, 0 → 612, 792')).toBeTruthy();
+    expect(within(pagePanel).getByText('0, 0 → 600, 780')).toBeTruthy();
+    expect(within(pagePanel).getAllByText('—')).toHaveLength(3);
+
+    // The other three panels stay mounted so their local state survives.
+    expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(4);
   });
 });

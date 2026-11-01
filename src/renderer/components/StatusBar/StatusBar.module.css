@@ -16,6 +16,25 @@
   white-space: nowrap;
 }
 
+/* Page size/rotation and the hovered PDF point are compact, tabular readouts.
+   The geometry summary may ellipsize; the cursor position keeps its space. */
+.pageGeometry {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: #8e99a6;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cursorPosition {
+  flex: 0 0 auto;
+  color: #cbd3dc;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .selectionSummary {
   display: inline-flex;
   flex: 0 0 auto;

@@ -1,6 +1,22 @@
 import { describeFilterCriteria } from '../../services/filter-summary';
+import { useCursorStore, type CursorPdfPoint } from '../../store/cursor-store';
 import { usePdfStore } from '../../store/pdf-store';
+import type { PageData } from '../../types/pdf-objects';
 import styles from './StatusBar.module.css';
+
+const formatCoordinate = (value: number): string => {
+  if (!Number.isFinite(value)) return '—';
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+};
+
+/** Cursor position in PDF points; the status bar intentionally stays in pt. */
+export const formatCursorPoint = (point: CursorPdfPoint): string =>
+  `${formatCoordinate(point.x)}, ${formatCoordinate(point.y)} pt`;
+
+/** Compact page summary: size plus the /Rotate value the Page tab reports. */
+export const formatPageGeometry = (page: PageData): string =>
+  `${formatCoordinate(page.width)} × ${formatCoordinate(page.height)} pt · rot ${page.rotation ?? 0}°`;
 
 export const StatusBar = (): JSX.Element => {
   const isLoading = usePdfStore((state) => state.isLoading);
@@ -14,6 +30,8 @@ export const StatusBar = (): JSX.Element => {
   const selectedObject = usePdfStore((state) => state.selectedObject);
   const filterCriteria = usePdfStore((state) => state.filterCriteria);
   const setFilterCriteria = usePdfStore((state) => state.setFilterCriteria);
+  const pageData = usePdfStore((state) => state.pageData);
+  const cursorPdfPoint = useCursorStore((state) => state.cursorPdfPoint);
   const filterSummary = describeFilterCriteria(filterCriteria);
 
   return (
@@ -21,6 +39,23 @@ export const StatusBar = (): JSX.Element => {
       <span className={styles.documentStatus}>
         {isLoading ? 'Loading…' : `Page ${currentPage}/${pageCount} · ${objectCount} objects`}
       </span>
+      {pageData && (
+        <span
+          className={styles.pageGeometry}
+          title={`Page size ${formatPageGeometry(pageData)}`}
+        >
+          {formatPageGeometry(pageData)}
+        </span>
+      )}
+      {cursorPdfPoint && (
+        <span
+          className={styles.cursorPosition}
+          role="group"
+          aria-label={`Cursor ${formatCursorPoint(cursorPdfPoint)}`}
+        >
+          {formatCursorPoint(cursorPdfPoint)}
+        </span>
+      )}
       {/* No selection means no placeholder: the bar only grows when there is
           something to report. `aria-label` on a plain span is unreliable across
           ATs, so the summary is an explicit named group instead. */}

@@ -10,6 +10,7 @@ import {
 import type { PdfObjectType } from "../../types/pdf-objects";
 import { FilterTab } from "./FilterTab";
 import { InspectTab } from "./InspectTab";
+import { PageTab } from "./PageTab";
 import { ResultsTab } from "./ResultsTab";
 import styles from "./InspectorPanel.module.css";
 
@@ -17,6 +18,7 @@ const TAB_LABELS: Record<InspectorTab, string> = {
   inspect: "Inspect",
   filter: "Filter",
   results: "Results",
+  page: "Page",
 };
 
 export const InspectorPanel = (): JSX.Element => {
@@ -38,6 +40,7 @@ export const InspectorPanel = (): JSX.Element => {
     inspect: null,
     filter: filterCount > 0 ? filterCount : null,
     results: resultsCount,
+    page: null,
   };
 
   const tabId = (tab: InspectorTab): string => `${baseId}-${tab}-tab`;
@@ -143,6 +146,15 @@ export const InspectorPanel = (): JSX.Element => {
         hidden={inspectorTab !== "results"}
       >
         <ResultsTab exportTypes={exportTypes} onExportTypesChange={setExportTypes} />
+      </div>
+      <div
+        className={styles.tabPanel}
+        role="tabpanel"
+        id={panelId("page")}
+        aria-labelledby={tabId("page")}
+        hidden={inspectorTab !== "page"}
+      >
+        <PageTab />
       </div>
     </aside>
   );

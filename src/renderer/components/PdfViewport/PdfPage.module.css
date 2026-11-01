@@ -1,3 +1,13 @@
+/*
+ * The frame is the same size as the page but does not clip, so the rulers can
+ * sit in the 24px gutter of the pages container. The page container keeps
+ * `overflow: hidden` for the canvas, text layer and overlays.
+ */
+.pageFrame {
+  position: relative;
+  flex: 0 0 auto;
+}
+
 .pageContainer {
   position: relative;
   box-shadow: 0 2px 16px rgba(0, 0, 0, 0.3);
@@ -8,4 +18,23 @@
 
 .canvas {
   display: block;
+}
+
+/*
+ * Shown instead of the object overlay on a rotated page: the overlay mapping is
+ * unrotated, so drawing it would put boxes outside the page. The notice must
+ * not intercept the canvas pointer (hover, region drag) interactions.
+ */
+.rotationNotice {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  padding: 4px 8px;
+  color: #e1e6eb;
+  background: rgb(30 35 41 / 94%);
+  border: 1px solid #353b43;
+  border-radius: 2px;
+  font-size: 11px;
+  line-height: 1.3;
+  pointer-events: none;
 }

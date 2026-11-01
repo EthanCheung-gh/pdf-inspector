@@ -30,6 +30,7 @@ const localStorageMock = vi.hoisted(() => {
 });
 
 import {
+  DEFAULT_PAGE_BOX_VISIBILITY,
   DEFAULT_WORKSPACE_LAYOUT,
   LEFT_PANEL_LIMITS,
   OVERLAY_OPACITY_LIMITS,
@@ -61,6 +62,9 @@ describe('workspace-store', () => {
     expect(state.leftTab).toBe('objects');
     expect(state.inspectorTab).toBe('inspect');
     expect(state.overlayOpacity).toBe(1);
+    expect(state.pageBoxVisibility).toEqual(DEFAULT_PAGE_BOX_VISIBILITY);
+    expect(state.showRulers).toBe(false);
+    expect(state.pageUnits).toBe('pt');
   });
 
   it('clamps panel widths into the supported ranges', () => {
@@ -123,9 +127,32 @@ describe('workspace-store', () => {
 
     store.setLeftTab('outline');
     store.setInspectorTab('results');
+    store.setInspectorTab('page');
 
     expect(useWorkspaceStore.getState().leftTab).toBe('outline');
-    expect(useWorkspaceStore.getState().inspectorTab).toBe('results');
+    expect(useWorkspaceStore.getState().inspectorTab).toBe('page');
+  });
+
+  it('updates the page display config without touching other layout fields', () => {
+    const store = useWorkspaceStore.getState();
+    store.setRightWidth(420);
+
+    store.setPageBoxVisible('media', false);
+    store.setPageBoxVisible('art', true);
+    store.setShowRulers(true);
+    store.setPageUnits('mm');
+
+    const state = useWorkspaceStore.getState();
+    expect(state.pageBoxVisibility).toEqual({
+      media: false,
+      crop: true,
+      trim: false,
+      bleed: false,
+      art: true,
+    });
+    expect(state.showRulers).toBe(true);
+    expect(state.pageUnits).toBe('mm');
+    expect(state.rightWidth).toBe(420);
   });
 
   it('persists only the layout fields under the workspace key', () => {
@@ -136,6 +163,9 @@ describe('workspace-store', () => {
     store.setLeftTab('layers');
     store.setInspectorTab('filter');
     store.setOverlayOpacity(0.5);
+    store.setPageBoxVisible('trim', true);
+    store.setShowRulers(true);
+    store.setPageUnits('mm');
 
     const raw = window.localStorage.getItem(WORKSPACE_STORAGE_KEY);
     expect(raw).not.toBeNull();
@@ -153,9 +183,20 @@ describe('workspace-store', () => {
       leftTab: 'layers',
       inspectorTab: 'filter',
       overlayOpacity: 0.5,
+      pageBoxVisibility: {
+        media: true,
+        crop: true,
+        trim: true,
+        bleed: false,
+        art: false,
+      },
+      showRulers: true,
+      pageUnits: 'mm',
     });
     expect(persisted.state).not.toHaveProperty('setLeftWidth');
     expect(persisted.state).not.toHaveProperty('toggleLeftCollapsed');
+    // Hover state is transient and must never be written to localStorage.
+    expect(persisted.state).not.toHaveProperty('cursorPdfPoint');
   });
 
   it('rehydrates a valid persisted layout', async () => {
@@ -172,6 +213,9 @@ describe('workspace-store', () => {
           leftTab: 'fonts',
           inspectorTab: 'results',
           overlayOpacity: 0.35,
+          pageBoxVisibility: { media: true, crop: false, trim: true, bleed: false, art: true },
+          showRulers: true,
+          pageUnits: 'mm',
         },
       }),
     );
@@ -187,6 +231,78 @@ describe('workspace-store', () => {
     expect(state.leftTab).toBe('fonts');
     expect(state.inspectorTab).toBe('results');
     expect(state.overlayOpacity).toBe(0.35);
+    expect(state.pageBoxVisibility).toEqual({
+      media: true,
+      crop: false,
+      trim: true,
+      bleed: false,
+      art: true,
+    });
+    expect(state.showRulers).toBe(true);
+    expect(state.pageUnits).toBe('mm');
+  });
+
+  it('rehydrates the Page inspector tab', async () => {
+    window.localStorage.setItem(
+      WORKSPACE_STORAGE_KEY,
+      JSON.stringify({ version: 1, state: { inspectorTab: 'page' } }),
+    );
+
+    await useWorkspaceStore.persist.rehydrate();
+
+    expect(useWorkspaceStore.getState().inspectorTab).toBe('page');
+  });
+
+  it('sanitizes persisted page display config per field', async () => {
+    window.localStorage.setItem(
+      WORKSPACE_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        state: {
+          pageBoxVisibility: {
+            media: false,
+            crop: 'yes',
+            trim: true,
+            bleed: null,
+            art: 1,
+          },
+          showRulers: 'yes',
+          pageUnits: 'cm',
+        },
+      }),
+    );
+
+    await useWorkspaceStore.persist.rehydrate();
+
+    const state = useWorkspaceStore.getState();
+    // Valid entries survive; malformed ones fall back per box.
+    expect(state.pageBoxVisibility).toEqual({
+      media: false,
+      crop: true,
+      trim: true,
+      bleed: false,
+      art: false,
+    });
+    expect(state.showRulers).toBe(false);
+    expect(state.pageUnits).toBe('pt');
+  });
+
+  it('ignores a legacy persisted cursor position', async () => {
+    window.localStorage.setItem(
+      WORKSPACE_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        state: { cursorPdfPoint: { x: 10, y: 20 } },
+      }),
+    );
+
+    await useWorkspaceStore.persist.rehydrate();
+
+    // Cursor state now lives in the non-persisted cursor store; the workspace
+    // store must not resurrect it from old localStorage data.
+    expect(
+      (useWorkspaceStore.getState() as unknown as Record<string, unknown>).cursorPdfPoint,
+    ).toBeUndefined();
   });
 
   it('falls back to defaults for out-of-range or malformed persisted fields', async () => {

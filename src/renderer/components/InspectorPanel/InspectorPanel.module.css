@@ -12,7 +12,7 @@
 }
 
 /* Header row: the tab strip takes the remaining width and the collapse control
-   keeps a fixed 24px square so the three labels stay legible at the 280px
+   keeps a fixed 24px square so the four labels stay legible at the 280px
    minimum panel width. The divider lives on the row, not the tablist. */
 .header {
   display: flex;
@@ -28,25 +28,40 @@
   min-width: 0;
 }
 
+/*
+ * At the 280px panel minimum the four tabs share ~63px each (280 − 1px panel
+ * border − 24px collapse − 4px collapse margin). The widest label ("Results",
+ * 7 uppercase glyphs) plus the 2px gap and the 12px count pill has to stay
+ * inside that budget, hence 9.5px labels with no extra tracking. Larger panes
+ * distribute the extra width evenly through `flex: 1 1 0`.
+ */
 .tab {
   display: inline-flex;
   flex: 1 1 0;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
-  padding: 10px 2px;
+  padding: 10px 0;
   overflow: hidden;
   color: #8e99a6;
   background: transparent;
   border: 0;
   font: inherit;
-  font-size: 11px;
+  font-size: 9.5px;
   font-weight: 700;
-  letter-spacing: 0.05em;
+  letter-spacing: normal;
   text-transform: uppercase;
   white-space: nowrap;
   cursor: pointer;
+}
+
+/* The label yields before the count: a long count can never push the badge out
+   of the tab, so the number stays visible while the label ellipsizes. */
+.tab > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tab:hover {
@@ -64,16 +79,21 @@
   background: #274e76;
 }
 
+/* Border-box makes the 12px minimum the pill's real footprint, so a two- or
+   three-digit count cannot grow the badge and squeeze the tab label. The pill
+   never shrinks, keeping the number readable. */
 .tabCount {
-  min-width: 16px;
-  padding: 0 4px;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  min-width: 12px;
+  padding: 0 1.5px;
   color: inherit;
   background: rgb(255 255 255 / 14%);
-  border-radius: 8px;
-  font-size: 10px;
+  border-radius: 7px;
+  font-size: 9px;
   font-variant-numeric: tabular-nums;
   letter-spacing: normal;
-  line-height: 16px;
+  line-height: 14px;
   text-align: center;
 }
 

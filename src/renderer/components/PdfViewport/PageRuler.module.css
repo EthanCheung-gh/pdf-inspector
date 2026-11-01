@@ -1,0 +1,112 @@
+/*
+ * Rulers sit just outside the page container, inside the 24px padding of the
+ * pages container, so they never cover page content. `pointer-events: none`
+ * keeps every canvas interaction (hover, region drag, click) untouched.
+ */
+.rulers {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  color: #aeb7c2;
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.corner {
+  position: absolute;
+  top: -18px;
+  left: -22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 18px;
+  color: #8e99a6;
+  background: rgb(30 35 41 / 94%);
+  border: 1px solid #353b43;
+  border-radius: 2px 0 0;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.topRuler {
+  position: absolute;
+  top: -18px;
+  left: 0;
+  height: 18px;
+  overflow: hidden;
+  background: rgb(30 35 41 / 94%);
+  border: 1px solid #353b43;
+  border-bottom: 0;
+  border-radius: 0 2px 0 0;
+}
+
+.leftRuler {
+  position: absolute;
+  top: 0;
+  left: -22px;
+  width: 22px;
+  overflow: hidden;
+  background: rgb(30 35 41 / 94%);
+  border: 1px solid #353b43;
+  border-right: 0;
+  border-radius: 0 0 0 2px;
+}
+
+.tick {
+  position: absolute;
+  display: block;
+  background: #6f7b88;
+}
+
+.topTick {
+  top: 0;
+  width: 1px;
+}
+
+.leftTick {
+  left: 0;
+  height: 1px;
+}
+
+.topTick.minor {
+  height: 4px;
+}
+
+.topTick.major {
+  height: 7px;
+  background: #9aa6b3;
+}
+
+.leftTick.minor {
+  width: 4px;
+}
+
+.leftTick.major {
+  width: 7px;
+  background: #9aa6b3;
+}
+
+.topLabel {
+  position: absolute;
+  top: 7px;
+  left: 2px;
+  color: #aeb7c2;
+  font-size: 8px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.leftLabel {
+  position: absolute;
+  top: -4px;
+  left: 8px;
+  color: #aeb7c2;
+  font-size: 8px;
+  line-height: 8px;
+  white-space: nowrap;
+}

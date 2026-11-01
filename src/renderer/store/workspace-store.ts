@@ -8,8 +8,14 @@ import { createJSONStorage, persist, type StateStorage } from 'zustand/middlewar
  */
 
 export type LeftPanelTab = 'objects' | 'outline' | 'fonts' | 'layers';
-export type InspectorTab = 'inspect' | 'filter' | 'results';
+export type InspectorTab = 'inspect' | 'filter' | 'results' | 'page';
 export type WorkspacePanelSide = 'left' | 'right';
+
+/** Unit used by the Page tab and the page rulers. */
+export type PageUnits = 'pt' | 'mm';
+/** The five PDF page boxes, in the order the UI lists them. */
+export type PageBoxKey = 'media' | 'crop' | 'trim' | 'bleed' | 'art';
+export type PageBoxVisibility = Record<PageBoxKey, boolean>;
 
 export const WORKSPACE_STORAGE_KEY = 'pdf-inspector:workspace:v1';
 
@@ -23,7 +29,18 @@ export const PANEL_LIMITS = {
 } as const;
 
 export const LEFT_PANEL_TABS: readonly LeftPanelTab[] = ['objects', 'outline', 'fonts', 'layers'];
-export const INSPECTOR_TABS: readonly InspectorTab[] = ['inspect', 'filter', 'results'];
+export const INSPECTOR_TABS: readonly InspectorTab[] = ['inspect', 'filter', 'results', 'page'];
+export const PAGE_UNITS: readonly PageUnits[] = ['pt', 'mm'];
+export const PAGE_BOX_KEYS: readonly PageBoxKey[] = ['media', 'crop', 'trim', 'bleed', 'art'];
+
+/** MediaBox is mandatory and CropBox is the visible page for most documents. */
+export const DEFAULT_PAGE_BOX_VISIBILITY: PageBoxVisibility = {
+  media: true,
+  crop: true,
+  trim: false,
+  bleed: false,
+  art: false,
+};
 
 export interface WorkspaceLayout {
   leftWidth: number;
@@ -34,6 +51,9 @@ export interface WorkspaceLayout {
   leftTab: LeftPanelTab;
   inspectorTab: InspectorTab;
   overlayOpacity: number;
+  pageBoxVisibility: PageBoxVisibility;
+  showRulers: boolean;
+  pageUnits: PageUnits;
 }
 
 export interface WorkspaceState extends WorkspaceLayout {
@@ -48,6 +68,9 @@ export interface WorkspaceState extends WorkspaceLayout {
   setLeftTab: (tab: LeftPanelTab) => void;
   setInspectorTab: (tab: InspectorTab) => void;
   setOverlayOpacity: (opacity: number) => void;
+  setPageBoxVisible: (box: PageBoxKey, visible: boolean) => void;
+  setShowRulers: (visible: boolean) => void;
+  setPageUnits: (units: PageUnits) => void;
 }
 
 export const DEFAULT_WORKSPACE_LAYOUT: WorkspaceLayout = {
@@ -59,6 +82,9 @@ export const DEFAULT_WORKSPACE_LAYOUT: WorkspaceLayout = {
   leftTab: 'objects',
   inspectorTab: 'inspect',
   overlayOpacity: OVERLAY_OPACITY_LIMITS.default,
+  pageBoxVisibility: { ...DEFAULT_PAGE_BOX_VISIBILITY },
+  showRulers: false,
+  pageUnits: 'pt',
 };
 
 /** Clamp a panel width into its supported range. Pure so it is easy to test. */
@@ -105,12 +131,27 @@ const readPersistedOpacity = (value: unknown): number => {
 };
 
 /**
+ * Page-box visibility is stored as a map. Missing or malformed keys fall back
+ * per box instead of resetting the whole map, so one hand-edited entry cannot
+ * hide the MediaBox outline.
+ */
+const readPersistedPageBoxVisibility = (value: unknown): PageBoxVisibility => {
+  const source = isRecord(value) ? value : {};
+  return PAGE_BOX_KEYS.reduce((visibility, key) => {
+    visibility[key] = readPersistedBoolean(source[key], DEFAULT_PAGE_BOX_VISIBILITY[key]);
+    return visibility;
+  }, {} as PageBoxVisibility);
+};
+
+/**
  * Persisted data comes from localStorage and may be stale, truncated or edited
  * by hand. Rebuild a complete layout and use defaults for every invalid field
  * instead of trusting the stored object.
  */
 const sanitizePersistedLayout = (persisted: unknown): WorkspaceLayout => {
-  if (!isRecord(persisted)) return { ...DEFAULT_WORKSPACE_LAYOUT };
+  if (!isRecord(persisted)) {
+    return { ...DEFAULT_WORKSPACE_LAYOUT, pageBoxVisibility: { ...DEFAULT_PAGE_BOX_VISIBILITY } };
+  }
 
   return {
     leftWidth: readPersistedWidth(persisted.leftWidth, LEFT_PANEL_LIMITS),
@@ -135,6 +176,13 @@ const sanitizePersistedLayout = (persisted: unknown): WorkspaceLayout => {
       DEFAULT_WORKSPACE_LAYOUT.inspectorTab,
     ),
     overlayOpacity: readPersistedOpacity(persisted.overlayOpacity),
+    pageBoxVisibility: readPersistedPageBoxVisibility(persisted.pageBoxVisibility),
+    showRulers: readPersistedBoolean(persisted.showRulers, DEFAULT_WORKSPACE_LAYOUT.showRulers),
+    pageUnits: readPersistedTab(
+      persisted.pageUnits,
+      PAGE_UNITS,
+      DEFAULT_WORKSPACE_LAYOUT.pageUnits,
+    ),
   };
 };
 
@@ -147,6 +195,9 @@ const persistLayout = (state: WorkspaceState): WorkspaceLayout => ({
   leftTab: state.leftTab,
   inspectorTab: state.inspectorTab,
   overlayOpacity: state.overlayOpacity,
+  pageBoxVisibility: state.pageBoxVisibility,
+  showRulers: state.showRulers,
+  pageUnits: state.pageUnits,
 });
 
 const createMemoryStorage = (): StateStorage => {
@@ -207,6 +258,13 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       setLeftTab: (tab) => set({ leftTab: tab }),
       setInspectorTab: (tab) => set({ inspectorTab: tab }),
       setOverlayOpacity: (opacity) => set({ overlayOpacity: clampOverlayOpacity(opacity) }),
+
+      setPageBoxVisible: (box, visible) =>
+        set((state) => ({
+          pageBoxVisibility: { ...state.pageBoxVisibility, [box]: visible },
+        })),
+      setShowRulers: (visible) => set({ showRulers: visible }),
+      setPageUnits: (units) => set({ pageUnits: units }),
     }),
     {
       name: WORKSPACE_STORAGE_KEY,

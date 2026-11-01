@@ -2,7 +2,8 @@
 import React from 'react';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { PdfWord } from '../../types/pdf-objects';
+import type { PageData, PdfWord } from '../../types/pdf-objects';
+import { useCursorStore } from '../../store/cursor-store';
 import { usePdfStore } from '../../store/pdf-store';
 
 import { StatusBar } from './StatusBar';
@@ -17,6 +18,19 @@ const selectedWord: PdfWord = {
   text: 'selected',
   fontname: 'Inter',
   size: 12,
+};
+
+const pageData: PageData = {
+  width: 612,
+  height: 792,
+  rotation: 90,
+  chars: [],
+  words: [],
+  rects: [],
+  lines: [],
+  curves: [],
+  images: [],
+  tables: [],
 };
 
 describe('StatusBar', () => {
@@ -36,7 +50,9 @@ describe('StatusBar', () => {
       fontProgress: null,
       filterCriteria: {},
       selectedObject: null,
+      pageData: null,
     });
+    useCursorStore.setState({ cursorPdfPoint: null });
   });
 
   it('announces background font analysis progress', () => {
@@ -135,5 +151,36 @@ describe('StatusBar', () => {
     });
     expect(screen.queryByLabelText(/^Selected /)).toBeNull();
     expect(screen.queryByRole('group', { name: /^Selected / })).toBeNull();
+  });
+
+  it('shows the hovered PDF point and the page size/rotation summary', () => {
+    usePdfStore.setState({ pageData });
+    useCursorStore.setState({ cursorPdfPoint: { x: 123.44, y: 56.7 } });
+
+    render(React.createElement(StatusBar));
+
+    const cursor = screen.getByRole('group', { name: 'Cursor 123.4, 56.7 pt' });
+    expect(cursor.textContent).toBe('123.4, 56.7 pt');
+    expect(screen.getByText('612 × 792 pt · rot 90°')).toBeTruthy();
+  });
+
+  it('does not reserve space for the cursor or page summary without data', () => {
+    render(React.createElement(StatusBar));
+
+    expect(screen.queryByRole('group', { name: /^Cursor / })).toBeNull();
+    expect(screen.queryByText(/· rot /)).toBeNull();
+  });
+
+  it('clears the cursor readout when the pointer leaves the page', () => {
+    useCursorStore.setState({ cursorPdfPoint: { x: 1, y: 2 } });
+    render(React.createElement(StatusBar));
+
+    expect(screen.getByRole('group', { name: 'Cursor 1, 2 pt' })).toBeTruthy();
+
+    act(() => {
+      useCursorStore.setState({ cursorPdfPoint: null });
+    });
+
+    expect(screen.queryByRole('group', { name: /^Cursor / })).toBeNull();
   });
 });
