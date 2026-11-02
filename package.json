@@ -6,6 +6,14 @@
     "node": ">=22.12.0"
   },
   "main": "dist/main/index.js",
+  "bin": {
+    "pdf-inspector": "bin/pdf-inspector.mjs"
+  },
+  "files": [
+    "bin",
+    "sidecar",
+    "sidecar/requirements.txt"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -21,7 +29,8 @@
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win",
     "dist:mac": "npm run build && electron-builder --mac",
-    "dist:linux": "npm run build && electron-builder --linux"
+    "dist:linux": "npm run build && electron-builder --linux",
+    "diff": "node bin/pdf-inspector.mjs diff"
   },
   "dependencies": {
     "pdfjs-dist": "^4.8.69",
