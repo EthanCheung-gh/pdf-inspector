@@ -69,3 +69,216 @@ jobs:
 
       - name: Generate web sample PDFs
         run: python scripts/generate-web-samples.py
+
+  diff-cli:
+    name: PDF diff CLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: sidecar/requirements.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r sidecar/requirements.txt reportlab
+
+      - name: Generate sample PDFs
+        run: python scripts/generate-web-samples.py
+
+      - name: Diff identical PDFs (expect exit 0 and JSON output)
+        run: |
+          set -euo pipefail
+          mkdir -p diff-artifacts
+
+          set +e
+          python sidecar/cli.py diff web-samples/basic.pdf web-samples/basic.pdf \
+            --format json \
+            --output diff-artifacts/identical.json \
+            --fail-on any
+          code=$?
+          set -e
+
+          echo "pdf-inspector exited with $code"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::expected exit 0 for identical PDFs, got $code"
+            exit 1
+          fi
+
+      - name: Assert identical PDFs report no changes
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path('diff-artifacts/identical.json').read_text(encoding='utf-8'))
+          assert data['schemaVersion'] == 1, data['schemaVersion']
+          summary = data['summary']
+          assert not any(summary.values()), summary
+          assert data['old']['sha256'] == data['new']['sha256'], (data['old'], data['new'])
+          assert data['old']['pages'] == data['new']['pages']
+          print('identical diff OK:', summary)
+          PY
+
+      - name: Diff changed PDFs (expect exit 1)
+        run: |
+          set -euo pipefail
+
+          set +e
+          python sidecar/cli.py diff web-samples/basic.pdf web-samples/large.pdf \
+            --format json \
+            --output diff-artifacts/changed.json \
+            --fail-on any
+          code=$?
+          set -e
+
+          echo "pdf-inspector exited with $code"
+          if [ "$code" -ne 1 ]; then
+            echo "::error::expected exit 1 for changed PDFs with --fail-on any, got $code"
+            exit 1
+          fi
+
+      - name: Assert changed PDFs JSON reports differences
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path('diff-artifacts/changed.json').read_text(encoding='utf-8'))
+          summary = data['summary']
+          changed = sum(int(value or 0) for value in summary.values())
+          assert changed > 0, summary
+          assert data['old']['pages'] == 4, data['old']['pages']
+          assert data['new']['pages'] == 120, data['new']['pages']
+          print('changed diff OK:', summary)
+          PY
+
+      - name: Render HTML report and tolerate differences (expect exit 0)
+        run: |
+          set -euo pipefail
+
+          set +e
+          python sidecar/cli.py diff web-samples/basic.pdf web-samples/large.pdf \
+            --format html \
+            --output diff-artifacts/report.html \
+            --fail-on none
+          code=$?
+          set -e
+
+          echo "pdf-inspector exited with $code"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::expected exit 0 with --fail-on none, got $code"
+            exit 1
+          fi
+
+          test -s diff-artifacts/report.html
+          grep -q '<!DOCTYPE html>' diff-artifacts/report.html
+          grep -q 'PDF diff report' diff-artifacts/report.html
+          echo "HTML report: $(wc -c < diff-artifacts/report.html) bytes"
+
+      - name: Upload diff artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdf-diff-artifacts
+          path: diff-artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  diff-action:
+    name: PDF diff action
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install sample generation dependency
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install reportlab
+
+      - name: Generate sample PDFs
+        run: python scripts/generate-web-samples.py
+
+      - name: Diff identical PDFs through the action (expect success)
+        id: identical
+        uses: ./
+        with:
+          old: web-samples/basic.pdf
+          new: web-samples/basic.pdf
+          fail-on: any
+          format: json
+          json-path: diff-artifacts/action-identical.json
+
+      - name: Assert the action outputs
+        env:
+          EXIT_CODE: ${{ steps.identical.outputs.exit-code }}
+          JSON_PATH: ${{ steps.identical.outputs.json-path }}
+        run: |
+          set -euo pipefail
+          echo "exit-code=$EXIT_CODE json-path=$JSON_PATH"
+          test "$EXIT_CODE" = "0"
+          test -f "$JSON_PATH"
+          python -c "
+          import json, sys
+          data = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert not any(data['summary'].values()), data['summary']
+          print('action identical diff OK')
+          " "$JSON_PATH"
+
+      - name: Diff changed PDFs through the action (expected failure)
+        id: changed
+        continue-on-error: true
+        uses: ./
+        with:
+          old: web-samples/basic.pdf
+          new: web-samples/large.pdf
+          fail-on: any
+          format: json
+          json-path: diff-artifacts/action-changed.json
+
+      - name: Assert the action failed with exit code 1
+        env:
+          OUTCOME: ${{ steps.changed.outcome }}
+          EXIT_CODE: ${{ steps.changed.outputs.exit-code }}
+        run: |
+          set -euo pipefail
+          echo "outcome=$OUTCOME exit-code=$EXIT_CODE"
+          test "$OUTCOME" = "failure"
+          test "$EXIT_CODE" = "1"
+
+      - name: Diff changed PDFs with fail-on none (expect success and HTML)
+        id: tolerant
+        uses: ./
+        with:
+          old: web-samples/basic.pdf
+          new: web-samples/large.pdf
+          fail-on: none
+          format: summary
+          report-path: diff-artifacts/action-report.html
+
+      - name: Assert fail-on none succeeds and writes the report
+        env:
+          EXIT_CODE: ${{ steps.tolerant.outputs.exit-code }}
+          REPORT_PATH: ${{ steps.tolerant.outputs.report-path }}
+        run: |
+          set -euo pipefail
+          echo "exit-code=$EXIT_CODE report-path=$REPORT_PATH"
+          test "$EXIT_CODE" = "0"
+          test -f "$REPORT_PATH"
+          grep -q '<!DOCTYPE html>' "$REPORT_PATH"
