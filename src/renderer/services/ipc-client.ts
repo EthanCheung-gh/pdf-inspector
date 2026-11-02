@@ -1,6 +1,8 @@
 import { IpcApi, SaveFileRequest } from '../types/ipc-protocol';
+import type { DiffOptionsInput, DiffSide, DiffSource } from '../../shared/diff-types';
 import {
   ANALYZE_FONTS_RENDERER_TIMEOUT_MS,
+  DIFF_RENDERER_TIMEOUT_MS,
   OPEN_PDF_URL_TIMEOUT_MS,
 } from '../../shared/constants';
 
@@ -110,6 +112,18 @@ export const ipc = {
       ANALYZE_FONTS_RENDERER_TIMEOUT_MS,
     ),
   getImageData: (streamId: string) => callWithTimeout(() => window.pdfInspector.getImageData(streamId), 'getImageData'),
+  // A diff extracts both documents page by page, so it gets the same kind of
+  // dedicated budget as font analysis: the renderer must stay patient longer
+  // than main so main's clear timeout message wins the race.
+  diffPdfs: (oldSource: DiffSource, newSource: DiffSource, options?: DiffOptionsInput) =>
+    callWithTimeout(
+      () => window.pdfInspector.diffPdfs(oldSource, newSource, options),
+      'diffPdfs',
+      DIFF_RENDERER_TIMEOUT_MS,
+    ),
+  // No timeout: this resolves only after the user answers a native file dialog
+  // (or dismisses the browser's file picker), which can take arbitrarily long.
+  pickDiffPdf: (side: DiffSide) => window.pdfInspector.pickDiffPdf(side),
   getSidecarStatus: () => callWithTimeout(() => window.pdfInspector.getSidecarStatus(), 'getSidecarStatus'),
   restartSidecar: () => window.pdfInspector.restartSidecar(),
   saveFile: (req: SaveFileRequest) => window.pdfInspector.saveFile(req),

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { IpcApi } from '../../renderer/types/ipc-protocol';
+import type { DiffResult, IpcApi } from '../../renderer/types/ipc-protocol';
 import type { PageData, PdfMetadata } from '../../renderer/types/pdf-objects';
-import { buildOpenPdfRequest, installWebIpc } from '../ipc-adapter';
+import { buildDiffUploadRequest, buildOpenPdfRequest, installWebIpc } from '../ipc-adapter';
 
 /** jsdom default origin; the adapter resolves document paths against it. */
 const ORIGIN = window.location.origin;
@@ -31,6 +31,31 @@ const PAGE_DATA: PageData = {
   curves: [],
   images: [],
   tables: [],
+};
+
+const DIFF_RESULT: DiffResult = {
+  schemaVersion: 1,
+  tool: { name: 'pdf-inspector', version: '0.2.0' },
+  options: {
+    positionTolerance: 2,
+    textTolerance: 'normalized',
+    ignoreTypes: ['image'],
+    ignoreFonts: false,
+    ignoreColors: false,
+    ignoreImages: false,
+  },
+  old: { pages: 1, sha256: 'a'.repeat(64) },
+  new: { pages: 1, sha256: 'b'.repeat(64) },
+  summary: {
+    pagesAdded: 0,
+    pagesRemoved: 0,
+    pagesChanged: 1,
+    objectsAdded: 0,
+    objectsRemoved: 0,
+    objectsMoved: 0,
+    objectsModified: 1,
+  },
+  pages: [],
 };
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -97,12 +122,14 @@ describe('web ipc adapter', () => {
     expect(Object.keys(api()).sort()).toEqual(
       [
         'analyzeFonts',
+        'diffPdfs',
         'extractMetadata',
         'extractPage',
         'getImageData',
         'getSidecarStatus',
         'openPdf',
         'openPdfUrl',
+        'pickDiffPdf',
         'restartSidecar',
         'saveFile',
       ].sort(),
@@ -222,6 +249,127 @@ describe('web ipc adapter', () => {
       'X-Filename': encodeURIComponent('my report #1.pdf'),
     });
     expect((init.headers as Record<string, string>)['X-Filename']).not.toContain(' ');
+  });
+
+  it('builds a diff upload request that names its side', () => {
+    const file = new File(['%PDF-1.7'], 'old version.pdf', { type: 'application/pdf' });
+    const { url, init } = buildDiffUploadRequest(file, 'old');
+
+    expect(url).toBe('/api/diff/file');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(file);
+    expect(init.headers).toEqual({
+      'Content-Type': 'application/pdf',
+      'X-Filename': encodeURIComponent('old version.pdf'),
+      'X-Diff-Side': 'old',
+    });
+  });
+
+  it('uploads both diff sides and posts their tokens with camelCase options', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ token: 'old-token', side: 'old' }))
+      .mockResolvedValueOnce(jsonResponse({ token: 'new-token', side: 'new' }))
+      .mockResolvedValueOnce(jsonResponse(DIFF_RESULT));
+
+    const oldFile = new File(['%PDF-1.7'], 'old.pdf', { type: 'application/pdf' });
+    const newFile = new File(['%PDF-1.7'], 'new.pdf', { type: 'application/pdf' });
+
+    const result = await api().diffPdfs(oldFile, newFile, {
+      positionTolerance: 2,
+      ignoreTypes: ['image'],
+    });
+
+    expect(result).toBe(DIFF_RESULT);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/diff/file');
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/diff/file');
+    expect((fetchMock.mock.calls[0][1] as RequestInit).body).toBe(oldFile);
+    expect((fetchMock.mock.calls[1][1] as RequestInit).body).toBe(newFile);
+    expect(
+      ((fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>)[
+        'X-Diff-Side'
+      ],
+    ).toBe('old');
+    expect(
+      ((fetchMock.mock.calls[1][1] as RequestInit).headers as Record<string, string>)[
+        'X-Diff-Side'
+      ],
+    ).toBe('new');
+
+    expect(fetchMock.mock.calls[2][0]).toBe('/api/diff');
+    expect(sentJson(2)).toEqual({
+      oldToken: 'old-token',
+      newToken: 'new-token',
+      options: { positionTolerance: 2, ignoreTypes: ['image'] },
+    });
+  });
+
+  it('sends empty options when the caller provides none', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ token: 'old-token' }))
+      .mockResolvedValueOnce(jsonResponse({ token: 'new-token' }))
+      .mockResolvedValueOnce(jsonResponse(DIFF_RESULT));
+
+    await api().diffPdfs(
+      new File(['%PDF-1.7'], 'old.pdf', { type: 'application/pdf' }),
+      new File(['%PDF-1.7'], 'new.pdf', { type: 'application/pdf' }),
+    );
+
+    expect(sentJson(2)).toEqual({ oldToken: 'old-token', newToken: 'new-token', options: {} });
+  });
+
+  it('rejects file paths in the browser diff instead of posting them', async () => {    await expect(api().diffPdfs('/tmp/old.pdf', '/tmp/new.pdf')).rejects.toThrow(
+      /two selected files/,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('propagates a diff upload error and a missing token', async () => {
+    fetchMock.mockResolvedValueOnce(errorResponse(JSON.stringify({ error: 'not a PDF' }), 400));
+    await expect(
+      api().diffPdfs(
+        new File(['nope'], 'old.pdf', { type: 'application/pdf' }),
+        new File(['%PDF-1.7'], 'new.pdf', { type: 'application/pdf' }),
+      ),
+    ).rejects.toThrow('not a PDF');
+
+    fetchMock.mockReset();
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({}))
+      .mockResolvedValueOnce(jsonResponse({ token: 'new-token' }))
+      .mockResolvedValueOnce(jsonResponse(DIFF_RESULT));
+    await expect(
+      api().diffPdfs(
+        new File(['%PDF-1.7'], 'old.pdf', { type: 'application/pdf' }),
+        new File(['%PDF-1.7'], 'new.pdf', { type: 'application/pdf' }),
+      ),
+    ).rejects.toThrow('Server returned no diff upload token');
+    // The old upload answered without a token, so the new side is never sent.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('picks a diff side from a hidden file input without uploading anything', async () => {
+    const file = new File(['%PDF-1.7'], 'old version.pdf', { type: 'application/pdf' });
+
+    const pending = api().pickDiffPdf('old');
+    const input = document.querySelector('input[type="file"]');
+    if (!(input instanceof HTMLInputElement)) throw new Error('no file input was created');
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    input.dispatchEvent(new Event('change'));
+
+    await expect(pending).resolves.toEqual({ canceled: false, source: file, name: 'old version.pdf' });
+    // Picking is purely local: nothing reaches the backend until the user compares.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('reports a cancelled diff file picker', async () => {
+    const pending = api().pickDiffPdf('new');
+    const input = document.querySelector('input[type="file"]');
+    if (!(input instanceof HTMLInputElement)) throw new Error('no file input was created');
+    input.dispatchEvent(new Event('cancel'));
+
+    await expect(pending).resolves.toEqual({ canceled: true });
+    expect(document.querySelector('input[type="file"]')).toBeNull();
   });
 
   it('downloads the export under the basename of defaultPath', async () => {

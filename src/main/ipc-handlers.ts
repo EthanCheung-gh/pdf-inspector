@@ -3,8 +3,10 @@ import { writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { SidecarManager } from './sidecar';
 import { deleteDownloadedFile, downloadPdfToFile, parsePdfUrl } from './pdf-url';
-import { IPC_CHANNELS, ANALYZE_FONTS_TIMEOUT_MS } from '../shared/constants';
+import { IPC_CHANNELS, ANALYZE_FONTS_TIMEOUT_MS, DIFF_TIMEOUT_MS } from '../shared/constants';
 import type { SaveFileRequest } from '../shared/constants';
+import { diffOptionsToRpc } from '../shared/diff-types';
+import type { DiffOptionsInput } from '../shared/diff-types';
 
 /** Tracks the open PDF so a restarted sidecar can restore its document state. */
 let currentFilePath: string | null = null;
@@ -162,6 +164,60 @@ export function registerIpcHandlers(sidecar: SidecarManager): void {
 
   ipcMain.handle(IPC_CHANNELS.GET_IMAGE_DATA, async (_event, streamId: string) => {
     return sidecar.send('get_image_data', { stream_id: streamId });
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.DIFF_PDFS,
+    async (
+      _event,
+      oldPath: unknown,
+      newPath: unknown,
+      options?: DiffOptionsInput,
+    ) => {
+      // Two PDFs are diffed on throwaway extractors inside the sidecar: this
+      // handler deliberately never sends `open`, so the Inspect document, its
+      // page cache and the sidecar's current session stay exactly as they are.
+      if (typeof oldPath !== 'string' || !oldPath.trim()) {
+        throw new Error('diffPdfs requires the old PDF file path');
+      }
+      if (typeof newPath !== 'string' || !newPath.trim()) {
+        throw new Error('diffPdfs requires the new PDF file path');
+      }
+
+      return sidecar.send(
+        'diff_documents',
+        {
+          old_path: oldPath,
+          new_path: newPath,
+          options: diffOptionsToRpc(options),
+        },
+        DIFF_TIMEOUT_MS,
+      );
+    },
+  );
+
+  // A diff input picker: show a dialog and hand back a path. Deliberately
+  // separate from OPEN_PDF — it must not open the file in the sidecar, open a
+  // separate window, or otherwise disturb the Inspect document.
+  ipcMain.handle(IPC_CHANNELS.PICK_DIFF_PDF, async (_event, side: unknown) => {
+    const win = BrowserWindow.getFocusedWindow();
+    if (!win) throw new Error('No active window');
+
+    const label = side === 'new' ? 'newer' : 'older';
+    const result = await dialog.showOpenDialog(win, {
+      title: `Choose the ${label} PDF to compare`,
+      filters: [{ name: 'PDF Files', extensions: ['pdf'] }],
+      properties: ['openFile'],
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { canceled: true };
+    }
+
+    const filePath = result.filePaths[0];
+    // The basename is all the renderer needs for a readable row label; the path
+    // stays in `source` because that is what `diffPdfs` consumes on desktop.
+    return { canceled: false, source: filePath, name: path.basename(filePath) };
   });
 
   ipcMain.handle(IPC_CHANNELS.SIDECAR_STATUS, async () => {

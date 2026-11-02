@@ -2,15 +2,57 @@
 import sys
 import json
 import traceback
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from models import parse_request, format_response, RpcResponse
 from extractor import PdfExtractor
 from cache import PageCache
+from diff import DiffError, DiffOptions, diff_files
 
 
 class RpcError(Exception):
     """Protocol-level error: reported to the parent without a traceback."""
+
+
+# Diff options accepted over RPC. The wire format is snake_case; the TS side
+# converts its camelCase contract before sending (see src/shared/diff-types.ts).
+_DIFF_OPTION_FIELDS = (
+    'position_tolerance',
+    'text_tolerance',
+    'ignore_types',
+    'ignore_fonts',
+    'ignore_colors',
+    'ignore_images',
+)
+
+
+def _parse_diff_options(raw: Any) -> DiffOptions:
+    """Build ``DiffOptions`` from RPC params, rejecting unknown keys.
+
+    Unknown options are an error rather than silently ignored: a renderer that
+    still sends camelCase keys would otherwise diff with default tolerances and
+    look like it worked. ``DiffOptions`` itself validates the values.
+    """
+    if raw is None:
+        return DiffOptions()
+    if not isinstance(raw, Mapping):
+        raise RpcError('"options" must be an object')
+
+    unknown = sorted(set(raw) - set(_DIFF_OPTION_FIELDS))
+    if unknown:
+        raise RpcError(
+            f'Unknown diff option(s): {", ".join(unknown)} '
+            f'(valid: {", ".join(_DIFF_OPTION_FIELDS)})'
+        )
+
+    ignore_types = raw.get('ignore_types')
+    if ignore_types is not None and not isinstance(ignore_types, (list, tuple, set, frozenset)):
+        raise RpcError('"ignore_types" must be an array of object types')
+
+    try:
+        return DiffOptions(**raw)
+    except (TypeError, ValueError) as exc:
+        raise RpcError(str(exc)) from exc
 
 
 class SidecarSession:
@@ -96,6 +138,9 @@ class SidecarSession:
         if method == 'get_image_data':
             return self._require_extractor().get_image_data(params['stream_id'])
 
+        if method == 'diff_documents':
+            return self._diff_documents(params)
+
         if method == 'shutdown':
             self.close_extractor()
             self.should_exit = True
@@ -113,6 +158,27 @@ class SidecarSession:
         extractor = self._extractor_factory(path, password)
         self._extractor = extractor
         return extractor.get_metadata()
+
+    def _diff_documents(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Diff two PDFs on throwaway extractors.
+
+        Deliberately independent of the session: the current document, its page
+        cache and its extractor are untouched, so a diff never changes what the
+        user is inspecting. ``diff_files`` owns (and closes) its own extractors.
+        """
+        old_path = params.get('old_path')
+        new_path = params.get('new_path')
+        for label, value in (('old_path', old_path), ('new_path', new_path)):
+            if not isinstance(value, str) or not value.strip():
+                raise RpcError(f'"{label}" must be a non-empty file path')
+
+        options = _parse_diff_options(params.get('options'))
+        try:
+            return diff_files(old_path, new_path, options)
+        except (DiffError, ValueError) as exc:
+            # A bad PDF or bad option values are user errors, not protocol
+            # failures: report the message without a traceback.
+            raise RpcError(str(exc)) from exc
 
     def _require_extractor(self) -> PdfExtractor:
         if self._extractor is None:

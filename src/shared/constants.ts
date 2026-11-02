@@ -48,6 +48,27 @@ export const PDF_URL_TIMEOUT_MS = 60_000;
 /** Timeout the renderer allows for the `openPdfUrl` IPC request. */
 export const OPEN_PDF_URL_TIMEOUT_MS = 120_000;
 
+/**
+ * Timeout for the `diff_documents` request.
+ *
+ * A diff extracts BOTH documents page by page, so it is the most expensive
+ * operation the sidecar performs and gets its own, generous budget: 300s is
+ * well above `analyze_fonts` (120s) so a large pair of documents does not look
+ * like a hang. It is per-request (see `SidecarManager.send`), so diffing can
+ * never extend or shorten the budget of an extract/analyze call.
+ */
+export const DIFF_TIMEOUT_MS = 300_000;
+
+/**
+ * Renderer-side budget for `diffPdfs`.
+ *
+ * Larger than the main-process budget for the same reason as
+ * `ANALYZE_FONTS_RENDERER_TIMEOUT_MS`: main must time out first so its clear
+ * `Request "diff_documents" timed out after 300s` error surfaces instead of a
+ * renderer-side "Sidecar timeout" that triggers a restart.
+ */
+export const DIFF_RENDERER_TIMEOUT_MS = DIFF_TIMEOUT_MS + 5_000;
+
 export const IPC_CHANNELS = {
   OPEN_PDF: 'pdf:open',
   OPEN_PDF_URL: 'pdf:open-url',
@@ -57,5 +78,7 @@ export const IPC_CHANNELS = {
   SIDECAR_STATUS: 'pdf:sidecar-status',
   RESTART_SIDECAR: 'pdf:restart-sidecar',
   ANALYZE_FONTS: 'pdf:analyze-fonts',
+  DIFF_PDFS: 'pdf:diff',
+  PICK_DIFF_PDF: 'pdf:pick-diff',
   SAVE_FILE: 'file:save',
 } as const;

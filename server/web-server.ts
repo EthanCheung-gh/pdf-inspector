@@ -42,7 +42,9 @@ import {
   downloadPdfToFile,
   parsePdfUrl,
 } from '../src/main/pdf-url';
-import { ANALYZE_FONTS_TIMEOUT_MS, SIDECAR_SCRIPT } from '../src/shared/constants';
+import { ANALYZE_FONTS_TIMEOUT_MS, DIFF_TIMEOUT_MS, SIDECAR_SCRIPT } from '../src/shared/constants';
+import { diffOptionsToRpc } from '../src/shared/diff-types';
+import type { DiffSide } from '../src/shared/diff-types';
 
 // ---------------------------------------------------------------------------
 // Layout / constants
@@ -57,6 +59,7 @@ const SAMPLE_DIR = path.join(ROOT, 'web-samples');
 const WEB_TMP_ROOT = path.join(os.tmpdir(), 'pdf-inspector-web');
 const UPLOAD_DIR = path.join(WEB_TMP_ROOT, 'uploads');
 const DOWNLOAD_DIR = path.join(WEB_TMP_ROOT, 'downloads');
+const DIFF_DIR = path.join(WEB_TMP_ROOT, 'diff');
 
 const DEFAULT_PORT = 8080;
 const DEFAULT_HOST = '0.0.0.0';
@@ -69,6 +72,15 @@ const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
 const PDF_HEADER_WINDOW_BYTES = 1024;
 const PDF_MAGIC = '%PDF-';
+
+/**
+ * Diff uploads waiting for `POST /api/diff`: a browser has to upload both PDFs
+ * before the sidecar can compare them. Bounds keep abandoned uploads (a user
+ * who picks the old file and cancels) from filling the temp directory.
+ */
+const MAX_DIFF_UPLOADS = 16;
+const MAX_DIFF_TOTAL_BYTES = 512 * 1024 * 1024;
+const DIFF_UPLOAD_TTL_MS = 10 * 60_000;
 
 /** Methods a browser client may invoke through POST /api/rpc. */
 const RPC_ALLOWLIST = new Set([
@@ -714,6 +726,158 @@ export class DocumentRegistry {
 }
 
 // ---------------------------------------------------------------------------
+// Diff upload tokens
+// ---------------------------------------------------------------------------
+
+export interface DiffUpload {
+  /** Opaque single-use token handed to the browser. */
+  token: string;
+  filePath: string;
+  side: DiffSide;
+  name: string;
+  size: number;
+  createdAt: number;
+}
+
+export interface DiffUploadStoreOptions {
+  directory?: string;
+  maxUploads?: number;
+  maxBytes?: number;
+  ttlMs?: number;
+  now?: () => number;
+}
+
+/**
+ * Short-lived storage for the two temporary PDFs of a browser diff.
+ *
+ * Deliberately separate from `DocumentRegistry`: uploading a diff side must
+ * neither become nor replace the current document, and the registry's single
+ * slot is exactly what the Inspect view depends on. Tokens are single-use,
+ * expire after `DIFF_UPLOAD_TTL_MS`, are capped in number AND total bytes
+ * (oldest evicted) and every removal unlinks the temporary file.
+ */
+export class DiffUploadStore {
+  private readonly uploads = new Map<string, DiffUpload>();
+  private readonly directory: string;
+  private readonly maxUploads: number;
+  private readonly maxBytes: number;
+  private readonly ttlMs: number;
+  private readonly now: () => number;
+
+  constructor(options: DiffUploadStoreOptions = {}) {
+    this.directory = path.resolve(options.directory ?? DIFF_DIR);
+    this.maxUploads = Math.max(1, options.maxUploads ?? MAX_DIFF_UPLOADS);
+    this.maxBytes = Math.max(1, options.maxBytes ?? MAX_DIFF_TOTAL_BYTES);
+    this.ttlMs = Math.max(0, options.ttlMs ?? DIFF_UPLOAD_TTL_MS);
+    this.now = options.now ?? Date.now;
+  }
+
+  get size(): number {
+    return this.uploads.size;
+  }
+
+  /** Bytes held by all pending uploads. */
+  get totalBytes(): number {
+    let total = 0;
+    for (const upload of this.uploads.values()) total += upload.size;
+    return total;
+  }
+
+  /** Directory the temporary diff PDFs are written to (tests/ops). */
+  get directoryPath(): string {
+    return this.directory;
+  }
+
+  /**
+   * Register a fully written upload and mint its token.
+   *
+   * `filePath` must already live directly inside the store's directory: the
+   * endpoint builds it from a random UUID (never from a client name), and this
+   * check makes a traversal bug impossible to turn into a token.
+   */
+  async add(upload: Omit<DiffUpload, 'token' | 'createdAt'>): Promise<DiffUpload> {
+    const filePath = path.resolve(upload.filePath);
+    if (path.dirname(filePath) !== this.directory) {
+      throw new Error('Diff upload must live in the diff temporary directory');
+    }
+
+    await this.pruneExpired();
+    while (
+      this.uploads.size > 0 &&
+      (this.uploads.size >= this.maxUploads || this.totalBytes + upload.size > this.maxBytes)
+    ) {
+      const oldest = [...this.uploads.values()].sort(
+        (left, right) => left.createdAt - right.createdAt,
+      )[0];
+      if (!oldest) break;
+      console.warn(`[web] Evicting abandoned diff upload ${oldest.token}`);
+      await this.drop(oldest.token);
+    }
+
+    const entry: DiffUpload = {
+      ...upload,
+      filePath,
+      token: randomUUID(),
+      createdAt: this.now(),
+    };
+    this.uploads.set(entry.token, entry);
+    return entry;
+  }
+
+  /**
+   * Consume a token. Returns `null` for unknown/expired tokens; an expired
+   * token's file is deleted on the way out.
+   */
+  async take(token: unknown): Promise<DiffUpload | null> {
+    if (typeof token !== 'string' || !token) return null;
+
+    const upload = this.uploads.get(token);
+    if (!upload) return null;
+
+    this.uploads.delete(token);
+    if (!this.isLive(upload)) {
+      await removeTempFile(upload.filePath);
+      return null;
+    }
+    return upload;
+  }
+
+  /** Delete the given uploads (and their files); safe to call twice. */
+  async release(...uploads: DiffUpload[]): Promise<void> {
+    for (const upload of uploads) {
+      this.uploads.delete(upload.token);
+      await removeTempFile(upload.filePath);
+    }
+  }
+
+  /** Drop every pending upload and its file (server shutdown/close). */
+  async cleanup(): Promise<void> {
+    const uploads = [...this.uploads.values()];
+    this.uploads.clear();
+    await Promise.all(uploads.map((upload) => removeTempFile(upload.filePath)));
+  }
+
+  private isLive(upload: DiffUpload): boolean {
+    if (this.now() - upload.createdAt >= this.ttlMs) return false;
+    return path.dirname(path.resolve(upload.filePath)) === this.directory;
+  }
+
+  private async pruneExpired(): Promise<void> {
+    const expired = [...this.uploads.values()].filter((upload) => !this.isLive(upload));
+    for (const upload of expired) {
+      await this.drop(upload.token);
+    }
+  }
+
+  private async drop(token: string): Promise<void> {
+    const upload = this.uploads.get(token);
+    if (!upload) return;
+    this.uploads.delete(token);
+    await removeTempFile(upload.filePath);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
@@ -765,6 +929,51 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   } catch {
     throw new HttpError(400, 'Invalid JSON body');
   }
+}
+
+/**
+ * Stream a raw PDF request body into `filePath`, enforcing the shared 100 MiB
+ * cap on both the declared length and the bytes actually received.
+ *
+ * Throws `HttpError(400)` after deleting the partial file, so both `/api/open`
+ * and the diff upload endpoint share one upload contract. The caller owns the
+ * file from here on (magic check, registry/token adoption or deletion).
+ */
+async function receivePdfUpload(req: IncomingMessage, filePath: string): Promise<number> {
+  const declaredLength = parseContentLength(req.headers['content-length']);
+  if (declaredLength !== null && declaredLength > MAX_UPLOAD_BYTES) {
+    req.resume(); // Drain so the client sees the response instead of a reset.
+    throw new HttpError(400, 'The PDF is larger than the 100 MiB upload limit');
+  }
+
+  let received = 0;
+  let tooLarge = false;
+
+  const sizeGuard = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      received += chunk.length;
+      if (received > MAX_UPLOAD_BYTES) {
+        tooLarge = true;
+        callback(new Error('The PDF is larger than the 100 MiB upload limit'));
+        return;
+      }
+      callback(null, chunk);
+    },
+  });
+
+  try {
+    await pipeline(req, sizeGuard, createWriteStream(filePath, { mode: 0o600 }));
+  } catch (error) {
+    await removeTempFile(filePath);
+    throw new HttpError(
+      400,
+      tooLarge
+        ? 'The PDF is larger than the 100 MiB upload limit'
+        : `Failed to read the upload: ${toErrorMessage(error)}`,
+    );
+  }
+
+  return received;
 }
 
 function streamFile(
@@ -1055,6 +1264,7 @@ async function serveStatic(
 interface ApiContext {
   sidecar: SidecarManager;
   registry: DocumentRegistry;
+  diffUploads: DiffUploadStore;
 }
 
 async function handleOpenUpload(
@@ -1062,62 +1272,31 @@ async function handleOpenUpload(
   res: ServerResponse,
   context: ApiContext,
 ): Promise<void> {
-  const declaredLength = parseContentLength(req.headers['content-length']);
-  if (declaredLength !== null && declaredLength > MAX_UPLOAD_BYTES) {
-    req.resume(); // Drain so the client sees the response instead of a reset.
-    sendError(res, 400, 'The PDF is larger than the 100 MiB upload limit');
-    return;
-  }
-
   const name = sanitizeFileName(headerString(req.headers['x-filename']));
 
   await mkdir(UPLOAD_DIR, { recursive: true, mode: 0o700 });
   const filePath = path.join(UPLOAD_DIR, `${randomUUID()}-${name}`);
+
+  // Registered before the bytes arrive so a shutdown mid-upload still unlinks
+  // the partial file; ownership passes to the document registry below.
   uploadedTempFiles.add(filePath);
-
-  let received = 0;
-  let tooLarge = false;
-
-  const sizeGuard = new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      received += chunk.length;
-      if (received > MAX_UPLOAD_BYTES) {
-        tooLarge = true;
-        callback(new Error('The PDF is larger than the 100 MiB upload limit'));
-        return;
-      }
-      callback(null, chunk);
-    },
-  });
-
   try {
-    await pipeline(req, sizeGuard, createWriteStream(filePath, { mode: 0o600 }));
+    await receivePdfUpload(req, filePath);
+    if (!(await hasPdfMagic(filePath))) {
+      throw new HttpError(400, 'The uploaded file is not a PDF');
+    }
   } catch (error) {
-    await removeTempFile(filePath);
     uploadedTempFiles.delete(filePath);
-    sendError(
-      res,
-      400,
-      tooLarge
-        ? 'The PDF is larger than the 100 MiB upload limit'
-        : `Failed to read the upload: ${toErrorMessage(error)}`,
-    );
-    return;
-  }
-
-  if (!(await hasPdfMagic(filePath))) {
     await removeTempFile(filePath);
-    uploadedTempFiles.delete(filePath);
-    sendError(res, 400, 'The uploaded file is not a PDF');
-    return;
+    throw error;
   }
 
   let opened: OpenedDocument;
   try {
     opened = await context.registry.open(filePath, name, true);
   } catch (error) {
-    await removeTempFile(filePath);
     uploadedTempFiles.delete(filePath);
+    await removeTempFile(filePath);
     throw error;
   }
 
@@ -1129,6 +1308,121 @@ async function handleOpenUpload(
     metadata: opened.metadata,
     name,
   });
+}
+
+/**
+ * `POST /api/diff/file` — store one side of a browser diff.
+ *
+ * The bytes become a token-owned temporary file; nothing is opened in the
+ * sidecar and the current document is untouched. The browser then posts both
+ * tokens to `/api/diff`.
+ */
+async function handleDiffUpload(
+  req: IncomingMessage,
+  res: ServerResponse,
+  context: ApiContext,
+): Promise<void> {
+  const rawSide = headerString(req.headers['x-diff-side'])?.trim().toLowerCase();
+  if (rawSide !== 'old' && rawSide !== 'new') {
+    // Drain the body: the client must see the 400 instead of a reset.
+    req.resume();
+    throw new HttpError(400, 'Missing or invalid X-Diff-Side header (expected "old" or "new")');
+  }
+  const side: DiffSide = rawSide;
+
+  // The disk name is a UUID: the client-supplied name is display-only and can
+  // never influence the path (`sanitizeFileName` also strips separators).
+  const name = sanitizeFileName(headerString(req.headers['x-filename']));
+
+  await mkdir(DIFF_DIR, { recursive: true, mode: 0o700 });
+  const filePath = path.join(DIFF_DIR, `${randomUUID()}.pdf`);
+
+  // Tracked by the generic upload set until the token store owns it, so a
+  // shutdown during the upload still unlinks a partial file.
+  uploadedTempFiles.add(filePath);
+
+  let upload: DiffUpload;
+  try {
+    const size = await receivePdfUpload(req, filePath);
+    if (!(await hasPdfMagic(filePath))) {
+      throw new HttpError(400, 'The uploaded file is not a PDF');
+    }
+    upload = await context.diffUploads.add({ filePath, side, name, size });
+    uploadedTempFiles.delete(filePath);
+  } catch (error) {
+    uploadedTempFiles.delete(filePath);
+    await removeTempFile(filePath);
+    throw error;
+  }
+
+  sendJson(res, 200, { token: upload.token, side, name, size: upload.size });
+}
+
+/**
+ * `POST /api/diff` — diff the two token-owned uploads.
+ *
+ * Both tokens are consumed (single use) and both temporary files are deleted
+ * in a `finally`, so a failed diff cannot leak them either. The sidecar runs
+ * `diff_documents` on its own extractors, which never changes the open
+ * document; the response is the `DiffResult` verbatim.
+ */
+async function handleDiff(
+  req: IncomingMessage,
+  res: ServerResponse,
+  context: ApiContext,
+): Promise<void> {
+  const body = await readJsonBody(req);
+  if (!isRecord(body)) throw new HttpError(400, 'Expected a JSON object');
+
+  const { oldToken, newToken, options } = body;
+  if (typeof oldToken !== 'string' || !oldToken) {
+    throw new HttpError(400, 'Missing "oldToken"');
+  }
+  if (typeof newToken !== 'string' || !newToken) {
+    throw new HttpError(400, 'Missing "newToken"');
+  }
+  if (options !== undefined && !isRecord(options)) {
+    throw new HttpError(400, '"options" must be an object');
+  }
+
+  const uploads: DiffUpload[] = [];
+  try {
+    // Consume both tokens even when one is unknown/expired: a replay must not
+    // leave the other side's temporary file behind.
+    const oldUpload = await context.diffUploads.take(oldToken);
+    if (oldUpload) uploads.push(oldUpload);
+    const newUpload = await context.diffUploads.take(newToken);
+    if (newUpload) uploads.push(newUpload);
+
+    if (!oldUpload) throw new HttpError(400, 'Unknown or expired "oldToken"');
+    if (oldUpload.side !== 'old') {
+      throw new HttpError(400, '"oldToken" does not refer to an "old" upload');
+    }
+    if (!newUpload) throw new HttpError(400, 'Unknown or expired "newToken"');
+    if (newUpload.side !== 'new') {
+      throw new HttpError(400, '"newToken" does not refer to a "new" upload');
+    }
+
+    const result = await context.sidecar.send(
+      'diff_documents',
+      {
+        old_path: oldUpload.filePath,
+        new_path: newUpload.filePath,
+        options: diffOptionsToRpc(options),
+      },
+      DIFF_TIMEOUT_MS,
+    );
+    sendJson(res, 200, result);
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+
+    // Sidecar errors here mean the uploaded PDFs (or the options) could not be
+    // diffed; a timeout means the server gave up on a very large pair.
+    const message = toErrorMessage(error);
+    throw new HttpError(/timed out/i.test(message) ? 504 : 400, message);
+  } finally {
+    await context.diffUploads.release(...uploads);
+  }
 }
 
 async function handleOpenUrl(
@@ -1280,6 +1574,24 @@ async function handleRequest(
     return;
   }
 
+  if (pathname === '/api/diff/file') {
+    if (method !== 'POST') {
+      methodNotAllowed(res);
+      return;
+    }
+    await handleDiffUpload(req, res, context);
+    return;
+  }
+
+  if (pathname === '/api/diff') {
+    if (method !== 'POST') {
+      methodNotAllowed(res);
+      return;
+    }
+    await handleDiff(req, res, context);
+    return;
+  }
+
   if (pathname.startsWith('/api/')) {
     sendError(res, 404, 'Not found');
     return;
@@ -1311,6 +1623,7 @@ export interface WebServerHandle {
   server: Server;
   sidecar: SidecarManager;
   registry: DocumentRegistry;
+  diffUploads: DiffUploadStore;
   port: number;
   host: string;
   close(): Promise<void>;
@@ -1331,10 +1644,12 @@ export function createWebServer(): {
   server: Server;
   sidecar: SidecarManager;
   registry: DocumentRegistry;
+  diffUploads: DiffUploadStore;
 } {
   const sidecar = new SidecarManager(ROOT);
   const registry = new DocumentRegistry(sidecar);
-  const context: ApiContext = { sidecar, registry };
+  const diffUploads = new DiffUploadStore();
+  const context: ApiContext = { sidecar, registry, diffUploads };
 
   const server = createHttpServer((req, res) => {
     void handleRequest(req, res, context).catch((error: unknown) => {
@@ -1348,7 +1663,7 @@ export function createWebServer(): {
     });
   });
 
-  return { server, sidecar, registry };
+  return { server, sidecar, registry, diffUploads };
 }
 
 /** LAN IPv4 URLs for the startup log (best effort). */
@@ -1389,7 +1704,7 @@ let cleanupStarted = false;
 
 async function shutdown(
   signal: string,
-  handle: Pick<WebServerHandle, 'server' | 'sidecar' | 'registry'>,
+  handle: Pick<WebServerHandle, 'server' | 'sidecar' | 'registry' | 'diffUploads'>,
 ): Promise<void> {
   if (cleanupStarted) return;
   cleanupStarted = true;
@@ -1406,6 +1721,7 @@ async function shutdown(
 
   await Promise.allSettled([
     handle.registry.cleanup(),
+    handle.diffUploads.cleanup(),
     cleanupDownloadedFiles(),
     cleanupUploadedTempFiles(),
   ]);
@@ -1427,8 +1743,9 @@ export async function start(options: StartOptions = {}): Promise<WebServerHandle
 
   await mkdir(UPLOAD_DIR, { recursive: true, mode: 0o700 });
   await mkdir(DOWNLOAD_DIR, { recursive: true, mode: 0o700 });
+  await mkdir(DIFF_DIR, { recursive: true, mode: 0o700 });
 
-  const { server, sidecar, registry } = createWebServer();
+  const { server, sidecar, registry, diffUploads } = createWebServer();
 
   try {
     await sidecar.start();
@@ -1458,6 +1775,7 @@ export async function start(options: StartOptions = {}): Promise<WebServerHandle
     server,
     sidecar,
     registry,
+    diffUploads,
     port,
     host,
     close: async (): Promise<void> => {
@@ -1465,6 +1783,8 @@ export async function start(options: StartOptions = {}): Promise<WebServerHandle
         server.close(() => resolve());
       });
       await sidecar.stop();
+      // Pending diff uploads are temp files this server owns: never leak them.
+      await diffUploads.cleanup();
     },
   };
 

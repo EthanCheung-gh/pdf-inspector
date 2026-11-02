@@ -24,6 +24,13 @@ import type {
 } from '../renderer/types/ipc-protocol';
 import type { PageData, PdfMetadata } from '../renderer/types/pdf-objects';
 import type { SaveFileRequest } from '../shared/constants';
+import { isFileSource } from '../shared/diff-types';
+import type {
+  DiffOptionsInput,
+  DiffResult,
+  DiffSide,
+  DiffSource,
+} from '../shared/diff-types';
 
 /** Grace period after the window regains focus before assuming "canceled". */
 const CANCEL_FOCUS_GRACE_MS = 300;
@@ -183,6 +190,77 @@ async function uploadPdf(file: File): Promise<OpenPdfResult> {
 }
 
 /**
+ * Build the raw-body diff upload request for one side of a diff.
+ *
+ * Unlike `/api/open` this does not replace the current document: the backend
+ * stores the bytes under a short-lived token and `/api/diff` consumes it.
+ * Exported so the header contract (`X-Diff-Side` + URI-encoded `X-Filename`)
+ * can be verified without a real backend.
+ */
+export function buildDiffUploadRequest(
+  file: File,
+  side: DiffSide,
+): { url: string; init: RequestInit } {
+  return {
+    url: '/api/diff/file',
+    init: {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/pdf',
+        'X-Filename': encodeURIComponent(file.name),
+        'X-Diff-Side': side,
+      },
+      body: file,
+    },
+  };
+}
+
+/** Upload one side of a browser diff and return its short-lived token. */
+async function uploadDiffFile(file: File, side: DiffSide): Promise<string> {
+  const { url, init } = buildDiffUploadRequest(file, side);
+  const response = await fetch(url, init);
+
+  if (!response.ok) {
+    throw await responseError(response);
+  }
+
+  const body = (await response.json()) as { token?: unknown };
+  if (typeof body.token !== 'string' || !body.token) {
+    throw new Error('Server returned no diff upload token');
+  }
+  return body.token;
+}
+
+/**
+ * Diff two browser `File`s.
+ *
+ * The browser cannot hand local paths to the backend, so each file is uploaded
+ * to `/api/diff/file` (token per side) and `/api/diff` runs the sidecar diff on
+ * the two temporary copies. The backend deletes both copies when the diff
+ * settles — success or failure — and never touches the current document.
+ */
+async function diffPdfs(
+  oldSource: DiffSource,
+  newSource: DiffSource,
+  options?: DiffOptionsInput,
+): Promise<DiffResult> {
+  if (!isFileSource(oldSource) || !isFileSource(newSource)) {
+    throw new Error(
+      'The web build diffs two selected files; file paths are only supported in the desktop app',
+    );
+  }
+
+  const oldToken = await uploadDiffFile(oldSource, 'old');
+  const newToken = await uploadDiffFile(newSource, 'new');
+
+  return postJson<DiffResult>('/api/diff', {
+    oldToken,
+    newToken,
+    options: options ?? {},
+  });
+}
+
+/**
  * Show a native file picker and resolve with the chosen PDF (or `null`).
  *
  * `cancel` is a recent (Chromium/Firefox) input event; older engines only
@@ -318,6 +396,17 @@ export function createWebIpc(): IpcApi {
       if (typeof startPage === 'number') params.start_page = startPage;
       if (typeof endPage === 'number') params.end_page = endPage;
       return rpc<{ fonts: FontStat[] }>('analyze_fonts', params);
+    },
+
+    diffPdfs,
+
+    // The browser picks a `File`; the setup dialog labels the row with its name
+    // and `diffPdfs` uploads it. Nothing is sent to the backend until the user
+    // asks for a comparison.
+    pickDiffPdf: async (_side: DiffSide) => {
+      const file = await pickPdfFile();
+      if (!file) return { canceled: true };
+      return { canceled: false, source: file, name: file.name };
     },
 
     getImageData: (streamId: string) =>
