@@ -189,8 +189,13 @@ runs:
         fi
 
         echo "::group::python ${cli} ${args[*]}"
+        # GitHub's bash shell enables `-e`; a non-zero diff exit is expected
+        # when --fail-on matches, so capture it instead of aborting before the
+        # action outputs are written.
+        set +e
         python "$cli" "${args[@]}"
         exit_code=$?
+        set -e
         echo "::endgroup::"
 
         # A run that was asked for a payload file must leave one behind; a
@@ -213,8 +218,10 @@ runs:
         }
 
         if [ "$format" != "json" ] && [ -n "$INPUT_JSON_PATH" ]; then
+          set +e
           write_secondary json "$json_path"
           status=$?
+          set -e
           if [ "$status" -ne 0 ]; then
             secondary_exit=$status
             echo "::error::failed to write the JSON result to $json_path"
@@ -222,8 +229,10 @@ runs:
           fi
         fi
         if [ "$format" != "html" ] && [ -n "$INPUT_REPORT_PATH" ]; then
+          set +e
           write_secondary html "$report_path"
           status=$?
+          set -e
           if [ "$status" -ne 0 ]; then
             secondary_exit=$status
             echo "::error::failed to write the HTML report to $report_path"
