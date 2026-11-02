@@ -51,6 +51,8 @@ export interface PdfImage extends PdfBaseObject {
   height: number;
   stream_id: string;
   format: string;
+  /** SHA-256 of the decoded image bytes (absent when they cannot be read). */
+  content_hash?: string;
 }
 
 export interface PdfTable extends PdfBaseObject {

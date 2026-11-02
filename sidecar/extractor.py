@@ -1,5 +1,6 @@
 from typing import Optional
 import base64
+import hashlib
 import re
 from io import BytesIO
 
@@ -117,6 +118,29 @@ class PdfExtractor:
             return {'base64': base64.b64encode(png).decode('ascii'), 'format': 'png'}
 
         return {'error': f'Unsupported image format: {fmt or "unknown"}'}
+
+    @staticmethod
+    def _image_content_hash(stream) -> Optional[str]:
+        """SHA-256 of an image XObject's decoded bytes, or None.
+
+        Used by the diff engine to tell "the same picture moved" from "the
+        picture changed". A stream that cannot be decoded must not fail page
+        extraction, so every failure path returns None.
+        """
+        if stream is None:
+            return None
+        try:
+            data = stream.get('data') if hasattr(stream, 'get') else None
+            if not isinstance(data, (bytes, bytearray, memoryview)):
+                # pdfminer's PDFStream exposes the decoded payload via get_data().
+                data = stream.get_data()
+            if isinstance(data, (bytearray, memoryview)):
+                data = bytes(data)
+            if not isinstance(data, bytes):
+                return None
+            return hashlib.sha256(data).hexdigest()
+        except Exception:
+            return None
 
     @staticmethod
     def _resolve_pdf_value(value):
@@ -785,7 +809,9 @@ class PdfExtractor:
                 'fill': r.get('non_stroking_color') is not None,
                 'stroke': r.get('stroking_color') is not None,
                 'color': str(r.get('stroking_color', '#000000')),
-                'width': float(r.get('stroke_width', 1)),
+                # pdfplumber names the line width 'linewidth'; older releases
+                # exposed 'stroke_width' as well, so accept either.
+                'width': float(r.get('linewidth', r.get('stroke_width', 1)) or 0),
                 'page': page_num,
             })
 
@@ -797,17 +823,21 @@ class PdfExtractor:
                 'x1': float(ln['x1']), 'y1': float(ln['y1']),
                 'stroke': ln.get('stroking_color') is not None,
                 'color': str(ln.get('stroking_color', '#000000')),
-                'width': float(ln.get('stroke_width', 1)),
+                'width': float(ln.get('linewidth', ln.get('stroke_width', 1)) or 0),
                 'page': page_num,
             })
 
         curves = []
         for cv in page.curves:
+            # pdfplumber's curve/line records expose the path points as 'pts'.
+            raw_points = cv.get('pts')
+            if raw_points is None:
+                raw_points = cv.get('points', [])
             curves.append({
                 'type': 'curve',
                 'x0': float(cv['x0']), 'y0': float(cv['y0']),
                 'x1': float(cv['x1']), 'y1': float(cv['y1']),
-                'points': [[float(p[0]), float(p[1])] for p in cv.get('points', [])],
+                'points': [[float(p[0]), float(p[1])] for p in raw_points or ()],
                 'stroke': cv.get('stroking_color') is not None,
                 'page': page_num,
             })
@@ -815,7 +845,7 @@ class PdfExtractor:
         images = []
         for idx, img in enumerate(page.images):
             stream = img.get('stream')
-            images.append({
+            image = {
                 'type': 'image',
                 'x0': float(img['x0']), 'y0': float(img['y0']),
                 'x1': float(img['x1']), 'y1': float(img['y1']),
@@ -825,7 +855,11 @@ class PdfExtractor:
                 'format': 'unknown',
                 'page': page_num,
                 '_stream_data': stream,
-            })
+            }
+            content_hash = self._image_content_hash(stream)
+            if content_hash:
+                image['content_hash'] = content_hash
+            images.append(image)
 
         tables = []
         for tbl in page.find_tables():
