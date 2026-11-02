@@ -17,6 +17,24 @@
 }
 
 /*
+ * The Inspect workspace (left pane + canvas + right pane) while Diff is open.
+ * It stays mounted but hidden so its local state and scroll positions survive
+ * a round trip through the Diff workspace; `display: none` keeps it out of the
+ * flex layout entirely.
+ */
+.inspectArea {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.inspectArea[hidden] {
+  display: none;
+}
+
+/*
  * Width and flex-basis come from the workspace store as inline styles. The
  * pane wrapper is allowed to shrink (min-width: 0) but never grows past the
  * configured width, so the canvas keeps all remaining horizontal space.

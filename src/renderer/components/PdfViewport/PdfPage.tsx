@@ -4,7 +4,7 @@ import { useCursorStore } from '../../store/cursor-store';
 import { usePdfStore } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
 import { isRenderCancelled } from '../../services/pdf-render';
-import type { PageBox } from '../../types/pdf-objects';
+import { createMediaViewport } from '../../services/page-viewport';
 import { OverlayCanvas } from './OverlayCanvas';
 import { PageGeometryOverlay } from './PageGeometryOverlay';
 import { PageRuler } from './PageRuler';
@@ -18,38 +18,6 @@ interface PdfPageProps {
   zoom: number;
   pdfDoc: PDFDocumentProxy | null;
 }
-
-interface PageViewportConstructorParams {
-  viewBox: number[];
-  scale: number;
-  rotation: number;
-  userUnit: number;
-  offsetX?: number;
-  offsetY?: number;
-  dontFlip?: boolean;
-}
-
-type PageViewportConstructor = new (params: PageViewportConstructorParams) => PageViewport;
-
-/**
- * PDF.js' viewport follows the CropBox (its `page.view`). Page boxes and rulers
- * must instead be anchored to the MediaBox, so rebuild the viewport with the
- * same scale/rotation/userUnit but the MediaBox as its viewBox.
- */
-export const createMediaViewport = (
-  viewport: PageViewport,
-  media: PageBox,
-): PageViewport => {
-  const ViewportCtor = viewport.constructor as unknown as PageViewportConstructor;
-  return new ViewportCtor({
-    viewBox: [media.x0, media.y0, media.x1, media.y1],
-    scale: viewport.scale,
-    rotation: viewport.rotation,
-    userUnit: viewport.userUnit || 1,
-    offsetX: viewport.offsetX,
-    offsetY: viewport.offsetY,
-  });
-};
 
 export const PdfPage: React.FC<PdfPageProps> = ({ pageNum, zoom, pdfDoc }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);

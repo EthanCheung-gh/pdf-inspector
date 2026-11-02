@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { usePdfStore } from '../store/pdf-store';
+import { ensurePdfWorker } from '../services/pdf-worker';
 import type { PdfOutlineItem } from '../types/pdf-objects';
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
+ensurePdfWorker();
 
 interface UsePdfReturn {
   pdfDoc: pdfjsLib.PDFDocumentProxy | null;

@@ -1,5 +1,7 @@
 import { describeFilterCriteria } from '../../services/filter-summary';
+import { countFilteredChanges } from '../../services/diff-view';
 import { useCursorStore, type CursorPdfPoint } from '../../store/cursor-store';
+import { useDiffStore } from '../../store/diff-store';
 import { usePdfStore } from '../../store/pdf-store';
 import type { PageData } from '../../types/pdf-objects';
 import styles from './StatusBar.module.css';
@@ -18,6 +20,17 @@ export const formatCursorPoint = (point: CursorPdfPoint): string =>
 export const formatPageGeometry = (page: PageData): string =>
   `${formatCoordinate(page.width)} × ${formatCoordinate(page.height)} pt · rot ${page.rotation ?? 0}°`;
 
+/** Right-hand end of the bar: flexible spacer plus the sidecar indicator. */
+const StatusTail: React.FC<{ sidecarRunning: boolean }> = ({ sidecarRunning }) => (
+  <>
+    <span className={styles.spacer} />
+    <span className={sidecarRunning ? styles.connected : styles.offline}>
+      <span className={styles.indicator} aria-hidden="true" />
+      Sidecar {sidecarRunning ? 'connected' : 'offline'}
+    </span>
+  </>
+);
+
 export const StatusBar = (): JSX.Element => {
   const isLoading = usePdfStore((state) => state.isLoading);
   const currentPage = usePdfStore((state) => state.currentPage);
@@ -33,6 +46,35 @@ export const StatusBar = (): JSX.Element => {
   const pageData = usePdfStore((state) => state.pageData);
   const cursorPdfPoint = useCursorStore((state) => state.cursorPdfPoint);
   const filterSummary = describeFilterCriteria(filterCriteria);
+
+  // In Diff mode the status bar describes the comparison instead of the
+  // Inspect document, which stays open but is not what the user is looking at.
+  const diffActive = useDiffStore((state) => state.active);
+  const diffResult = useDiffStore((state) => state.result);
+  const diffPageIndex = useDiffStore((state) => state.pageIndex);
+  const diffFilter = useDiffStore((state) => state.filter);
+  const diffLoading = useDiffStore((state) => state.loading);
+  const diffChangeCount = diffResult ? countFilteredChanges(diffResult.pages, diffFilter) : 0;
+
+  if (diffActive) {
+    return (
+      <footer className={styles.statusBar} aria-label="Application status">
+        <span className={styles.documentStatus}>
+          {diffLoading
+            ? 'Diff: comparing documents…'
+            : diffResult
+              ? `Diff page ${diffPageIndex + 1}/${diffResult.pages.length} · ${diffChangeCount} changes`
+              : 'Diff: no comparison yet'}
+        </span>
+        {diffResult && (
+          <span className={styles.pageGeometry}>
+            {diffResult.old.pages} vs {diffResult.new.pages} pages
+          </span>
+        )}
+        <StatusTail sidecarRunning={sidecarRunning} />
+      </footer>
+    );
+  }
 
   return (
     <footer className={styles.statusBar} aria-label="Application status">
@@ -100,11 +142,7 @@ export const StatusBar = (): JSX.Element => {
         </span>
       )}
       {error && <span className={styles.error} role="alert">Error: {error}</span>}
-      <span className={styles.spacer} />
-      <span className={sidecarRunning ? styles.connected : styles.offline}>
-        <span className={styles.indicator} aria-hidden="true" />
-        Sidecar {sidecarRunning ? 'connected' : 'offline'}
-      </span>
+      <StatusTail sidecarRunning={sidecarRunning} />
     </footer>
   );
 };
