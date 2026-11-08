@@ -2,6 +2,7 @@ import React, { useCallback, useRef, useState } from 'react';
 import { ipc } from '../../services/ipc-client';
 import { OVERLAY_LAYER_TOTAL, overlayVisibleCount } from '../../services/overlay-style';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
+import { useAuditStore } from '../../store/audit-store';
 import { useDiffStore } from '../../store/diff-store';
 import { usePdfStore } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
@@ -44,6 +45,7 @@ export const Toolbar: React.FC = () => {
   const diffOldName = useDiffStore((state) => state.oldName);
   const diffNewName = useDiffStore((state) => state.newName);
   const openDiffSetup = useDiffStore((state) => state.openSetup);
+  const auditActive = useAuditStore((state) => state.active);
   const { navigate } = usePageNavigation();
 
   // A pane is visible only when it is expanded *and* focus mode is off. The
@@ -66,6 +68,10 @@ export const Toolbar: React.FC = () => {
         return;
       }
 
+      // An audit describes one document. Swapping the document must drop the
+      // old report, filters and selection instead of leaving them attached to a
+      // file that is no longer open.
+      useAuditStore.getState().reset();
       setFile(result.path, result.metadata);
       await navigate(1);
     } catch (error) {
@@ -81,6 +87,9 @@ export const Toolbar: React.FC = () => {
       // Invalidate any in-flight local `openPdf` dialog: the URL document is
       // the newest request and must not be clobbered when that one settles.
       openRequestIdRef.current += 1;
+      // Same as `handleOpen`: a URL document is a different document, so the
+      // previous audit cannot survive it.
+      useAuditStore.getState().reset();
       setFile(result.path, result.metadata, result.sourceUrl ?? null);
       await navigate(1);
     },
@@ -129,11 +138,24 @@ export const Toolbar: React.FC = () => {
 
   const visibleLayerCount = overlayVisibleCount(overlayVisibility);
 
+  // The name the user sees for the open document: a URL as-is, a local file as
+  // its basename. Audit reuses it as the workspace/file name, so the header and
+  // the exported JSON never expose an absolute path.
+  const documentName = sourceUrl ?? (filePath ? (filePath.split(/[\\/]/).pop() ?? filePath) : null);
   const diffTitle = `${diffOldName ?? '—'} → ${diffNewName ?? '—'}`;
+  // Diff and Audit each replace the Inspect panes; while either is open the
+  // Inspect-only controls would act on a document the user cannot see.
+  const workspaceActive = diffActive || auditActive;
   const displayTitle = diffActive ? diffTitle : sourceUrl ?? filePath ?? undefined;
-  const filename = diffActive
-    ? diffTitle
-    : sourceUrl ?? (filePath ? (filePath.split(/[\\/]/).pop() ?? filePath) : 'No file open');
+  const filename = diffActive ? diffTitle : documentName ?? 'No file open';
+
+  const handleAudit = useCallback(() => {
+    if (!filePath) return;
+    // The two workspaces are mutually exclusive: leaving Diff here keeps them
+    // from both claiming the area the Inspect panes give up.
+    if (useDiffStore.getState().active) useDiffStore.getState().exitWorkspace();
+    useAuditStore.getState().open(filePath, documentName ?? filePath);
+  }, [documentName, filePath]);
 
   return (
     <header className={styles.toolbar}>
@@ -162,12 +184,28 @@ export const Toolbar: React.FC = () => {
       >
         Diff
       </button>
+      <button
+        className={`${styles.button} ${auditActive ? styles.active : ''}`}
+        type="button"
+        onClick={handleAudit}
+        disabled={!filePath || diffActive}
+        aria-pressed={auditActive}
+        title={
+          diffActive
+            ? 'Close Diff before auditing the open document'
+            : filePath
+              ? 'Audit the open document for fonts, pages, images, metadata, structure and security'
+              : 'Open a PDF to audit it'
+        }
+      >
+        Audit
+      </button>
 
-      {/* Everything below drives the Inspect document; while Diff owns the
-          workspace those controls would act on a hidden document, so only the
-          document-independent entries above stay available. "Back to Inspect"
-          lives in the Diff workspace header next to its own controls. */}
-      {!diffActive && (
+      {/* Everything below drives the Inspect document; while Diff or Audit owns
+          the workspace those controls would act on a hidden document, so only
+          the document-independent entries above stay available. "Back to
+          Inspect" lives in each workspace header next to its own controls. */}
+      {!workspaceActive && (
         <>
           <span className={styles.separator} />
 
@@ -290,8 +328,8 @@ export const Toolbar: React.FC = () => {
       )}
 
       <div className={styles.spacer} />
-      {!diffActive && <ExportDialog />}
-      {!diffActive && <SearchBox />}
+      {!workspaceActive && <ExportDialog />}
+      {!workspaceActive && <SearchBox />}
       <span className={styles.filename} title={displayTitle}>{filename}</span>
 
       <OpenUrlDialog

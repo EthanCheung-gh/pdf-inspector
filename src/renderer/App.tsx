@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { AuditWorkspace } from './components/Audit/AuditWorkspace';
 import { DiffSetupDialog } from './components/Diff/DiffSetupDialog';
 import { DiffWorkspace } from './components/Diff/DiffWorkspace';
 import { InspectorPanel } from './components/InspectorPanel/InspectorPanel';
@@ -9,6 +10,7 @@ import { Toolbar } from './components/Toolbar/Toolbar';
 import { PanelRail } from './components/Workspace/PanelRail';
 import { PanelSplitter } from './components/Workspace/PanelSplitter';
 import { ipc } from './services/ipc-client';
+import { useAuditStore } from './store/audit-store';
 import { useDiffStore } from './store/diff-store';
 import { usePdfStore } from './store/pdf-store';
 import {
@@ -28,6 +30,9 @@ const App = (): JSX.Element => {
   const regionMode = usePdfStore((state) => state.regionMode);
   const setRegionMode = usePdfStore((state) => state.setRegionMode);
   const diffActive = useDiffStore((state) => state.active);
+  const auditActive = useAuditStore((state) => state.active);
+  const auditFilePath = useAuditStore((state) => state.filePath);
+  const documentPath = usePdfStore((state) => state.filePath);
 
   const leftWidth = useWorkspaceStore((state) => state.leftWidth);
   const rightWidth = useWorkspaceStore((state) => state.rightWidth);
@@ -45,6 +50,26 @@ const App = (): JSX.Element => {
   // Fonts analysis) survives collapsing and focus mode.
   const leftPaneVisible = !leftCollapsed && !focusMode;
   const rightPaneVisible = !rightCollapsed && !focusMode;
+
+  // Diff and Audit are mutually exclusive: each one replaces the Inspect panes,
+  // so two at once would fight over the same area. Diff wins because a completed
+  // comparison is what the user just asked for; Audit is simply left.
+  useEffect(() => {
+    if (diffActive && useAuditStore.getState().active) useAuditStore.getState().close();
+  }, [diffActive]);
+
+  // An audit only ever describes one document. The open paths reset the audit
+  // themselves, but this guard makes that unconditional: whatever changes the
+  // Inspect document (toolbar, drag/drop, a future entry point), an audit that
+  // belongs to another file is dropped instead of lingering with a stale report.
+  // It watches both sides, so an audit opened for a file that is not the open
+  // document is dropped just as well.
+  useEffect(() => {
+    if (auditFilePath === null || auditFilePath === documentPath) return;
+    useAuditStore.getState().reset();
+  }, [auditFilePath, documentPath]);
+
+  const workspaceActive = diffActive || auditActive;
 
   useEffect(() => {
     const updateSidecarStatus = async (): Promise<void> => {
@@ -64,10 +89,11 @@ const App = (): JSX.Element => {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
-      // The Diff workspace owns the keyboard while it is open: its shortcuts
-      // (Escape, T, R, F, Ctrl+F) belong to the hidden Inspect document, so
-      // acting on them would silently mutate state the user cannot see.
-      if (useDiffStore.getState().active) return;
+      // The Diff and Audit workspaces own the keyboard while either is open:
+      // their shortcuts (Escape, T, R, F, Ctrl+F) belong to the hidden Inspect
+      // document, so acting on them would silently mutate state the user cannot
+      // see.
+      if (useDiffStore.getState().active || useAuditStore.getState().active) return;
 
       if ((event.ctrlKey || event.metaKey) && (event.key === 'f' || event.key === 'F')) {
         event.preventDefault();
@@ -113,11 +139,12 @@ const App = (): JSX.Element => {
       <Toolbar />
       <main className={styles.main}>
         {/*
-         * The Inspect workspace stays mounted while Diff is open: its local
-         * component state (font analysis, tab-local state) and the document in
-         * `pdf-store` must be exactly as they were when Diff is left again.
+         * The Inspect workspace stays mounted while Diff or Audit is open: its
+         * local component state (font analysis, tab-local state) and the
+         * document in `pdf-store` must be exactly as they were when the
+         * workspace is left again.
          */}
-        <div className={styles.inspectArea} hidden={diffActive} data-testid="inspect-area">
+        <div className={styles.inspectArea} hidden={workspaceActive} data-testid="inspect-area">
           <div
             id="workspace-left-pane"
             className={styles.pane}
@@ -179,6 +206,7 @@ const App = (): JSX.Element => {
         </div>
 
         {diffActive && <DiffWorkspace />}
+        {!diffActive && auditActive && <AuditWorkspace />}
       </main>
       <StatusBar />
       {/* Mounted once at app level: the toolbar entry and the workspace's

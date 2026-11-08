@@ -2,6 +2,8 @@
 import React from 'react';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { buildAuditReport, type AuditFinding } from '../shared/audit-types';
+import { useAuditStore } from './store/audit-store';
 import { useDiffStore } from './store/diff-store';
 import { usePdfStore } from './store/pdf-store';
 import { useWorkspaceStore } from './store/workspace-store';
@@ -17,6 +19,8 @@ vi.mock('./services/ipc-client', () => ({
     saveFile: vi.fn(),
     pickDiffPdf: vi.fn(),
     diffPdfs: vi.fn(),
+    auditDocument: vi.fn(),
+    auditPages: vi.fn(),
   },
 }));
 
@@ -39,6 +43,9 @@ vi.mock('./components/Diff/DiffWorkspace', () => ({
 vi.mock('./components/Diff/DiffSetupDialog', () => ({
   DiffSetupDialog: () => React.createElement('div', { 'data-testid': 'diff-setup-dialog' }),
 }));
+vi.mock('./components/Audit/AuditWorkspace', () => ({
+  AuditWorkspace: () => React.createElement('div', { 'data-testid': 'audit-workspace' }),
+}));
 
 import App from './App';
 
@@ -56,6 +63,7 @@ const metadata: PdfMetadata = {
 
 beforeEach(() => {
   useDiffStore.getState().reset();
+  useAuditStore.getState().reset();
   useWorkspaceStore.setState({
     leftCollapsed: false,
     rightCollapsed: false,
@@ -205,6 +213,184 @@ describe('App workspace mode', () => {
     expect(pdf.textSelectionMode).toBe(false);
     expect(pdf.regionMode).toBe(false);
     // Ctrl+F must not open the Inspect search over the diff workspace either.
+    expect(pdf.searchOpen).toBe(false);
+    expect(useWorkspaceStore.getState().focusMode).toBe(false);
+  });
+});
+
+describe('App audit mode', () => {
+  const auditFinding = (severity: AuditFinding['severity'], page: number | null): AuditFinding => ({
+    category: 'pages',
+    severity,
+    page,
+    title: `${severity} on page ${page ?? 'document'}`,
+    detail: 'detail',
+    evidence: null,
+    recommendation: null,
+  });
+
+  const enterAudit = (): void => {
+    useAuditStore.setState({
+      active: true,
+      filePath: '/docs/inspecting.pdf',
+      fileName: 'inspecting.pdf',
+      report: buildAuditReport(
+        {
+          pages: 5,
+          version: '1.7',
+          encrypted: false,
+          title: null,
+          author: null,
+          producer: null,
+          language: null,
+          tagged: false,
+        },
+        [auditFinding('error', 1), auditFinding('warning', 2), auditFinding('info', null)],
+        { name: 'pdf-inspector', version: '0.2.0' },
+      ),
+      loading: false,
+      progress: null,
+      error: null,
+    });
+  };
+
+  it('replaces the Inspect panes with the Audit workspace and keeps the shell usable', () => {
+    render(React.createElement(App));
+
+    act(() => {
+      enterAudit();
+    });
+
+    expect(screen.getByTestId('inspect-area').hidden).toBe(true);
+    expect(screen.getByTestId('audit-workspace')).toBeTruthy();
+    expect(screen.queryByTestId('diff-workspace')).toBeNull();
+
+    // The Audit entry reports the active mode; the Diff entry stays available.
+    expect(screen.getByRole('button', { name: 'Audit' }).getAttribute('aria-pressed')).toBe('true');
+    expect((screen.getByRole('button', { name: 'Diff' }) as HTMLButtonElement).disabled).toBe(false);
+    // Inspect-only controls would act on the hidden document, so they are gone.
+    expect(screen.queryByRole('button', { name: 'Select Text' })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Page navigation' })).toBeNull();
+
+    // The pane components stay mounted (hidden) so their local state survives.
+    expect(screen.getByTestId('pdf-viewport')).toBeTruthy();
+    expect(screen.getByTestId('left-panel')).toBeTruthy();
+
+    expect(screen.getByLabelText('Application status').textContent).toContain(
+      'Audit: 1 error · 1 warning · 1 info',
+    );
+  });
+
+  it('restores the exact Inspect state when leaving Audit', () => {
+    render(React.createElement(App));
+    const pageDataBefore = usePdfStore.getState().pageData;
+
+    act(() => {
+      enterAudit();
+    });
+    act(() => {
+      useAuditStore.getState().close();
+    });
+
+    expect(screen.getByTestId('inspect-area').hidden).toBe(false);
+    expect(screen.queryByTestId('audit-workspace')).toBeNull();
+
+    const pdf = usePdfStore.getState();
+    expect(pdf.filePath).toBe('/docs/inspecting.pdf');
+    expect(pdf.currentPage).toBe(3);
+    expect(pdf.zoom).toBe(1.5);
+    expect(pdf.pageData).toBe(pageDataBefore);
+    // The report survives so the same document can be reopened without a run.
+    expect(useAuditStore.getState().report).not.toBeNull();
+    expect(useAuditStore.getState().active).toBe(false);
+  });
+
+  it('leaves Audit when a comparison takes over the workspace', () => {
+    render(React.createElement(App));
+
+    act(() => {
+      enterAudit();
+    });
+    expect(screen.getByTestId('audit-workspace')).toBeTruthy();
+
+    act(() => {
+      useDiffStore.getState().applyResult(makeSampleResult());
+      useDiffStore.getState().enterWorkspace();
+    });
+
+    // Only one workspace is ever mounted: Diff wins, Audit is left.
+    expect(useAuditStore.getState().active).toBe(false);
+    expect(screen.getByTestId('diff-workspace')).toBeTruthy();
+    expect(screen.queryByTestId('audit-workspace')).toBeNull();
+    expect(screen.getByTestId('inspect-area').hidden).toBe(true);
+  });
+
+  it('drops a stale audit when the open document changes elsewhere', () => {
+    render(React.createElement(App));
+
+    act(() => {
+      enterAudit();
+    });
+    expect(screen.getByTestId('audit-workspace')).toBeTruthy();
+    expect(useAuditStore.getState().report).not.toBeNull();
+
+    // Any path that swaps the Inspect document (not just the toolbar's Open)
+    // must not leave a report that belongs to the previous file.
+    act(() => {
+      usePdfStore.setState({ filePath: '/docs/other.pdf' });
+    });
+
+    const audit = useAuditStore.getState();
+    expect(audit.active).toBe(false);
+    expect(audit.report).toBeNull();
+    expect(audit.fileName).toBeNull();
+    expect(audit.filePath).toBeNull();
+
+    // No stale workspace, no stale status line, no stale export target.
+    expect(screen.queryByTestId('audit-workspace')).toBeNull();
+    expect(screen.getByTestId('inspect-area').hidden).toBe(false);
+    const status = screen.getByLabelText('Application status').textContent ?? '';
+    expect(status).not.toContain('Audit:');
+    expect(status).toContain('Page 3/5');
+  });
+
+  it('leaves Inspect state alone when its shortcuts are pressed while Audit is open', () => {
+    const selectedWord: PdfWord = {
+      type: 'word',
+      page: 2,
+      x0: 10,
+      y0: 20,
+      x1: 30,
+      y1: 32,
+      text: 'Hello',
+      fontname: 'Helvetica',
+      size: 11,
+    };
+    usePdfStore.setState({
+      selectedObject: selectedWord,
+      filterCriteria: { types: ['word'] },
+      textSelectionMode: false,
+      regionMode: false,
+      searchOpen: false,
+    });
+
+    render(React.createElement(App));
+
+    act(() => {
+      enterAudit();
+    });
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.keyDown(window, { key: 't' });
+    fireEvent.keyDown(window, { key: 'r' });
+    fireEvent.keyDown(window, { key: 'f' });
+    fireEvent.keyDown(window, { key: 'F', ctrlKey: true });
+
+    const pdf = usePdfStore.getState();
+    expect(pdf.selectedObject).toBe(selectedWord);
+    expect(pdf.filterCriteria).toEqual({ types: ['word'] });
+    expect(pdf.textSelectionMode).toBe(false);
+    expect(pdf.regionMode).toBe(false);
     expect(pdf.searchOpen).toBe(false);
     expect(useWorkspaceStore.getState().focusMode).toBe(false);
   });

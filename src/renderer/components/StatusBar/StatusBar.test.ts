@@ -2,11 +2,14 @@
 import React from 'react';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { buildAuditReport, type AuditFinding } from '../../../shared/audit-types';
 import type { PageData, PdfWord } from '../../types/pdf-objects';
+import { useAuditStore } from '../../store/audit-store';
 import { useCursorStore } from '../../store/cursor-store';
+import { useDiffStore } from '../../store/diff-store';
 import { usePdfStore } from '../../store/pdf-store';
 
-import { StatusBar } from './StatusBar';
+import { StatusBar, plural } from './StatusBar';
 
 const selectedWord: PdfWord = {
   type: 'word',
@@ -53,6 +56,8 @@ describe('StatusBar', () => {
       pageData: null,
     });
     useCursorStore.setState({ cursorPdfPoint: null });
+    useAuditStore.getState().reset();
+    useDiffStore.getState().reset();
   });
 
   it('announces background font analysis progress', () => {
@@ -182,5 +187,139 @@ describe('StatusBar', () => {
     });
 
     expect(screen.queryByRole('group', { name: /^Cursor / })).toBeNull();
+  });
+});
+
+describe('StatusBar audit mode', () => {
+  afterEach(cleanup);
+
+  const finding = (severity: AuditFinding['severity'], page: number | null): AuditFinding => ({
+    category: 'pages',
+    severity,
+    page,
+    title: `${severity} finding`,
+    detail: 'detail',
+    evidence: null,
+    recommendation: null,
+  });
+
+  const report = (
+    findings: AuditFinding[] = [
+      finding('error', 1),
+      finding('warning', 2),
+      finding('warning', 3),
+      finding('info', null),
+      finding('info', 4),
+      finding('info', 5),
+    ],
+  ): ReturnType<typeof buildAuditReport> =>
+    buildAuditReport(
+      {
+        pages: 12,
+        version: '1.7',
+        encrypted: false,
+        title: null,
+        author: null,
+        producer: null,
+        language: null,
+        tagged: false,
+      },
+      findings,
+      { name: 'pdf-inspector', version: '0.2.0' },
+    );
+
+  const enterAudit = (findings?: AuditFinding[]): void => {
+    useAuditStore.setState({
+      active: true,
+      filePath: '/docs/report.pdf',
+      fileName: 'report.pdf',
+      report: report(findings),
+      loading: false,
+      progress: null,
+      error: null,
+    });
+  };
+
+  it('reports the audit finding counts instead of the Inspect selection and filter', () => {
+    usePdfStore.setState({
+      selectedObject: selectedWord,
+      filterCriteria: { types: ['word'] },
+      fontProgress: { done: 3, total: 9 },
+    });
+    enterAudit();
+
+    render(React.createElement(StatusBar));
+
+    // One error is singular, two warnings are plural; `info` is uncountable.
+    expect(screen.getByTestId('status-audit').textContent).toBe(
+      'Audit: 1 error · 2 warnings · 3 info',
+    );
+    // The Inspect document is hidden behind the workspace, so neither its
+    // selection nor its active filter belongs in the bar.
+    expect(screen.queryByRole('group', { name: /^Selected / })).toBeNull();
+    expect(screen.queryByLabelText(/^Active filters:/)).toBeNull();
+    expect(screen.queryByText(/^Page 3\/12/)).toBeNull();
+  });
+
+  it('pluralizes each non-zero count on its own', () => {
+    enterAudit([finding('error', 1), finding('error', 2), finding('warning', 3)]);
+
+    render(React.createElement(StatusBar));
+
+    expect(screen.getByTestId('status-audit').textContent).toBe(
+      'Audit: 2 errors · 1 warning · 0 info',
+    );
+  });
+
+  it('pluralizes a single finding of every severity', () => {
+    enterAudit([finding('error', 1), finding('warning', 2), finding('info', 3)]);
+
+    render(React.createElement(StatusBar));
+
+    expect(screen.getByTestId('status-audit').textContent).toBe(
+      'Audit: 1 error · 1 warning · 1 info',
+    );
+  });
+
+  it('formats counts as prose, leaving uncountable nouns alone', () => {
+    expect(plural(0, 'error')).toBe('0 errors');
+    expect(plural(1, 'error')).toBe('1 error');
+    expect(plural(2, 'error')).toBe('2 errors');
+    expect(plural(1, 'warning')).toBe('1 warning');
+    expect(plural(2, 'warning')).toBe('2 warnings');
+    expect(plural(1, 'info', 'info')).toBe('1 info');
+    expect(plural(2, 'info', 'info')).toBe('2 info');
+  });
+
+  it('reports page progress while the audit is running', () => {
+    useAuditStore.setState({
+      active: true,
+      fileName: 'report.pdf',
+      report: null,
+      loading: true,
+      progress: { done: 10, total: 25 },
+      error: null,
+    });
+
+    render(React.createElement(StatusBar));
+
+    expect(screen.getByTestId('status-audit').textContent).toBe('Audit: 10/25 pages');
+    expect(screen.queryByLabelText(/^Active filters:/)).toBeNull();
+  });
+
+  it('shows an audit failure in the bar', () => {
+    useAuditStore.setState({
+      active: true,
+      fileName: 'report.pdf',
+      report: null,
+      loading: false,
+      progress: null,
+      error: 'Sidecar is not running',
+    });
+
+    render(React.createElement(StatusBar));
+
+    expect(screen.getByTestId('status-audit').textContent).toBe('Audit: no report yet');
+    expect(screen.getByRole('alert').textContent).toBe('Audit failed: Sidecar is not running');
   });
 });

@@ -1,5 +1,6 @@
 import { describeFilterCriteria } from '../../services/filter-summary';
 import { countFilteredChanges } from '../../services/diff-view';
+import { useAuditStore } from '../../store/audit-store';
 import { useCursorStore, type CursorPdfPoint } from '../../store/cursor-store';
 import { useDiffStore } from '../../store/diff-store';
 import { usePdfStore } from '../../store/pdf-store';
@@ -19,6 +20,14 @@ export const formatCursorPoint = (point: CursorPdfPoint): string =>
 /** Compact page summary: size plus the /Rotate value the Page tab reports. */
 export const formatPageGeometry = (page: PageData): string =>
   `${formatCoordinate(page.width)} × ${formatCoordinate(page.height)} pt · rot ${page.rotation ?? 0}°`;
+
+/**
+ * `1 error` / `2 errors`: the bar reads as prose, so a count of one must not be
+ * followed by a plural noun. Uncountable nouns pass their own plural form
+ * (`plural(2, 'info', 'info')` -> `2 info`).
+ */
+export const plural = (count: number, singular: string, pluralForm = `${singular}s`): string =>
+  `${count} ${count === 1 ? singular : pluralForm}`;
 
 /** Right-hand end of the bar: flexible spacer plus the sidecar indicator. */
 const StatusTail: React.FC<{ sidecarRunning: boolean }> = ({ sidecarRunning }) => (
@@ -56,6 +65,14 @@ export const StatusBar = (): JSX.Element => {
   const diffLoading = useDiffStore((state) => state.loading);
   const diffChangeCount = diffResult ? countFilteredChanges(diffResult.pages, diffFilter) : 0;
 
+  // Audit replaces the Inspect panes the same way Diff does, so the bar reports
+  // the audit run instead of the document the user cannot see.
+  const auditActive = useAuditStore((state) => state.active);
+  const auditLoading = useAuditStore((state) => state.loading);
+  const auditProgress = useAuditStore((state) => state.progress);
+  const auditReport = useAuditStore((state) => state.report);
+  const auditError = useAuditStore((state) => state.error);
+
   if (diffActive) {
     return (
       <footer className={styles.statusBar} aria-label="Application status">
@@ -69,6 +86,29 @@ export const StatusBar = (): JSX.Element => {
         {diffResult && (
           <span className={styles.pageGeometry}>
             {diffResult.old.pages} vs {diffResult.new.pages} pages
+          </span>
+        )}
+        <StatusTail sidecarRunning={sidecarRunning} />
+      </footer>
+    );
+  }
+
+  if (auditActive) {
+    const auditSummary = auditReport?.summary;
+    return (
+      <footer className={styles.statusBar} aria-label="Application status">
+        <span className={styles.documentStatus} data-testid="status-audit">
+          {auditProgress
+            ? `Audit: ${auditProgress.done}/${auditProgress.total} pages`
+            : auditSummary
+              ? `Audit: ${plural(auditSummary.errors, 'error')} · ${plural(auditSummary.warnings, 'warning')} · ${plural(auditSummary.info, 'info', 'info')}`
+              : auditLoading
+                ? 'Audit: running…'
+                : 'Audit: no report yet'}
+        </span>
+        {auditError && (
+          <span className={styles.error} role="alert">
+            Audit failed: {auditError}
           </span>
         )}
         <StatusTail sidecarRunning={sidecarRunning} />

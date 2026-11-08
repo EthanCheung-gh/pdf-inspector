@@ -1,19 +1,23 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { usePdfStore } from '../../store/pdf-store';
+import { useAuditStore } from '../../store/audit-store';
+import { useDiffStore } from '../../store/diff-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
 import type { PdfMetadata } from '../../types/pdf-objects';
 
-const { navigate, openPdf, openPdfUrl } = vi.hoisted(() => ({
+const { navigate, openPdf, openPdfUrl, auditDocument, auditPages } = vi.hoisted(() => ({
   navigate: vi.fn(),
   openPdf: vi.fn(),
   openPdfUrl: vi.fn(),
+  auditDocument: vi.fn(),
+  auditPages: vi.fn(),
 }));
 
 vi.mock('../../services/ipc-client', () => ({
-  ipc: { openPdf, openPdfUrl, extractPage: vi.fn(), saveFile: vi.fn() },
+  ipc: { openPdf, openPdfUrl, auditDocument, auditPages, extractPage: vi.fn(), saveFile: vi.fn() },
 }));
 
 vi.mock('../../hooks/usePageNavigation', () => ({
@@ -244,5 +248,211 @@ describe('Toolbar workspace controls', () => {
     fireEvent.click(rightButton());
     expect(useWorkspaceStore.getState().rightCollapsed).toBe(true);
     expect(rightButton().getAttribute('aria-pressed')).toBe('false');
+  });
+});
+
+describe('Toolbar audit entry', () => {
+  const tool = { name: 'pdf-inspector', version: '0.2.0' };
+
+  const documentWithFinding = (): unknown => ({
+    tool,
+    document: {
+      pages: 0,
+      version: '1.7',
+      encrypted: false,
+      title: 'Audited',
+      author: null,
+      producer: null,
+      language: null,
+      tagged: false,
+    },
+    findings: [
+      {
+        category: 'metadata',
+        severity: 'info',
+        page: null,
+        title: 'Missing language',
+        detail: 'The document has no /Lang entry.',
+        evidence: null,
+        recommendation: null,
+      },
+    ],
+  });
+
+  beforeEach(() => {
+    auditDocument.mockReset();
+    auditPages.mockReset();
+    openPdf.mockReset();
+    openPdfUrl.mockReset();
+    navigate.mockReset();
+    navigate.mockResolvedValue(undefined);
+    auditDocument.mockResolvedValue({
+      tool,
+      document: {
+        pages: 0,
+        version: '1.7',
+        encrypted: false,
+        title: null,
+        author: null,
+        producer: null,
+        language: null,
+        tagged: false,
+      },
+      findings: [],
+    });
+    auditPages.mockResolvedValue({ tool, findings: [] });
+    useDiffStore.getState().reset();
+    useAuditStore.getState().reset();
+    usePdfStore.setState({
+      filePath: null,
+      sourceUrl: null,
+      metadata: null,
+      pageCount: 0,
+      currentPage: 1,
+      isLoading: false,
+    });
+    useWorkspaceStore.setState({ leftCollapsed: false, rightCollapsed: false, focusMode: false });
+  });
+
+  afterEach(cleanup);
+
+  it('is disabled while no document is open', () => {
+    render(React.createElement(Toolbar));
+
+    const audit = screen.getByRole('button', { name: 'Audit' }) as HTMLButtonElement;
+    expect(audit.disabled).toBe(true);
+    expect(audit.getAttribute('aria-pressed')).toBe('false');
+    expect(audit.getAttribute('title')).toBe('Open a PDF to audit it');
+  });
+
+  it('is disabled while Diff owns the workspace', () => {
+    usePdfStore.setState({ filePath: '/docs/report.pdf', metadata, pageCount: 5 });
+    useDiffStore.setState({ active: true });
+
+    render(React.createElement(Toolbar));
+
+    expect((screen.getByRole('button', { name: 'Audit' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('opens the audit workspace with the file basename and reports the active mode', async () => {
+    usePdfStore.setState({ filePath: '/docs/My Report.pdf', metadata, pageCount: 5 });
+
+    render(React.createElement(Toolbar));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Audit' }));
+    });
+
+    const state = useAuditStore.getState();
+    expect(state.active).toBe(true);
+    expect(state.filePath).toBe('/docs/My Report.pdf');
+    // The workspace header shows what the toolbar shows, never the full path.
+    expect(state.fileName).toBe('My Report.pdf');
+    expect(auditDocument).toHaveBeenCalledTimes(1);
+
+    const audit = screen.getByRole('button', { name: 'Audit' });
+    expect(audit.getAttribute('aria-pressed')).toBe('true');
+    // Inspect-only controls are hidden while Audit owns the workspace.
+    expect(screen.queryByRole('group', { name: 'Page navigation' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Select Text' })).toBeNull();
+  });
+
+  it('audits a URL-opened document under its source URL', async () => {
+    usePdfStore.setState({
+      filePath: '/tmp/download.pdf',
+      sourceUrl: 'https://example.com/a.pdf',
+      metadata,
+      pageCount: 5,
+    });
+
+    render(React.createElement(Toolbar));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Audit' }));
+    });
+
+    expect(useAuditStore.getState().fileName).toBe('https://example.com/a.pdf');
+  });
+
+  it('keeps the Diff entry usable and still shows the document name while auditing', async () => {
+    usePdfStore.setState({ filePath: '/docs/report.pdf', metadata, pageCount: 5 });
+
+    render(React.createElement(Toolbar));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Audit' }));
+    });
+
+    expect((screen.getByRole('button', { name: 'Diff' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByTitle('/docs/report.pdf').textContent).toBe('report.pdf');
+  });
+
+  it('drops the previous document audit when another PDF is opened', async () => {
+    auditDocument.mockResolvedValue(documentWithFinding());
+    usePdfStore.setState({ filePath: '/docs/first.pdf', metadata, pageCount: 5 });
+
+    render(React.createElement(Toolbar));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Audit' }));
+    });
+    expect(useAuditStore.getState().report).not.toBeNull();
+    expect(useAuditStore.getState().fileName).toBe('first.pdf');
+
+    openPdf.mockResolvedValue({ canceled: false, path: '/docs/second.pdf', metadata });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    });
+    await waitFor(() => expect(usePdfStore.getState().filePath).toBe('/docs/second.pdf'));
+
+    // The audit belongs to the closed document: no report, no name, no mode.
+    const audit = useAuditStore.getState();
+    expect(audit.active).toBe(false);
+    expect(audit.report).toBeNull();
+    expect(audit.fileName).toBeNull();
+    expect(audit.filePath).toBeNull();
+    expect(audit.selected).toBeNull();
+    // Nothing stale can be exported or opened: the entry is unpressed and the
+    // Inspect controls are back.
+    expect(screen.getByRole('button', { name: 'Audit' }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('group', { name: 'Page navigation' })).toBeTruthy();
+
+    // Re-entering audits the new document from scratch instead of reusing it.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Audit' }));
+    });
+    expect(auditDocument).toHaveBeenCalledTimes(2);
+    expect(useAuditStore.getState().fileName).toBe('second.pdf');
+    expect(useAuditStore.getState().report?.findings).toHaveLength(1);
+  });
+
+  it('drops the previous document audit when a URL document replaces it', async () => {
+    auditDocument.mockResolvedValue(documentWithFinding());
+    usePdfStore.setState({ filePath: '/docs/first.pdf', metadata, pageCount: 5 });
+
+    render(React.createElement(Toolbar));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Audit' }));
+    });
+    expect(useAuditStore.getState().report).not.toBeNull();
+
+    openPdfUrl.mockResolvedValue({
+      canceled: false,
+      path: '/tmp/remote.pdf',
+      metadata,
+      sourceUrl: 'https://example.com/b.pdf',
+    });
+    openUrlDialog();
+    submitUrl('https://example.com/b.pdf');
+
+    await waitFor(() => expect(usePdfStore.getState().sourceUrl).toBe('https://example.com/b.pdf'));
+
+    const audit = useAuditStore.getState();
+    expect(audit.active).toBe(false);
+    expect(audit.report).toBeNull();
+    expect(audit.fileName).toBeNull();
+    expect(audit.filePath).toBeNull();
+    expect(screen.getByRole('button', { name: 'Audit' }).getAttribute('aria-pressed')).toBe('false');
   });
 });
