@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""``pdf-inspector diff`` command line interface.
+"""``pdf-inspector diff`` / ``pdf-inspector audit`` command line interface.
 
-The CLI is a thin, dependency-free shell around :func:`sidecar.diff.diff_files`
-and :mod:`sidecar.report`.  Only local files are accepted (no URLs), JSON/HTML
+The CLI is a thin, dependency-free shell around :func:`sidecar.diff.diff_files`,
+:func:`sidecar.audit.audit_file`, :mod:`sidecar.report` and
+:mod:`sidecar.audit_report`.  Only local files are accepted (no URLs), JSON/HTML
 payloads go to stdout or ``--output``, and every diagnostic goes to stderr so
 machine consumers can pipe stdout safely.
 
 Exit codes: ``0`` no failure, ``1`` the ``--fail-on`` predicate matched, ``2``
-usage/read/diff error.
+usage/read/diff/audit error.
 """
 
 from __future__ import annotations
@@ -19,9 +20,13 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 try:  # imported as ``sidecar.cli`` (namespace package)
+    from .audit import AuditError, audit_file
+    from .audit_report import format_audit_summary, render_audit_html
     from .diff import DIFF_TYPES, DiffError, DiffOptions, diff_files, tool_version
     from .report import format_summary, page_geometry_changed, render_html
 except ImportError:  # executed as ``python sidecar/cli.py``
+    from audit import AuditError, audit_file
+    from audit_report import format_audit_summary, render_audit_html
     from diff import DIFF_TYPES, DiffError, DiffOptions, diff_files, tool_version
     from report import format_summary, page_geometry_changed, render_html
 
@@ -31,6 +36,7 @@ EXIT_ERROR = 2
 
 FORMAT_CHOICES = ('summary', 'json', 'html')
 FAIL_ON_CHOICES = ('any', 'added', 'removed', 'modified', 'page-count', 'none')
+AUDIT_FAIL_ON_CHOICES = ('error', 'warning', 'none')
 TEXT_TOLERANCE_CHOICES = ('exact', 'normalized', 'case-insensitive')
 
 # Only the first kilobyte of a PDF may legally contain the header.
@@ -59,7 +65,7 @@ def _positive_float(value: str) -> float:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog='pdf-inspector',
-        description='Inspect PDF internals and diff two PDF revisions.',
+        description='Inspect PDF internals, diff two PDF revisions and audit a PDF.',
     )
     parser.add_argument(
         '--version',
@@ -149,6 +155,46 @@ def build_parser() -> argparse.ArgumentParser:
         action='store_true',
         help='suppress the human summary on stdout (JSON/HTML payloads are unaffected)',
     )
+
+    audit_parser = subparsers.add_parser(
+        'audit',
+        help='audit a local PDF file',
+        description=(
+            'Audit a local PDF for font, page, image, metadata, structure and '
+            'security findings and report them as summary, JSON or HTML.'
+        ),
+        epilog=(
+            'exit codes: 0 = no threshold matched, 1 = --fail-on matched, '
+            '2 = usage/read/audit error. Diagnostics are written to stderr; '
+            'JSON on stdout is never polluted.'
+        ),
+    )
+    audit_parser.add_argument('file', metavar='FILE.pdf', help='PDF to audit (local path)')
+    audit_parser.add_argument(
+        '--format',
+        choices=FORMAT_CHOICES,
+        default='summary',
+        help='output format written to stdout and/or --output (default: summary)',
+    )
+    audit_parser.add_argument(
+        '--output',
+        metavar='PATH',
+        help='also write the formatted payload to PATH (stdout keeps the summary)',
+    )
+    audit_parser.add_argument(
+        '--fail-on',
+        choices=AUDIT_FAIL_ON_CHOICES,
+        default='none',
+        help=(
+            'which findings exit 1 (default: none). "warning" fails on warnings '
+            'and errors, "error" only on errors, "none" never fails'
+        ),
+    )
+    audit_parser.add_argument(
+        '--quiet',
+        action='store_true',
+        help='suppress the human summary on stdout (JSON/HTML payloads are unaffected)',
+    )
     return parser
 
 
@@ -219,6 +265,20 @@ def _render_payload(
     if output_format == 'html':
         return render_html(result)
     return format_summary(result, old_label=old_label, new_label=new_label)
+
+
+def _render_audit_payload(
+    report: Mapping[str, Any],
+    output_format: str,
+    *,
+    source_label: Optional[str] = None,
+) -> str:
+    """Render one audit payload; JSON stays exactly the ``AuditReport``."""
+    if output_format == 'json':
+        return json.dumps(report, indent=2, ensure_ascii=False) + '\n'
+    if output_format == 'html':
+        return render_audit_html(report)
+    return format_audit_summary(report, source_label=source_label)
 
 
 def _write_output(path_arg: str, payload: str) -> None:
@@ -323,7 +383,76 @@ def failure_reason(result: Mapping[str, Any], fail_on: str) -> Optional[str]:
     return None
 
 
+def audit_failure_reason(report: Mapping[str, Any], fail_on: str) -> Optional[str]:
+    """Return a one-line reason when ``fail_on`` matches, else ``None``.
+
+    ``warning`` covers warnings and errors, ``error`` only errors, and ``none``
+    never fails. Counts come from the report summary, so a report without
+    findings never trips a threshold.
+    """
+    if fail_on == 'none':
+        return None
+    if fail_on not in AUDIT_FAIL_ON_CHOICES:
+        raise ValueError(f'unknown audit fail-on mode: {fail_on!r}')
+
+    summary = report.get('summary') or {}
+
+    def count(key: str) -> int:
+        try:
+            return int(summary.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    errors = count('errors')
+    warnings = count('warnings')
+
+    if fail_on == 'error' and errors:
+        return f'{errors} audit error(s) found (fail-on error)'
+    if fail_on == 'warning' and (errors or warnings):
+        return (
+            f'{errors} audit error(s) and {warnings} warning(s) found '
+            '(fail-on warning)'
+        )
+    return None
+
+
 # --- command ----------------------------------------------------------------
+
+
+def _run_audit(args: argparse.Namespace) -> int:
+    input_path = _validate_input(args.file, 'audit')
+    if args.output is not None:
+        _reject_input_overwrite(args.output, (input_path,))
+
+    report = audit_file(input_path)
+    payload = _render_audit_payload(
+        report,
+        args.format,
+        source_label=str(args.file),
+    )
+
+    if args.output is not None:
+        _write_output(args.output, payload)
+
+    if args.format == 'summary' or args.output is not None:
+        # Human summaries are never mixed into machine payloads on stdout.
+        if not args.quiet:
+            summary = (
+                payload
+                if args.format == 'summary'
+                else format_audit_summary(report, source_label=str(args.file))
+            )
+            sys.stdout.write(summary)
+    else:
+        sys.stdout.write(payload)
+    sys.stdout.flush()
+
+    reason = audit_failure_reason(report, args.fail_on)
+    if reason is not None:
+        sys.stderr.write(f'pdf-inspector: {reason}\n')
+        sys.stderr.flush()
+        return EXIT_FAIL
+    return EXIT_OK
 
 
 def _run_diff(args: argparse.Namespace) -> int:
@@ -372,8 +501,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         if args.command == 'diff':
             return _run_diff(args)
+        if args.command == 'audit':
+            return _run_audit(args)
         parser.error(f'unknown command: {args.command}')
-    except (CliError, DiffError, ValueError) as exc:
+    except (CliError, DiffError, AuditError, ValueError) as exc:
         _config_error(exc)
         return EXIT_ERROR
     except BrokenPipeError:
