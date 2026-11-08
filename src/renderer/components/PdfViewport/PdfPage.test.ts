@@ -11,6 +11,8 @@ import { DEFAULT_WORKSPACE_LAYOUT, useWorkspaceStore } from '../../store/workspa
 const mocks = vi.hoisted(() => ({
   geometryProps: vi.fn(),
   rulerProps: vi.fn(),
+  annotationOverlayProps: vi.fn(),
+  usePageAnnotations: vi.fn(),
 }));
 
 // PdfPage only needs the render-task *type* from pdfjs-dist; the real module
@@ -22,6 +24,19 @@ vi.mock('./TextLayer', () => ({
 }));
 vi.mock('./OverlayCanvas', () => ({
   OverlayCanvas: () => React.createElement('div', { 'data-testid': 'object-overlay' }),
+}));
+vi.mock('./AnnotationOverlay', () => ({
+  AnnotationOverlay: (props: unknown) => {
+    mocks.annotationOverlayProps(props);
+    return React.createElement('div', { 'data-testid': 'annotation-overlay' });
+  },
+}));
+// The annotation loader talks to a real PDF.js page; the page geometry tests
+// only care about how PdfPage wires it up.
+vi.mock('../../hooks/usePageAnnotations', () => ({
+  usePageAnnotations: (doc: unknown, page: number, mediaBox: unknown) => {
+    mocks.usePageAnnotations(doc, page, mediaBox);
+  },
 }));
 vi.mock('./InspectorHighlight', () => ({
   InspectorHighlight: () => React.createElement('div', { 'data-testid': 'inspector-highlight' }),
@@ -249,6 +264,8 @@ describe('PdfPage page geometry', () => {
   beforeEach(() => {
     mocks.geometryProps.mockClear();
     mocks.rulerProps.mockClear();
+    mocks.annotationOverlayProps.mockClear();
+    mocks.usePageAnnotations.mockClear();
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
       {} as CanvasRenderingContext2D,
     );
@@ -268,13 +285,41 @@ describe('PdfPage page geometry', () => {
     expect(frame.style.height).toBe('792px');
 
     expect(screen.getByTestId('object-overlay')).toBeTruthy();
+    expect(screen.getByTestId('annotation-overlay')).toBeTruthy();
     expect(screen.getByTestId('inspector-highlight')).toBeTruthy();
     expect(screen.queryByText(/Rotated page/)).toBeNull();
+
+    // Annotation boxes use the same page/PDF mapping as the object overlay.
+    const annotationProps = mocks.annotationOverlayProps.mock.calls.at(-1)?.[0] as {
+      pageNum: number;
+      pageWidth: number;
+      pageHeight: number;
+      pdfWidth: number;
+      pdfHeight: number;
+    };
+    expect(annotationProps).toMatchObject({
+      pageNum: 1,
+      pageWidth: 612,
+      pageHeight: 792,
+      pdfWidth: 612,
+      pdfHeight: 792,
+    });
 
     const viewport = lastGeometryViewport();
     expect(viewport.width).toBe(612);
     expect(viewport.height).toBe(792);
     expect(viewport.rotation).toBe(0);
+  });
+
+  it('loads annotations for the current page from its MediaBox', async () => {
+    const media = { x0: 10, y0: 20, x1: 622, y1: 812 };
+    const { pdfDoc } = renderPage(
+      makePageData({ boxes: { media, crop: media, trim: null, bleed: null, art: null } }),
+      { cropBox: [media.x0, media.y0, media.x1, media.y1] },
+    );
+    await waitForGeometryViewport();
+
+    expect(mocks.usePageAnnotations).toHaveBeenCalledWith(pdfDoc, 1, media);
   });
 
   it.each([
@@ -295,6 +340,7 @@ describe('PdfPage page geometry', () => {
       expect(frame.style.height).toBe(`${height}px`);
 
       expect(screen.queryByTestId('object-overlay')).toBeNull();
+      expect(screen.queryByTestId('annotation-overlay')).toBeNull();
       expect(screen.queryByTestId('inspector-highlight')).toBeNull();
       expect(screen.getByText('Rotated page: object overlay unavailable')).toBeTruthy();
 
@@ -304,6 +350,19 @@ describe('PdfPage page geometry', () => {
       expect(viewport.rotation).toBe(rotation);
     },
   );
+
+  it('keeps loading the annotation list on a rotated page without the overlay', async () => {
+    const media = { x0: 0, y0: 0, x1: 612, y1: 792 };
+    const { pdfDoc } = renderPage(makePageData({ rotation: 90, width: 792, height: 612 }), {
+      rotation: 90,
+    });
+    await waitForGeometryViewport();
+
+    // The list is page-scoped, not render-scoped: rotated pages still get data,
+    // only the (unrotated) overlay is skipped.
+    expect(mocks.usePageAnnotations).toHaveBeenCalledWith(pdfDoc, 1, media);
+    expect(screen.queryByTestId('annotation-overlay')).toBeNull();
+  });
 
   it('uses the MediaBox, not the CropBox, for boxes, rulers and the frame', async () => {
     const { page } = renderPage(

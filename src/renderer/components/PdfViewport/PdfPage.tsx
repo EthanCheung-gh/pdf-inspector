@@ -5,6 +5,8 @@ import { usePdfStore } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
 import { isRenderCancelled } from '../../services/pdf-render';
 import { createMediaViewport } from '../../services/page-viewport';
+import { usePageAnnotations } from '../../hooks/usePageAnnotations';
+import { AnnotationOverlay } from './AnnotationOverlay';
 import { OverlayCanvas } from './OverlayCanvas';
 import { PageGeometryOverlay } from './PageGeometryOverlay';
 import { PageRuler } from './PageRuler';
@@ -31,6 +33,11 @@ export const PdfPage: React.FC<PdfPageProps> = ({ pageNum, zoom, pdfDoc }) => {
   const setCursorPdfPoint = useCursorStore((s) => s.setCursorPdfPoint);
 
   const mediaBox = pageData?.boxes?.media;
+
+  // The annotation list follows the page that is on screen. It is independent of
+  // the render/rotation state: a rotated page still gets its list, only the
+  // overlay and hit-test below are skipped.
+  usePageAnnotations(pdfDoc, pageNum, mediaBox ?? null);
 
   // The crop viewport is what PDF.js renders; the media viewport is the frame
   // that page boxes, rulers and the cursor origin are measured against.
@@ -160,6 +167,18 @@ export const PdfPage: React.FC<PdfPageProps> = ({ pageNum, zoom, pdfDoc }) => {
       >
         <canvas ref={canvasRef} className={styles.canvas} />
         <TextLayer pageNum={pageNum} pdfDoc={pdfDoc} zoom={zoom} />
+        {/* Annotation boxes sit below the object overlay: they are low-alpha
+            context, and the overlay canvas above owns all pointer interaction.
+            Both use the same unrotated mapping, so a rotated page shows neither. */}
+        {!isRotated && (
+          <AnnotationOverlay
+            pageNum={pageNum}
+            pageWidth={pageWidth}
+            pageHeight={pageHeight}
+            pdfWidth={pdfWidth}
+            pdfHeight={pdfHeight}
+          />
+        )}
         {/* Object overlays use the unrotated PDF page mapping, so they cannot be
             drawn on a rotated page; hiding them beats drawing off-page boxes. */}
         {!isRotated && (

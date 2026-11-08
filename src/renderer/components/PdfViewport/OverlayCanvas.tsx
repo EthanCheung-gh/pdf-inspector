@@ -2,11 +2,17 @@ import React, { useEffect, useRef } from 'react';
 import { useHitTest } from '../../hooks/useHitTest';
 import { useOverlay } from '../../hooks/useOverlay';
 import { useRegionSelect } from '../../hooks/useRegionSelect';
+import { useAnnotationStore } from '../../store/annotation-store';
 import { usePdfStore, type TableCellRef } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
+import { hitTestAnnotations } from '../../services/annotation-view';
 import { effectiveOverlayVisibility, overlayObjects } from '../../services/overlay-visibility';
 import { resolveTableIndex } from '../InspectorPanel/TableGrid';
+import type { PdfAnnotation } from '../../types/annotations';
 import type { PageBox, PdfTable } from '../../types/pdf-objects';
+
+/** Stable empty list for pages that have no annotation hit-test candidates. */
+const NO_ANNOTATIONS: readonly PdfAnnotation[] = [];
 
 /** Thin grid lines for the cells of the table under inspection. */
 export const TABLE_CELL_GRID_COLOR = 'rgba(120, 200, 255, 0.45)';
@@ -130,6 +136,11 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
   const selectedTableCell = usePdfStore((state) => state.selectedTableCell);
   const setHoveredObject = usePdfStore((state) => state.setHoveredObject);
   const setSelectedObject = usePdfStore((state) => state.setSelectedObject);
+  const annotationPage = useAnnotationStore((state) => state.page);
+  const annotations = useAnnotationStore((state) => state.annotations);
+  const showAnnotationBoxes = useAnnotationStore((state) => state.showBoxes);
+  const setSelectedAnnotation = useAnnotationStore((state) => state.setSelected);
+  const setHoveredAnnotation = useAnnotationStore((state) => state.setHovered);
   const setInspectorTab = useWorkspaceStore((state) => state.setInspectorTab);
   const { drawOverlays } = useOverlay();
   const { hitTest } = useHitTest();
@@ -221,6 +232,28 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
     );
   };
 
+  // Annotation hit-testing follows the `Show boxes` toggle: with the boxes
+  // hidden, clicks must reach the objects underneath. Annotations of another
+  // page are never candidates, so a stale list can never steal a click.
+  const annotationTargets =
+    showAnnotationBoxes && annotationPage === pageNum ? annotations : NO_ANNOTATIONS;
+
+  const getHoveredAnnotation = (
+    event: React.MouseEvent<HTMLCanvasElement>,
+  ): PdfAnnotation | null => {
+    if (annotationTargets.length === 0) return null;
+    const rect = event.currentTarget.getBoundingClientRect();
+    return hitTestAnnotations(
+      annotationTargets,
+      event.clientX - rect.left,
+      event.clientY - rect.top,
+      pdfWidth,
+      pdfHeight,
+      rect.width,
+      rect.height,
+    );
+  };
+
   return (
     <>
       <canvas
@@ -229,19 +262,43 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
         onMouseMove={(event) => {
           handlers.onMouseMove(event);
           if (dragging) return;
+          // Annotations sit above the page content: while one is hovered, the
+          // object underneath it must not become the hover target.
+          const annotation = getHoveredAnnotation(event);
+          setHoveredAnnotation(annotation);
+          if (annotation) {
+            setHoveredObject(null);
+            return;
+          }
           setHoveredObject(getHoveredObject(event));
         }}
         onMouseUp={handlers.onMouseUp}
-        onClick={() => {
+        onClick={(event) => {
           // Skip the click fired right after a region drag so it does not select a stale hovered object.
           if (wasDragRef.current) return;
+          const annotation = getHoveredAnnotation(event);
+          if (annotation) {
+            setSelectedAnnotation(annotation);
+            setSelectedObject(null);
+            // A canvas selection always opens the details view.
+            setInspectorTab('inspect');
+            return;
+          }
+
+          // Any other click drops the annotation selection, so only one
+          // selection (annotation or object) can be active at a time.
+          setSelectedAnnotation(null);
           const hovered = usePdfStore.getState().hoveredObject;
           setSelectedObject(hovered);
           // A canvas selection always opens the object details; an empty click
           // only clears the selection and leaves the current tab alone.
           if (hovered) setInspectorTab('inspect');
         }}
-        onMouseLeave={() => { if (!dragging) setHoveredObject(null); }}
+        onMouseLeave={() => {
+          if (dragging) return;
+          setHoveredObject(null);
+          setHoveredAnnotation(null);
+        }}
         style={{
           position: 'absolute',
           top: 0,
