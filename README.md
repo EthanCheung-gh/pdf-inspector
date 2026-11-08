@@ -1,6 +1,6 @@
 # PDF Inspector
 
-面向开发者的 PDF 结构检查工具——在 PDF.js 渲染结果之上叠加 pdfplumber 的坐标级对象数据，直观检查字符、单词、线条、曲线、矩形、表格和图片，并以只读方式检查注释、链接与表单字段。提供 Electron 桌面应用与浏览器（Node HTTP 后端）两种运行方式。
+面向开发者的 PDF 结构检查工具——在 PDF.js 渲染结果之上叠加 pdfplumber 的坐标级对象数据，直观检查字符、单词、线条、曲线、矩形、表格和图片，并以只读方式检查注释、链接、表单字段、原始对象树与内容流。提供 Electron 桌面应用与浏览器（Node HTTP 后端）两种运行方式。
 
 [![CI](https://github.com/EthanCheung-gh/pdf-inspector/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/EthanCheung-gh/pdf-inspector/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-v0.2.0-blue.svg)](https://github.com/EthanCheung-gh/pdf-inspector)
@@ -19,6 +19,8 @@
 | ![文档体检工作区：严重级别汇总、筛选器、发现列表与右侧选中发现详情](docs/images/audit-workspace.png) | **文档体检**<br>跨字体、页面、图片、元数据、结构与安全的整档审计；按严重级别汇总，可按严重级别/类别筛选，选中条目查看证据与修复建议，并可跳转到对应页面。 |
 | ![PDF 审计 HTML 报告：文档信息、严重级别汇总与逐条发现](docs/images/audit-report.png) | **审计报告（HTML）**<br>CLI `audit --format html` 生成单文件报告：文档信息、严重级别汇总与逐条发现（证据、建议）；内联 CSS、无脚本、无外部资源。 |
 | ![注释、链接与表单：Annots 列表、画布框选与 Inspector 只读表单详情](docs/images/annotations.png) | **注释、链接与表单**<br>`Annots` 标签页列出当前页的链接、表单字段、标记与注释；画布同步绘制只读框，选中后在 Inspector 查看字段值、选项与链接目标。 |
+| ![Raw 对象树：Catalog → Pages → Page → Resources 逐层展开，右侧显示图片 XObject 的流元数据](docs/images/raw-object-tree.png) | **原始对象树**<br>工具栏 `Raw` 打开只读工作区；左侧从 trailer 根开始按引用懒加载，展开 `Pages`、页面与 `Resources` 后选中对象，右侧显示字典、数组与流元数据。 |
+| ![内容流：第 1 页解码后的操作符与操作数，包含 BT、Tf、Tj、Do](docs/images/raw-content-stream.png) | **内容流**<br>`Content stream` 标签页按页解码内容流，逐条列出 offset、操作符与操作数；`BT` / `Tf` / `Tj` / `Do` 等操作符只读取、不执行。 |
 
 *截图来自 Web 构建；桌面端使用同一套 React UI，界面与功能一致。*
 
@@ -91,6 +93,16 @@
 - **表单只读**：字段值、默认值、Flags 与选项全部以文本呈现，没有输入框、没有重置/提交按钮，也没有写回 PDF 的路径；签名字段只作为字段显示并标注未验证。
 - **隐藏与弹出注释**：Popup 注释不单独列出（改为显示父注释的内容）；隐藏注释在列表中带 `Hidden` 标记，但默认不绘制画布框。
 - **范围**：只处理当前页，翻页时重新加载并清除上一页的选中；这是纯读取功能，不修改 PDF。数据来源、链接策略与非目标详见 [docs/annotations.md](docs/annotations.md)。
+
+### 原始 PDF 对象树与内容流
+
+- **Raw 工作区**：工具栏 `Raw` 打开独立的只读工作区，与 Diff、Audit 互斥；Inspect 保持挂载但被隐藏，页码、缩放、选中与筛选状态不受影响，`Back to Inspect` 随时返回。Raw 不使用左侧第六个标签页，因此在 200px 最小面板宽度下左侧仍只有五个标签。
+- **Trailer 根**：对象树从 trailer 的 `Root`（catalog）、`Info`、`Encrypt`、`ID` 以及 catalog 的 `Pages` 引用开始，只读取这些根，不做整图遍历。
+- **懒加载引用**：`15 0 R` 这样的引用本身就是一个节点，展开或点击时才读取该对象；引用不会自动递归解析，循环引用不会展开成死循环，树上限 8 层并提示深度限制。
+- **字典、数组与流**：右侧 `Object` 标签页显示对象摘要与值树，区分 null / 布尔 / 数字 / 字符串 / 名称 / 引用 / 数组 / 字典 / 流；字典与数组可展开，流只显示长度、过滤器、Subtype 与有界文本预览，二进制字节永不返回。
+- **内容流操作符**：`Content stream` 标签页按页解码页面内容流，逐条列出序号、offset、操作符与操作数（`BT` / `Tf` / `Tj` / `Do` / `cm` 等）；操作数中的引用可点击跳转到对应对象，所有文本按普通文本渲染，操作符只读取、不执行。
+- **上限与截断**：嵌套 4 层、每个容器 100 项、字符串与预览 4096 字符、每页 5000 个操作符、每页 20 条内容流；超限时标记 `truncated` 并在界面提示，而不是静默截断。
+- **只读**：不能编辑对象、重写流、解密或执行内容流，也不提供 raw diff、导出或 CLI。序列化语义、上限与安全边界详见 [docs/raw.md](docs/raw.md)。
 
 ### PDF Diff
 
@@ -188,7 +200,7 @@ npm run web:start  # 直接启动已构建的 dist-web-server/server.mjs
 python scripts/generate-web-samples.py
 ```
 
-随后在 Web 界面打开 `/samples/basic.pdf`（小型示例，含表格与图片）、`/samples/large.pdf`（多页文档，便于观察字体分批分析）或 `/samples/annotations.pdf`（两页示例，含外部/内部链接、文本注释、高亮与表单字段，用于 `Annots` 标签页）。
+随后在 Web 界面打开 `/samples/basic.pdf`（小型示例，含表格与图片）、`/samples/large.pdf`（多页文档，便于观察字体分批分析）、`/samples/annotations.pdf`（两页示例，含外部/内部链接、文本注释、高亮与表单字段，用于 `Annots` 标签页）或 `/samples/raw.pdf`（两页示例，含命名字体资源、图片 XObject 与 `BT`/`Tf`/`Tj`/`Do` 操作符，用于 `Raw` 工作区）。
 
 > **安全提示**：Web 服务没有身份认证，任何能访问该端口的人都可以上传/下载文档、调用解析接口。默认绑定 `0.0.0.0`，请仅在可信网络使用；本机使用时建议 `HOST=127.0.0.1 npm run web`。
 
@@ -205,6 +217,7 @@ python scripts/generate-web-samples.py
 9. **比较版本**：点击工具栏 `Diff` 选择 Old/New 两份 PDF，按需设置位置容差与忽略项后 Compare；在左侧变更列表选择条目查看详情，或切换 Side by side / Overlay，`Export JSON` 保存结果。
 10. **文档体检**：点击工具栏 `Audit` 对当前文档执行整档审计，查看严重级别汇总，按严重级别/类别筛选，选中发现查看证据与建议；需要时点击 `Open page` 跳转到对应页面，或用 `Export JSON` 保存完整报告。
 11. **检查注释与表单**：切换到左侧 `Annots` 标签页查看当前页的注释、链接与表单字段，按 Kind/Subtype 过滤；点击列表行或画布上的注释框，在 Inspector 的 `Inspect` 中查看只读详情。外部链接需点击 `Open link` 才会打开，内部链接使用 `Go to page N` 跳转；表单字段不能编辑或提交。
+12. **查看原始对象与内容流**：点击工具栏 `Raw` 打开只读工作区，在左侧对象树展开 `Catalog` → `Pages` → 页面 → `Resources`，点击引用在右侧查看对象值；切换到 `Content stream` 按页查看解码后的操作符与操作数。`Back to Inspect` 返回原文档，页码与缩放保持不变。
 
 ## CLI 与 CI
 
@@ -344,7 +357,7 @@ Web 模式
       Python Sidecar（同上）
 ```
 
-Python 侧车通过 stdin/stdout 上的行分隔 JSON-RPC 通信，提供 `open`、`extract_page`、`extract_metadata`、`analyze_fonts`、`get_image_data`、`audit_document`、`audit_pages`、`shutdown` 等方法，并用 LRU 缓存复用已解析页面。
+Python 侧车通过 stdin/stdout 上的行分隔 JSON-RPC 通信，提供 `open`、`extract_page`、`extract_metadata`、`analyze_fonts`、`get_image_data`、`raw_document`、`raw_object`、`raw_page_content`、`audit_document`、`audit_pages`、`shutdown` 等方法，并用 LRU 缓存复用已解析页面。
 
 ## 技术栈
 
@@ -374,6 +387,7 @@ pdf-inspector/
 │   ├── cli.py             # `pdf-inspector diff` / `audit` CLI
 │   ├── diff.py            # 对象级 diff 引擎
 │   ├── report.py          # Diff 摘要与自包含 HTML 报告
+│   ├── raw.py             # 原始对象图与内容流序列化（有界、只读）
 │   ├── audit.py           # 文档审计引擎（检查项、排序、AuditReport）
 │   ├── audit_report.py    # 审计摘要与单文件 HTML 报告
 │   ├── __tests__/         # pytest 测试
@@ -387,6 +401,7 @@ pdf-inspector/
 ├── docs/
 │   ├── audit.md           # 文档体检：检查项、AuditReport schema、CLI 与 action
 │   ├── annotations.md     # 注释、链接与表单：数据来源、只读策略与限制
+│   ├── raw.md             # 原始对象树与内容流：序列化语义、上限与安全边界
 │   ├── ci.md              # Diff CLI 与 GitHub Action
 │   ├── packaging.md       # 打包说明
 │   ├── images/            # README 截图
@@ -458,6 +473,10 @@ npm run dist:linux       # Linux
 - 注释与表单不参与导出、Diff、Audit 或 CLI：导出、比较与审计仍只处理对象层，不包含注释、链接与表单字段。
 - 外部链接只在用户点击 `Open link` 时打开，且仅支持 `http(s)`；`mailto:`、`file:`、`data:`、`javascript:` 等目标只显示、不打开。内部链接只跳转到解析出的页码，不恢复滚动位置，未解析的目标保持只读展示。
 - 旋转页（`/Rotate` 为 90/180/270）只提供注释列表与详情，不绘制画布框与命中测试；CropBox 与 MediaBox 不一致的页面，注释框以 MediaBox 为基准，可能整体偏移（与对象叠加层一致）。
+- 原始对象视图是只读的：不能编辑对象、重写流、解密或执行内容流，也不提供 raw diff、导出或 CLI；需要修改 PDF 时请使用其他工具。
+- 原始对象视图只返回有界数据：嵌套、条目、字符串、操作符与内容流数量都有上限，超限标记 `truncated` 并在界面提示；二进制流只显示长度、过滤器与 Subtype 等元数据，不提供字节预览。
+- 原始对象视图不是完整 PDF 解析器：不遍历整个对象图，不解析 XFA 或结构树，也没有对象搜索/查询语言；大文档需要按引用逐层展开。
+- Raw 不使用左侧第六个标签页：它通过工具栏打开独立工作区，并与 Diff、Audit 互斥；与 Inspect 的切换不会改变文档状态，但 Raw 自身不保存展开状态，重新打开从 trailer 根开始。
 - Web 模式同一时间只维护一份“当前文档”，且没有多用户隔离或认证。
 - 临时文件清理为尽力而为，异常退出后可能需要手动清理系统临时目录。
 - Web 模式需先构建 `dist-web` 与 `dist-web-server`；未构建时服务会提示构建后刷新。

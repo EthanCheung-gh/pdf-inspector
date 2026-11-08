@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the deterministic demo PDFs used by the web build.
 
-Creates three files in ``web-samples/``:
+Creates four files in ``web-samples/``:
 
 * ``basic.pdf`` - four pages with multi-font/colour text, a ruled table and a
   small raster image. Small enough to open instantly.
@@ -10,6 +10,9 @@ Creates three files in ``web-samples/``:
 * ``annotations.pdf`` - two pages with links, a text annotation, a highlight,
   a text field, a required checkbox and a combo choice field, for the
   read-only ``Annots`` tab and Inspector detail view.
+* ``raw.pdf`` - two pages for the ``Raw`` workspace: page 1 has text, several
+  named font resources, a raster image XObject (``Do``) and content-stream
+  ``BT``/``Tf``/``Tj`` operators, page 2 is a plain text page.
 
 The output is deterministic (fixed metadata, no timestamps, no randomness),
 network-free and fast enough (<5s) to run on every demo setup. Only reportlab
@@ -488,6 +491,125 @@ def build_annotations(path: str) -> None:
     doc.save()
 
 
+def build_raw(path: str) -> None:
+    """Two-page demo for the read-only ``Raw`` workspace.
+
+    Page 1 keeps every shape the Raw view needs to show, without hand-writing
+    any PDF syntax:
+
+    * heading and body text, emitted as ``BT`` / ``Tf`` / ``Tj`` operators;
+    * several named font resources (reportlab names them ``/F1``, ``/F2``, ...);
+    * an image XObject placed with a ``Do`` operator;
+    * the nested ``/Resources`` dictionary reportlab produces naturally
+      (``/Font`` and ``/XObject`` sub-dictionaries).
+
+    Page 2 is a plain text page so the content-stream page selector has a
+    second, much smaller stream to compare against. Metadata, image bytes and
+    operator order are fixed on every run (``invariant=1``, no clock, no
+    randomness, no network).
+    """
+    doc = canvas.Canvas(path, pagesize=LETTER, invariant=1)
+    _metadata(doc, "PDF Inspector - Raw Object Sample")
+    content_width = PAGE_WIDTH - 2 * MARGIN
+
+    # -- Page 1: text, resources, image and their operators -----------------
+    doc.setFillColor(INK)
+    doc.setFont("Helvetica-Bold", 22)
+    doc.drawString(MARGIN, PAGE_HEIGHT - 86, "Raw object graph")
+
+    # The image is drawn right after the heading so its `Do` operator lands
+    # near the top of the decoded content stream, directly after the heading's
+    # BT / Tf / Tj block. One screen of the Content stream tab is then enough
+    # to show all four operators without scrolling.
+    image = _sample_image()
+    image_width, image_height = 240, 140
+    image_top = PAGE_HEIGHT - 116
+    image_y = image_top - image_height
+    if image is not None:
+        doc.drawImage(
+            image,
+            MARGIN,
+            image_y,
+            width=image_width,
+            height=image_height,
+            mask="auto",
+        )
+
+        doc.setFillColor(MUTED)
+        doc.setFont("Helvetica", 9)
+        doc.drawString(
+            MARGIN,
+            image_y - 16,
+            "Raster image XObject, placed with a Do operator",
+        )
+    else:  # pragma: no cover - only when Pillow is missing
+        doc.setFillColor(MUTED)
+        doc.setFont("Helvetica", 10)
+        doc.drawString(MARGIN, image_y + 60, "Image skipped: Pillow is not installed.")
+
+    y = image_y - 46
+    doc.setFillColor(MUTED)
+    doc.setFont("Times-Roman", 12)
+    doc.drawString(
+        MARGIN,
+        y,
+        "Catalog, page resources, references and content operators",
+    )
+
+    doc.setStrokeColor(ACCENT)
+    doc.setLineWidth(1.4)
+    doc.line(MARGIN, y - 12, MARGIN + 160, y - 12)
+
+    y -= 44
+    paragraph = (
+        "Open this page with the Raw workspace to read the trailer roots, the "
+        "catalog, and the page dictionary as plain PDF values. References such "
+        "as the page tree or a font stay references until they are expanded, "
+        "and the decoded content stream shows the same text and image operators "
+        "a PDF reader would execute."
+    )
+    doc.setFillColor(INK)
+    doc.setFont("Helvetica", 10.5)
+    for line in _wrapped_lines(paragraph, "Helvetica", 10.5, content_width):
+        doc.drawString(MARGIN, y, line)
+        y -= 15
+
+    # A second named font resource (Courier) so the /Font dictionary has more
+    # than one entry, and the operator examples read like a real stream.
+    y -= 10
+    doc.setFillColor(HexColor("#0f766e"))
+    doc.setFont("Courier", 9.5)
+    for snippet in (
+        "BT /F1 10.5 Tf 56 640 Td (Raw object graph) Tj ET",
+        "q 240 0 0 140 56 300 cm /FormXob... Do Q",
+    ):
+        doc.drawString(MARGIN, y, snippet)
+        y -= 13
+
+    _footer(doc, "Page 1 of 2")
+    doc.showPage()
+
+    # -- Page 2: a small, plain text page ----------------------------------
+    doc.setFillColor(INK)
+    doc.setFont("Helvetica-Bold", 18)
+    doc.drawString(MARGIN, PAGE_HEIGHT - 86, "A second, simpler page")
+
+    paragraph = (
+        "This page only draws text, so its content stream is short: one font "
+        "resource, a handful of BT / Tf / Tj operators and nothing else. Switch "
+        "the page selector in the Content stream tab to compare it with page 1."
+    )
+    y = PAGE_HEIGHT - 124
+    doc.setFillColor(INK)
+    doc.setFont("Helvetica", 10.5)
+    for line in _wrapped_lines(paragraph, "Helvetica", 10.5, content_width):
+        doc.drawString(MARGIN, y, line)
+        y -= 15
+
+    _footer(doc, "Page 2 of 2")
+    doc.save()
+
+
 def build_large(path: str) -> None:
     """120 pages of simple text: fast to build, enough for batched analysis."""
     doc = canvas.Canvas(path, pagesize=LETTER, invariant=1)
@@ -547,14 +669,17 @@ def main() -> int:
     basic = os.path.join(OUT_DIR, "basic.pdf")
     large = os.path.join(OUT_DIR, "large.pdf")
     annotations = os.path.join(OUT_DIR, "annotations.pdf")
+    raw = os.path.join(OUT_DIR, "raw.pdf")
 
     build_basic(basic)
     build_large(large)
     build_annotations(annotations)
+    build_raw(raw)
 
     print(basic)
     print(large)
     print(annotations)
+    print(raw)
     return 0
 
 
