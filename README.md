@@ -16,6 +16,8 @@
 | ![页面几何：五个页面框与标尺](docs/images/page-geometry.png) | **页面几何**<br>`Page` 标签页列出 MediaBox / CropBox / TrimBox / BleedBox / ArtBox，可切换 pt/mm 并显示标尺。 |
 | ![Diff 工作区：并排旧/新页面、变更摘要与列表、右侧选中变更详情](docs/images/diff-workspace.png) | **PDF Diff**<br>并排查看旧/新页面；左侧按页汇总变更，选中条目后右侧显示旧/新文本、BBox 与字段差异，顶部可重新选择旧/新文件或导出 JSON。 |
 | ![叠加模式：同一页上叠加旧/新对象框](docs/images/diff-overlay.png) | **叠加模式**<br>在同一页叠加旧/新对象框（移除红、新增绿、移动橙、修改蓝），适合定位同一区域的改动。 |
+| ![文档体检工作区：严重级别汇总、筛选器、发现列表与右侧选中发现详情](docs/images/audit-workspace.png) | **文档体检**<br>跨字体、页面、图片、元数据、结构与安全的整档审计；按严重级别汇总，可按严重级别/类别筛选，选中条目查看证据与修复建议，并可跳转到对应页面。 |
+| ![PDF 审计 HTML 报告：文档信息、严重级别汇总与逐条发现](docs/images/audit-report.png) | **审计报告（HTML）**<br>CLI `audit --format html` 生成单文件报告：文档信息、严重级别汇总与逐条发现（证据、建议）；内联 CSS、无脚本、无外部资源。 |
 
 *截图来自 Web 构建；桌面端使用同一套 React UI，界面与功能一致。*
 
@@ -90,6 +92,17 @@
 - **Export JSON**：把当前结果导出为 `DiffResult` JSON（`schemaVersion: 1`）。
 - **不影响当前检查**：Diff 在独立的旧/新文档上运行，Inspect 中打开的文档、页码、缩放与选中状态保持不变；`Back to Inspect` 返回原文档。
 - **对象级而非像素级**：比较的是提取出的对象及其元数据，不做渲染后的像素 diff，也不做 OCR；扫描件或纯图片页面只能看到 image 对象级变化，无法识别其中的文字或局部视觉差异。
+
+### 文档体检
+
+- **整档检查**：跨字体、页面、图片、元数据、结构与安全执行确定性检查，覆盖未嵌入字体、缺少 ToUnicode、混合页面尺寸、旋转页面、页面框越界、低分辨率图片、图片页无可提取文本、扫描页、空页面、缺失元数据、加密与未标记 PDF 等场景。
+- **严重级别**：发现分为 `error` / `warning` / `info`，不提供“健康分”。页面提取失败是当前的 `error` 来源；未嵌入字体为 `warning`，Standard 14 字体不会被视为缺失。
+- **分批进度**：文档级检查完成后按每 10 页一批顺序执行页面检查，并实时显示 `Auditing pages N/M…`；批次之间界面保持可用。
+- **独立工作区**：工具栏 `Audit` 打开文档体检工作区（与 Diff 互斥），顶部显示文件与 `Run` / `Re-run`，左侧按严重级别汇总并可按严重级别/类别筛选，中间为发现列表，右侧显示选中发现的说明、证据与修复建议。
+- **跳转到页面**：带页码的发现提供 `Open page`，点击后关闭 Audit 并在 Inspect 中导航到该页；Inspect 中打开的文档、页码、缩放与选中状态保持不变，`Back to Inspect` 可随时返回。
+- **JSON 导出**：`Export JSON` 保存完整的 `AuditReport`（`schemaVersion: 1`），包含 tool、document、summary 与 findings；CLI `audit --format json` 输出同一 schema。
+- **报告与集成**：CLI 支持 `summary` / `json` / `html` 三种格式，HTML 为单文件、内联 CSS、无脚本；`audit/action.yml` 可在 CI 中运行审计并按 `fail-on` 决定步骤成败。详见 [docs/audit.md](docs/audit.md)。
+- **启发式检查**：审计基于提取出的对象、字体信息、页面框与 catalog 元数据，不做 PDF/A 认证或签名验证，也不做 OCR；旋转页或 CropBox 偏移页上的发现只到页面级。
 
 ### 打开方式
 
@@ -179,6 +192,7 @@ python scripts/generate-web-samples.py
 7. **控制叠加层**：在左侧 `Layers` 标签页开关七类对象、查看当前页计数、使用 Solo 或调整透明度；`F` 可进入专注模式，隐藏左右面板。
 8. **搜索与导出**：`Ctrl/Cmd+F` 搜索；通过 Export 选择当前页/整档、JSON/CSV 与要包含的元素类型。
 9. **比较版本**：点击工具栏 `Diff` 选择 Old/New 两份 PDF，按需设置位置容差与忽略项后 Compare；在左侧变更列表选择条目查看详情，或切换 Side by side / Overlay，`Export JSON` 保存结果。
+10. **文档体检**：点击工具栏 `Audit` 对当前文档执行整档审计，查看严重级别汇总，按严重级别/类别筛选，选中发现查看证据与建议；需要时点击 `Open page` 跳转到对应页面，或用 `Export JSON` 保存完整报告。
 
 ## CLI 与 CI
 
@@ -210,7 +224,38 @@ npm run diff -- old.pdf new.pdf
 
 `--format json` 输出独立的 `DiffResult`（`schemaVersion: 1`），与检查器的对象导出 JSON 不是同一 schema；它包含 `tool` / `options` / `old` / `new` / `summary` / `pages`，每个变更带 kind、type、旧/新页码与 BBox、文本与 `details`。输出不含时间戳与绝对路径、顺序稳定，相同输入与选项产生逐字节一致的 JSON，便于提交、diff 或缓存。
 
-### GitHub Action
+### 审计 CLI
+
+文档体检同样可以脱离界面运行，复用与界面相同的检查引擎。CLI 只接受本地 PDF 路径（拒绝 `http(s)` URL），输出摘要、`AuditReport` JSON 或单文件 HTML，并按 `--fail-on` 映射退出码。
+
+```bash
+# 直接使用 Python CLI；需要 Python 3.10+ 与 sidecar/requirements.txt
+python sidecar/cli.py audit report.pdf
+python sidecar/cli.py audit report.pdf --format json --output report.audit.json
+python sidecar/cli.py audit report.pdf --format html --output report.audit.html
+
+# 发现 warning/error 时返回 1，适合作为质量门禁
+python sidecar/cli.py audit report.pdf --fail-on warning
+
+# 通过 bin/pdf-inspector.mjs 包装器（安装/链接后可直接调用 pdf-inspector）
+pdf-inspector audit report.pdf
+node bin/pdf-inspector.mjs audit report.pdf --format json --output report.audit.json
+```
+
+常用选项：
+
+| 选项 | 说明 |
+|------|------|
+| `--format` | 输出格式：`summary`（默认）/ `json` / `html` |
+| `--output PATH` | 把格式化结果同时写入文件；stdout 仍打印摘要 |
+| `--fail-on` | 决定哪些发现返回 1；默认 `none`，可选 `error` / `warning` / `none`。`warning` 同时覆盖 errors，`error` 只覆盖 errors |
+| `--quiet` | 不打印人类摘要，只保留 JSON/HTML 输出 |
+
+退出码：`0` 表示没有严重级别命中 `--fail-on`；`1` 表示 `--fail-on` 命中；`2` 表示参数、输入、读取或审计错误。`--fail-on none` 永不返回 1，但输入错误仍返回 2。页面提取失败是当前唯一的 `error` 来源，因此 `--fail-on error` 只会拦截真正不可读的页面。
+
+`--format json` 输出 `AuditReport`（`schemaVersion: 1`），包含 `tool` / `document` / `summary` / `findings`；每条发现带类别、严重级别、页码（文档级为 `null`）、标题、说明、证据与建议。输出不含时间戳与绝对路径，顺序稳定，相同 PDF 产生逐字节一致的 JSON。HTML 报告为单文件、内联 CSS、无脚本、无外部资源，所有 PDF 文本均转义。完整 schema、检查项与阈值见 [docs/audit.md](docs/audit.md)。
+
+### Diff GitHub Action
 
 仓库提供 composite action（[`action.yml`](action.yml)），会在 runner 上安装 Python 与 sidecar 依赖后运行 diff：
 
@@ -234,7 +279,25 @@ HTML 报告是单文件、内联 CSS、无脚本、无外部资源：
 
 <img src="docs/images/diff-report.png" alt="PDF diff HTML 报告：文档 SHA-256、变更汇总、diff 选项与逐页变更表" width="560">
 
-> CLI 与 action 都需要 Python 3.10+ 及 `sidecar/requirements.txt` 中的依赖，并且只读取本地路径；打包后的桌面应用不包含 CLI。
+> Diff 的 CLI 与 action 都需要 Python 3.10+ 及 `sidecar/requirements.txt` 中的依赖，并且只读取本地路径；打包后的桌面应用不包含 CLI。
+
+### 审计 GitHub Action
+
+仓库还提供审计 composite action（[`audit/action.yml`](audit/action.yml)），会在 runner 上安装 Python 与 sidecar 依赖后运行 `audit`：
+
+```yaml
+- uses: actions/checkout@v4
+- uses: <owner>/pdf-inspector/audit@v1
+  with:
+    path: docs/report.pdf
+    fail-on: error
+    format: html
+    report-path: artifacts/pdf-audit.html
+    # 需要 JSON 时可同时指定；会额外执行一次 CLI 生成该 artifact
+    # json-path: artifacts/pdf-audit.json
+```
+
+action 默认 `fail-on: error`、`format: summary`，支持 `summary` / `json` / `html`；`json-path` / `report-path` 指定 JSON/HTML payload 的文件路径（`format` 选中对应格式且未指定路径时写入 runner 临时目录），payload 不写入步骤日志。输出 `exit-code` / `json-path` / `report-path`，并把退出码、`fail-on` 与 artifact 路径写入步骤摘要。非零退出码会先写入输出再让步骤失败，因此后续步骤仍可读取结果。仓库内使用 `uses: ./audit`，完整输入、输出与示例见 [docs/audit.md](docs/audit.md)。
 
 ## 架构
 
@@ -269,7 +332,7 @@ Web 模式
       Python Sidecar（同上）
 ```
 
-Python 侧车通过 stdin/stdout 上的行分隔 JSON-RPC 通信，提供 `open`、`extract_page`、`extract_metadata`、`analyze_fonts`、`get_image_data`、`shutdown` 等方法，并用 LRU 缓存复用已解析页面。
+Python 侧车通过 stdin/stdout 上的行分隔 JSON-RPC 通信，提供 `open`、`extract_page`、`extract_metadata`、`analyze_fonts`、`get_image_data`、`audit_document`、`audit_pages`、`shutdown` 等方法，并用 LRU 缓存复用已解析页面。
 
 ## 技术栈
 
@@ -296,9 +359,11 @@ pdf-inspector/
 ├── server/
 │   └── web-server.ts      # 无 Electron 依赖的 Node HTTP 后端
 ├── sidecar/               # Python 侧车（extractor / cache / models / main）
-│   ├── cli.py             # `pdf-inspector diff` CLI
+│   ├── cli.py             # `pdf-inspector diff` / `audit` CLI
 │   ├── diff.py            # 对象级 diff 引擎
-│   ├── report.py          # 摘要与自包含 HTML 报告
+│   ├── report.py          # Diff 摘要与自包含 HTML 报告
+│   ├── audit.py           # 文档审计引擎（检查项、排序、AuditReport）
+│   ├── audit_report.py    # 审计摘要与单文件 HTML 报告
 │   ├── __tests__/         # pytest 测试
 │   └── requirements.txt
 ├── bin/
@@ -308,6 +373,7 @@ pdf-inspector/
 │   ├── generate-icon.js
 │   └── freeze-sidecar.sh
 ├── docs/
+│   ├── audit.md           # 文档体检：检查项、AuditReport schema、CLI 与 action
 │   ├── ci.md              # Diff CLI 与 GitHub Action
 │   ├── packaging.md       # 打包说明
 │   ├── images/            # README 截图
@@ -315,6 +381,7 @@ pdf-inspector/
 ├── web-samples/           # 生成的演示 PDF（已 gitignore）
 ├── .github/workflows/ci.yml
 ├── action.yml             # PDF diff composite action
+├── audit/action.yml       # PDF audit composite action
 ├── index.html             # Electron 入口
 ├── index.web.html         # 浏览器入口
 └── package.json
@@ -336,7 +403,7 @@ npx vitest run
 
 `npx tsc -b` 使用项目引用，会同时检查 main、preload、renderer 与 shared。提交前建议执行上面的全部命令。
 
-CI 由 `.github/workflows/ci.yml` 定义：在推送到 `main`、推送 `v*` 标签、Pull Request 及手动触发时，执行上述类型检查与测试，并构建桌面端、Web 前端、Web 后端及生成演示 PDF；此外还有 diff CLI 与 diff action 的端到端任务。
+CI 由 `.github/workflows/ci.yml` 定义：在推送到 `main`、推送 `v*` 标签、Pull Request 及手动触发时，执行上述类型检查与测试，并构建桌面端、Web 前端、Web 后端及生成演示 PDF；此外还有 diff CLI、diff action、audit CLI 与 audit action 的端到端任务。
 
 ## 打包发布
 
@@ -368,6 +435,11 @@ npm run dist:linux       # Linux
 - Diff 的对象配对是启发式的：重复出现的相同对象（重复文字、相同几何的线条/矩形）只能按距离或阅读顺序贪心匹配；对象同时移动且内容改变、超出位置容差时，可能被报告为 `removed` + `added` 而不是 `modified` / `moved`。可调整 `--position-tolerance`、文本容差或忽略相应类型来减少噪声。
 - Diff 只比较提取出的对象及其元数据，不做渲染后的像素级 diff 或 OCR；扫描页面上的文字不会被识别为文本对象。
 - Diff CLI 需要 Python 3.10+ 与 sidecar 依赖，且只接受本地路径；`--fail-on` 只决定差异是否返回 1，参数/输入/解析错误始终返回 2，`none` 不会抑制错误。打包后的桌面应用不包含 CLI。
+- 文档体检的检查是启发式的：基于提取出的对象、字体信息、页面框与 catalog 元数据，可能出现误报或漏报；`--fail-on` 与 action 阈值应结合项目实际情况设置。
+- 文档体检不做 PDF/A 合规认证，也不验证数字签名；“未标记 PDF”只是诊断提示，不代表合规结论。
+- 文档体检不做 OCR，也不识别扫描页中的文字；扫描页只能得到“有图片但无可提取文本”的提示。
+- 旋转页或 CropBox 偏移页上的审计发现只到页面级，无法给出对象级高亮；带页码的发现仍可跳转到对应页面。
+- 文档体检按 10 页一批串行执行（与字体分析相同），超大文档需要较长时间；页面提取失败是当前唯一的 `error` 来源。CLI 与 action 同样需要 Python 3.10+ 与 sidecar 依赖，且只接受本地路径，打包后的桌面应用不包含 CLI。
 - Web 模式同一时间只维护一份“当前文档”，且没有多用户隔离或认证。
 - 临时文件清理为尽力而为，异常退出后可能需要手动清理系统临时目录。
 - Web 模式需先构建 `dist-web` 与 `dist-web-server`；未构建时服务会提示构建后刷新。
