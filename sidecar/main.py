@@ -8,6 +8,7 @@ from models import parse_request, format_response, RpcResponse
 from extractor import PdfExtractor
 from cache import PageCache
 from diff import DiffError, DiffOptions, diff_files
+from audit import AuditError, audit_document, audit_pages
 
 
 class RpcError(Exception):
@@ -141,6 +142,12 @@ class SidecarSession:
         if method == 'diff_documents':
             return self._diff_documents(params)
 
+        if method == 'audit_document':
+            return audit_document(self._require_extractor())
+
+        if method == 'audit_pages':
+            return self._audit_pages(params)
+
         if method == 'shutdown':
             self.close_extractor()
             self.should_exit = True
@@ -178,6 +185,21 @@ class SidecarSession:
         except (DiffError, ValueError) as exc:
             # A bad PDF or bad option values are user errors, not protocol
             # failures: report the message without a traceback.
+            raise RpcError(str(exc)) from exc
+
+    def _audit_pages(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Audit a 1-based inclusive page range of the open document.
+
+        Invalid ranges (non-integer, zero, reversed or past the last page) are
+        user errors: ``AuditError``/``ValueError`` become an ``RpcError`` so the
+        renderer gets the message instead of a traceback.
+        """
+        extractor = self._require_extractor()
+        try:
+            return audit_pages(
+                extractor, params.get('start_page'), params.get('end_page')
+            )
+        except (AuditError, ValueError) as exc:
             raise RpcError(str(exc)) from exc
 
     def _require_extractor(self) -> PdfExtractor:
