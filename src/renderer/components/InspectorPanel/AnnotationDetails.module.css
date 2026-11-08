@@ -1,0 +1,204 @@
+/*
+ * Read-only annotation detail view, rendered inside the Inspector's padded
+ * `.content` column. It deliberately reuses the section/row rhythm of the
+ * object details so switching between the two never looks like a different
+ * panel, with its own kind colours for the annotation badge.
+ */
+.details {
+  min-width: 0;
+}
+
+.section + .section {
+  margin-top: 18px;
+}
+
+.sectionTitle {
+  margin: 0 0 6px;
+  color: #8e99a6;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sectionContent {
+  border: 1px solid #353b43;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 28px;
+  padding: 5px 8px;
+  border-bottom: 1px solid #303740;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.label {
+  color: #8e99a6;
+}
+
+.value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #e1e6eb;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Multi-line annotation text keeps its line breaks but never widens the pane. */
+.text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.badge {
+  display: inline-flex;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.badgeLink {
+  color: #8fb8e8;
+  background: rgba(143, 184, 232, 0.12);
+  border-color: rgba(143, 184, 232, 0.32);
+}
+
+.badgeForm {
+  color: #c9a6e8;
+  background: rgba(201, 166, 232, 0.12);
+  border-color: rgba(201, 166, 232, 0.32);
+}
+
+.badgeMarkup {
+  color: #e0c98a;
+  background: rgba(224, 201, 138, 0.12);
+  border-color: rgba(224, 201, 138, 0.32);
+}
+
+.badgeNote {
+  color: #e0b36a;
+  background: rgba(224, 179, 106, 0.12);
+  border-color: rgba(224, 179, 106, 0.35);
+}
+
+.badgeStamp {
+  color: #8fd6dd;
+  background: rgba(143, 214, 221, 0.12);
+  border-color: rgba(143, 214, 221, 0.32);
+}
+
+.badgeOther {
+  color: #aeb7c2;
+  background: rgba(174, 183, 194, 0.1);
+  border-color: rgba(174, 183, 194, 0.28);
+}
+
+.colorValue {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.colorSwatch {
+  width: 14px;
+  height: 14px;
+  border: 1px solid #75808c;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 20%);
+}
+
+/* The sanitized target is the only string the opener ever receives. */
+.url {
+  color: #8fb8e8;
+  overflow-wrap: anywhere;
+}
+
+/* Display-only raw PDF.js target, kept visually distinct from an openable URL. */
+.unsafeUrl {
+  color: #e2a2a7;
+  overflow-wrap: anywhere;
+  text-decoration: line-through;
+}
+
+.warning {
+  color: #e0b36a;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px;
+  border-top: 1px solid #303740;
+}
+
+.button {
+  padding: 3px 10px;
+  color: #e1e6eb;
+  background: #2a313a;
+  border: 1px solid #353b43;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: #333c47;
+}
+
+.button:focus-visible {
+  outline: 2px solid #5b9cff;
+  outline-offset: 1px;
+}
+
+.button:disabled {
+  color: #77818c;
+  background: #232930;
+  border-color: #2e353d;
+  cursor: not-allowed;
+}
+
+.note {
+  padding: 6px 8px;
+  color: #8e99a6;
+  border-top: 1px solid #303740;
+}
+
+.error {
+  padding: 6px 8px;
+  color: #e2a2a7;
+  background: rgba(226, 162, 167, 0.08);
+  border-top: 1px solid rgba(226, 162, 167, 0.35);
+  overflow-wrap: anywhere;
+}
+
+.options {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.option {
+  color: #e1e6eb;
+  overflow-wrap: anywhere;
+}
+
+.footer {
+  display: flex;
+  gap: 6px;
+  margin-top: 18px;
+}

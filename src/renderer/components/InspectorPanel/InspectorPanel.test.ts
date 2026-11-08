@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BBox } from '../../services/object-filter';
 import { filterByRegion } from '../../services/object-filter';
 import type { PdfChar, PdfObject, PdfRect, PdfWord } from '../../types/pdf-objects';
+import type { PdfAnnotation } from '../../types/annotations';
+import { useAnnotationStore } from '../../store/annotation-store';
 import { usePdfStore } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
 
@@ -452,5 +454,90 @@ describe('InspectorPanel tabs', () => {
 
     // The other three panels stay mounted so their local state survives.
     expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(4);
+  });
+});
+
+const selectedAnnotation: PdfAnnotation = {
+  id: '3:link',
+  page: 3,
+  subtype: 'Link',
+  kind: 'link',
+  rect: { x0: 10, y0: 20, x1: 110, y1: 40 },
+  title: 'See also',
+  contents: null,
+  modificationDate: null,
+  color: null,
+  opacity: null,
+  hidden: false,
+  link: {
+    url: 'https://example.com/reference',
+    unsafeUrl: 'https://example.com/reference',
+    internalPage: null,
+    newWindow: false,
+  },
+  form: null,
+};
+
+describe('InspectorPanel annotation precedence', () => {
+  afterEach(() => {
+    useAnnotationStore.getState().setSelected(null);
+    cleanup();
+  });
+
+  beforeEach(() => {
+    useWorkspaceStore.setState({ inspectorTab: 'inspect' });
+    useAnnotationStore.getState().setSelected(null);
+    // A hovered object is the strongest non-annotation signal; the annotation
+    // selection still wins over it.
+    usePdfStore.setState({
+      filePath: '/tmp/doc.pdf',
+      currentPage: 3,
+      pageData: null,
+      allObjects: exportObjects,
+      hoveredObject: exportWord,
+      selectedObject: null,
+      filterCriteria: {},
+      subset: null,
+      isLoading: false,
+      error: null,
+    });
+  });
+
+  it('shows the selected annotation instead of the hovered object', () => {
+    useAnnotationStore.getState().setSelected(selectedAnnotation);
+    render(React.createElement(InspectorPanel));
+
+    const panel = screen.getByRole('tabpanel', { name: 'Inspect' });
+    expect(within(panel).getByText('Annotation')).toBeTruthy();
+    expect(within(panel).getByText('https://example.com/reference')).toBeTruthy();
+    expect(within(panel).getByText('10, 20 → 110, 40')).toBeTruthy();
+
+    // The object details are replaced, not merged.
+    expect(within(panel).queryByText('Position')).toBeNull();
+    expect(within(panel).queryByText('hello')).toBeNull();
+    expect(
+      within(panel).queryByText('Hover over or select an object to inspect its properties.'),
+    ).toBeNull();
+  });
+
+  it('keeps the object details unchanged while no annotation is selected', () => {
+    render(React.createElement(InspectorPanel));
+
+    const panel = screen.getByRole('tabpanel', { name: 'Inspect' });
+    expect(within(panel).getByText('Position')).toBeTruthy();
+    expect(within(panel).getByText('hello')).toBeTruthy();
+    expect(within(panel).queryByText('Annotation')).toBeNull();
+  });
+
+  it('falls back to the object details after clearing the annotation selection', () => {
+    useAnnotationStore.getState().setSelected(selectedAnnotation);
+    render(React.createElement(InspectorPanel));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+
+    expect(useAnnotationStore.getState().selected).toBeNull();
+    const panel = screen.getByRole('tabpanel', { name: 'Inspect' });
+    expect(within(panel).getByText('Position')).toBeTruthy();
+    expect(within(panel).queryByText('Annotation')).toBeNull();
   });
 });

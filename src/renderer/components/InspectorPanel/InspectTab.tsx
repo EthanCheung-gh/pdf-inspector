@@ -1,7 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { ipc } from "../../services/ipc-client";
+import { useAnnotationStore } from "../../store/annotation-store";
 import { usePdfStore } from "../../store/pdf-store";
 import type { PdfImage, PdfObject, PdfObjectType, PdfTable } from "../../types/pdf-objects";
+import { AnnotationDetails } from "./AnnotationDetails";
 import { TableGrid, resolveTableIndex } from "./TableGrid";
 import styles from "./InspectorPanel.module.css";
 
@@ -75,6 +77,10 @@ export const InspectTab = (): JSX.Element => {
   // Hovering previews an object without changing the selection; keep that
   // precedence exactly as it was before the tab split.
   const object = hoveredObject ?? selectedObject;
+  // An annotation selection is explicit (canvas click or Annots row) and wins
+  // over the object hover preview; with no annotation the object view below is
+  // untouched.
+  const annotation = useAnnotationStore((state) => state.selected);
   const image = object && isImage(object) ? object : null;
   const imageStreamId = image?.stream_id;
   const imageFormat = image?.format;
@@ -135,13 +141,15 @@ export const InspectTab = (): JSX.Element => {
 
   return (
     <div className={styles.content}>
-      {!object && (
+      {annotation !== null && <AnnotationDetails annotation={annotation} />}
+
+      {annotation === null && !object && (
         <div className={styles.emptyState}>
           Hover over or select an object to inspect its properties.
         </div>
       )}
 
-      {object && (
+      {annotation === null && object && (
         <>
           <Section title="Object">
             <Row label="Type">

@@ -7,7 +7,7 @@ import { createJSONStorage, persist, type StateStorage } from 'zustand/middlewar
  * arranged so it can be written to localStorage without serializing the PDF.
  */
 
-export type LeftPanelTab = 'objects' | 'outline' | 'fonts' | 'layers';
+export type LeftPanelTab = 'objects' | 'outline' | 'fonts' | 'layers' | 'annotations';
 export type InspectorTab = 'inspect' | 'filter' | 'results' | 'page';
 export type WorkspacePanelSide = 'left' | 'right';
 
@@ -28,7 +28,13 @@ export const PANEL_LIMITS = {
   right: RIGHT_PANEL_LIMITS,
 } as const;
 
-export const LEFT_PANEL_TABS: readonly LeftPanelTab[] = ['objects', 'outline', 'fonts', 'layers'];
+export const LEFT_PANEL_TABS: readonly LeftPanelTab[] = [
+  'objects',
+  'outline',
+  'fonts',
+  'layers',
+  'annotations',
+];
 export const INSPECTOR_TABS: readonly InspectorTab[] = ['inspect', 'filter', 'results', 'page'];
 export const PAGE_UNITS: readonly PageUnits[] = ['pt', 'mm'];
 export const PAGE_BOX_KEYS: readonly PageBoxKey[] = ['media', 'crop', 'trim', 'bleed', 'art'];

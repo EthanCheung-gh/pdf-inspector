@@ -2,8 +2,10 @@
 import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useAnnotationStore } from '../../store/annotation-store';
 import { usePdfStore } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
+import type { PdfAnnotation } from '../../types/annotations';
 
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
 
@@ -12,6 +14,53 @@ vi.mock('../../hooks/usePageNavigation', () => ({
 }));
 
 import { LeftPanel } from './LeftPanel';
+
+const annotationBase = {
+  page: 2,
+  rect: { x0: 0, y0: 0, x1: 10, y1: 10 },
+  title: null,
+  contents: null,
+  modificationDate: null,
+  color: null,
+  opacity: null,
+  hidden: false,
+  link: null,
+  form: null,
+} as const;
+
+const linkAnnotation: PdfAnnotation = {
+  ...annotationBase,
+  id: '2:link',
+  subtype: 'Link',
+  kind: 'link',
+  link: {
+    url: 'https://example.com',
+    unsafeUrl: 'https://example.com',
+    internalPage: null,
+    newWindow: false,
+  },
+};
+
+const widgetAnnotation: PdfAnnotation = {
+  ...annotationBase,
+  id: '2:widget',
+  subtype: 'Widget',
+  kind: 'form',
+  form: {
+    fieldName: 'field',
+    fieldType: 'Tx',
+    value: 'value',
+    defaultValue: null,
+    readOnly: false,
+    required: false,
+    checkBox: false,
+    radioButton: false,
+    pushButton: false,
+    multiLine: false,
+    combo: false,
+    options: [],
+  },
+};
 
 describe('LeftPanel', () => {
   afterEach(cleanup);
@@ -31,6 +80,12 @@ describe('LeftPanel', () => {
       isLoading: false,
     });
     useWorkspaceStore.setState({ leftTab: 'objects', overlayOpacity: 1 });
+    useAnnotationStore.getState().clear();
+    useAnnotationStore.setState({
+      kindFilter: 'all',
+      subtypeFilter: 'all',
+      showBoxes: true,
+    });
   });
 
   it('switches between Objects and Outline tabs', () => {
@@ -157,7 +212,13 @@ describe('LeftPanel', () => {
 
     // Tab semantics survive the extra wrapper.
     const tabs = screen.getAllByRole('tab');
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['Objects', 'Outline', 'Fonts', 'Layers']);
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      'Objects',
+      'Outline',
+      'Fonts',
+      'Layers',
+      'Annots',
+    ]);
     expect(screen.getByRole('tab', { name: 'Fonts' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('tabpanel')).toBeTruthy();
   });
@@ -219,7 +280,7 @@ describe('LeftPanel', () => {
     // The tablist must stay a flat list of tabs: the collapse button lives in
     // the surrounding row, not inside `role="tablist"`.
     const tablist = screen.getByRole('tablist');
-    expect(tablist.querySelectorAll('[role="tab"]')).toHaveLength(4);
+    expect(tablist.querySelectorAll('[role="tab"]')).toHaveLength(5);
     expect(within(tablist).queryByRole('button', { name: 'Hide left panel' })).toBeNull();
 
     const collapse = screen.getByRole('button', { name: 'Hide left panel' });
@@ -230,5 +291,83 @@ describe('LeftPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Hide left panel' }));
     expect(useWorkspaceStore.getState().leftCollapsed).toBe(false);
+  });
+
+  it('adds an Annots tab that selects rows and survives tab switches', () => {
+    usePdfStore.setState({
+      filePath: '/docs/doc.pdf',
+      currentPage: 2,
+      // Annotations are normalized against the MediaBox, so the page geometry
+      // has to be present for the list to render at all.
+      pageData: {
+        width: 612,
+        height: 792,
+        rotation: 0,
+        boxes: {
+          media: { x0: 0, y0: 0, x1: 612, y1: 792 },
+          crop: { x0: 0, y0: 0, x1: 612, y1: 792 },
+          trim: null,
+          bleed: null,
+          art: null,
+        },
+        chars: [],
+        words: [],
+        rects: [],
+        lines: [],
+        curves: [],
+        images: [],
+        tables: [],
+      },
+      isLoading: false,
+      error: null,
+    });
+    useAnnotationStore.getState().setPageData(2, [linkAnnotation, widgetAnnotation]);
+    render(React.createElement(LeftPanel));
+
+    // Mounted from the start inside the hidden wrapper, exactly like Layers.
+    const kindSelect = screen.getByRole('combobox', { name: 'Kind', hidden: true });
+    expect(kindSelect.closest('[hidden]')).not.toBeNull();
+
+    const annotsTab = screen.getByRole('tab', { name: 'Annots' });
+    // The short visible label keeps the tooltip as the full name.
+    expect(annotsTab.getAttribute('title')).toBe('Annotations');
+    fireEvent.click(annotsTab);
+
+    expect(annotsTab.getAttribute('aria-selected')).toBe('true');
+    expect(useWorkspaceStore.getState().leftTab).toBe('annotations');
+    expect(kindSelect.closest('[hidden]')).toBeNull();
+    expect(screen.getByText('2 annotations · 1 link · 1 form field')).toBeTruthy();
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Kind' }), {
+      target: { value: 'form' },
+    });
+    expect(useAnnotationStore.getState().kindFilter).toBe('form');
+
+    const row = screen.getByRole('button', { name: /field = value/ });
+    fireEvent.click(row);
+
+    expect(useAnnotationStore.getState().selected?.id).toBe('2:widget');
+    expect(useWorkspaceStore.getState().inspectorTab).toBe('inspect');
+    expect(
+      screen.getByRole('button', { name: /field = value/ }).getAttribute('aria-pressed'),
+    ).toBe('true');
+
+    // Switching away keeps the panel (and its filter, selection and rows)
+    // mounted in the hidden wrapper instead of rebuilding them on return.
+    fireEvent.click(screen.getByRole('tab', { name: 'Objects' }));
+    const hiddenKind = screen.getByRole('combobox', {
+      name: 'Kind',
+      hidden: true,
+    }) as HTMLSelectElement;
+    expect(hiddenKind).toBe(kindSelect);
+    expect(hiddenKind.value).toBe('form');
+    expect(hiddenKind.closest('[hidden]')).not.toBeNull();
+    expect(useAnnotationStore.getState().selected?.id).toBe('2:widget');
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Annots' }));
+    expect(screen.getByRole('combobox', { name: 'Kind' })).toBe(kindSelect);
+    expect(
+      screen.getByRole('button', { name: /field = value/ }).getAttribute('aria-pressed'),
+    ).toBe('true');
   });
 });

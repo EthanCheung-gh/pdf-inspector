@@ -253,6 +253,22 @@ describe('workspace-store', () => {
     expect(useWorkspaceStore.getState().inspectorTab).toBe('page');
   });
 
+  it('persists and rehydrates the Annots left tab', async () => {
+    useWorkspaceStore.getState().setLeftTab('annotations');
+    expect(useWorkspaceStore.getState().leftTab).toBe('annotations');
+
+    const raw = window.localStorage.getItem(WORKSPACE_STORAGE_KEY) as string;
+    expect((JSON.parse(raw) as { state: { leftTab: string } }).state.leftTab).toBe('annotations');
+
+    window.localStorage.setItem(
+      WORKSPACE_STORAGE_KEY,
+      JSON.stringify({ version: 1, state: { leftTab: 'annotations' } }),
+    );
+    await useWorkspaceStore.persist.rehydrate();
+
+    expect(useWorkspaceStore.getState().leftTab).toBe('annotations');
+  });
+
   it('sanitizes persisted page display config per field', async () => {
     window.localStorage.setItem(
       WORKSPACE_STORAGE_KEY,

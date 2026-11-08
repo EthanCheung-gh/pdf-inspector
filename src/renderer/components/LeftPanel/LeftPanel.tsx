@@ -6,6 +6,7 @@ import {
   type LeftPanelTab,
 } from '../../store/workspace-store';
 import { StructureTree } from '../StructureTree/StructureTree';
+import { AnnotationsTab } from './AnnotationsTab';
 import { BookmarkTree } from './BookmarkTree';
 import { FontsTab } from './FontsTab';
 import { LayersPanel } from './LayersPanel';
@@ -16,6 +17,15 @@ const TAB_LABELS: Record<LeftPanelTab, string> = {
   outline: 'Outline',
   fonts: 'Fonts',
   layers: 'Layers',
+  // The 200px minimum panel width cannot spell out "Annotations" for a fifth
+  // tab, so the label stays short and the full name lives in the tooltip.
+  annotations: 'Annots',
+};
+
+/** Visible label and tooltip per tab; only Annots needs a different title. */
+const TAB_TITLES: Record<LeftPanelTab, string> = {
+  ...TAB_LABELS,
+  annotations: 'Annotations',
 };
 
 export const LeftPanel: React.FC = () => {
@@ -48,7 +58,7 @@ export const LeftPanel: React.FC = () => {
               type="button"
               role="tab"
               aria-selected={leftTab === tab}
-              title={TAB_LABELS[tab]}
+              title={TAB_TITLES[tab]}
               onClick={() => {
                 if (tab === 'fonts') setFontsVisited(true);
                 setLeftTab(tab);
@@ -80,6 +90,12 @@ export const LeftPanel: React.FC = () => {
             Fonts) is what lets a Solo selection survive a tab switch. */}
         <div className={styles.tabPanel} hidden={leftTab !== 'layers'}>
           <LayersPanel />
+        </div>
+        {/* The Annots list and its filters come from the annotation store, but
+            the panel also owns its scroll position and row focus, so it stays
+            mounted inside a hidden wrapper exactly like Layers. */}
+        <div className={styles.tabPanel} hidden={leftTab !== 'annotations'}>
+          <AnnotationsTab />
         </div>
       </div>
     </aside>

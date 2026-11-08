@@ -11,7 +11,7 @@
   overflow: hidden;
 }
 
-/* Tab row: four tabs plus the collapse control. The border lives here so the
+/* Tab row: five tabs plus the collapse control. The border lives here so the
  * hidden/shown tab bar and the button share one edge. */
 .tabHeader {
   display: flex;
@@ -29,20 +29,21 @@
 .tabButton {
   flex: 1;
   min-width: 0;
-  padding: 8px 2px;
+  padding: 8px 1px;
   border: 0;
   background: transparent;
   color: #8e99a6;
   font: inherit;
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0;
   text-transform: uppercase;
   cursor: pointer;
   text-align: center;
   white-space: nowrap;
-  /* Four labels have to fit the 200px minimum panel width; ellipsize instead
-   * of letting the text spill over the neighbouring tab. */
+  /* Five labels — Objects, Outline, Fonts, Layers, Annots — have to share the
+   * 200px minimum panel width, so the label size is trimmed rather than the
+   * panel; ellipsize instead of letting text spill over the neighbouring tab. */
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -97,8 +98,8 @@
 }
 
 /*
- * Wrapper for tabs that stay mounted while another tab is active (Fonts and
- * Layers) so their local state survives a tab switch.
+ * Wrapper for tabs that stay mounted while another tab is active (Fonts,
+ * Layers and Annots) so their local state survives a tab switch.
  * The explicit [hidden] rule is required: the author-level `display: flex`
  * below outranks the user-agent `[hidden] { display: none }` rule.
  */

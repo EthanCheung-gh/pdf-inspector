@@ -1,0 +1,253 @@
+/*
+ * Current-page annotation list. The panel is 200–400px wide, so the summary and
+ * the filters stack instead of forming a toolbar row; only the list scrolls.
+ */
+.panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.emptyState {
+  padding: 12px 8px;
+  color: #77818c;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.stateBox {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  color: #8e99a6;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.retry {
+  padding: 2px 8px;
+  color: #cbd3dc;
+  background: #252b32;
+  border: 1px solid #3b434d;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.retry:hover {
+  color: #fff;
+  background: #353e49;
+}
+
+.retry:focus-visible {
+  outline: 2px solid #5b9cff;
+  outline-offset: 1px;
+}
+
+/* Counts stay on one line: they are a status line, not a table. */
+.summary {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  overflow: hidden;
+  color: #8e99a6;
+  border-bottom: 1px solid #303740;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.controls {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #303740;
+}
+
+.checkLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #cbd3dc;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.filterRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Fixed label column keeps the two selects aligned at the minimum width. */
+.filterLabel {
+  flex: 0 0 42px;
+  color: #8e99a6;
+  font-size: 10px;
+}
+
+.select {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px 4px;
+  color: #e1e6eb;
+  background: #161a1f;
+  border: 1px solid #353b43;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 10px;
+}
+
+.select:focus-visible {
+  outline: 2px solid #5b9cff;
+  outline-offset: 1px;
+}
+
+.list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 2px 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 8px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid #262c34;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.row:hover {
+  background: #262d35;
+}
+
+.row:focus-visible {
+  outline: 2px solid #5b9cff;
+  outline-offset: -2px;
+}
+
+.selected {
+  background: #274e76;
+}
+
+.selected:hover {
+  background: #2d5a87;
+}
+
+.rowHeader {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.badge {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+  white-space: nowrap;
+}
+
+.badgeLink {
+  color: #8fb8e8;
+  background: rgba(143, 184, 232, 0.12);
+  border-color: rgba(143, 184, 232, 0.32);
+}
+
+.badgeForm {
+  color: #c9a6e8;
+  background: rgba(201, 166, 232, 0.12);
+  border-color: rgba(201, 166, 232, 0.32);
+}
+
+.badgeMarkup {
+  color: #e0c98a;
+  background: rgba(224, 201, 138, 0.12);
+  border-color: rgba(224, 201, 138, 0.32);
+}
+
+.badgeNote {
+  color: #e0b36a;
+  background: rgba(224, 179, 106, 0.12);
+  border-color: rgba(224, 179, 106, 0.35);
+}
+
+.badgeStamp {
+  color: #8fd6dd;
+  background: rgba(143, 214, 221, 0.12);
+  border-color: rgba(143, 214, 221, 0.32);
+}
+
+.badgeOther {
+  color: #aeb7c2;
+  background: rgba(174, 183, 194, 0.1);
+  border-color: rgba(174, 183, 194, 0.28);
+}
+
+.subtype {
+  min-width: 0;
+  overflow: hidden;
+  color: #cbd3dc;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Amber rather than red: a hidden annotation is listed on purpose. */
+.hiddenMarker {
+  flex: 0 0 auto;
+  padding: 0 3px;
+  color: #e0b36a;
+  background: rgba(224, 179, 106, 0.1);
+  border: 1px solid rgba(224, 179, 106, 0.35);
+  border-radius: 3px;
+  font-size: 9px;
+  line-height: 13px;
+}
+
+.page {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: #8e99a6;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.preview {
+  overflow: hidden;
+  color: #8e99a6;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
