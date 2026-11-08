@@ -129,6 +129,7 @@ describe('web ipc adapter', () => {
         'extractPage',
         'getImageData',
         'getSidecarStatus',
+        'openExternal',
         'openPdf',
         'openPdfUrl',
         'pickDiffPdf',

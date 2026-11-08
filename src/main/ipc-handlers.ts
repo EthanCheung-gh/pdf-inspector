@@ -1,10 +1,12 @@
-import { ipcMain, dialog, BrowserWindow, app } from 'electron';
+import { ipcMain, dialog, BrowserWindow, app, shell } from 'electron';
 import { writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { SidecarManager } from './sidecar';
 import { deleteDownloadedFile, downloadPdfToFile, parsePdfUrl } from './pdf-url';
 import { IPC_CHANNELS, ANALYZE_FONTS_TIMEOUT_MS, AUDIT_TIMEOUT_MS, DIFF_TIMEOUT_MS } from '../shared/constants';
 import type { SaveFileRequest } from '../shared/constants';
+import { UNSAFE_EXTERNAL_URL_ERROR, toSafeExternalUrl } from '../shared/external-url';
+import type { OpenExternalResult } from '../shared/external-url';
 import { diffOptionsToRpc } from '../shared/diff-types';
 import type { DiffOptionsInput } from '../shared/diff-types';
 
@@ -242,6 +244,30 @@ export function registerIpcHandlers(sidecar: SidecarManager): void {
   ipcMain.handle(IPC_CHANNELS.SIDECAR_STATUS, async () => {
     return { running: sidecar.isRunning() };
   });
+
+  // Open one link from an annotation in the OS default browser.
+  //
+  // The renderer never passes PDF.js `unsafeUrl` here, but main re-validates
+  // anyway: the bridge is the boundary where a compromised or buggy renderer
+  // could otherwise hand an arbitrary scheme to the shell. A refused or failed
+  // open is reported as `{ ok: false, error }` instead of a rejection so the UI
+  // can show it inline; nothing here touches the sidecar.
+  ipcMain.handle(
+    IPC_CHANNELS.OPEN_EXTERNAL,
+    async (_event, rawUrl: unknown): Promise<OpenExternalResult> => {
+      const url = toSafeExternalUrl(rawUrl);
+      if (url === null) {
+        return { ok: false, error: UNSAFE_EXTERNAL_URL_ERROR };
+      }
+
+      try {
+        await shell.openExternal(url);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : 'Unknown error' };
+      }
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.SAVE_FILE, async (event, req: SaveFileRequest) => {
     const win = BrowserWindow.fromWebContents(event.sender);

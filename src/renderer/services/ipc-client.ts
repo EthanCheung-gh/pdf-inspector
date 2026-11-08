@@ -1,5 +1,6 @@
 import { IpcApi, SaveFileRequest } from '../types/ipc-protocol';
 import type { DiffOptionsInput, DiffSide, DiffSource } from '../../shared/diff-types';
+import type { OpenExternalResult } from '../../shared/external-url';
 import {
   ANALYZE_FONTS_RENDERER_TIMEOUT_MS,
   AUDIT_RENDERER_TIMEOUT_MS,
@@ -145,4 +146,15 @@ export const ipc = {
   getSidecarStatus: () => callWithTimeout(() => window.pdfInspector.getSidecarStatus(), 'getSidecarStatus'),
   restartSidecar: () => window.pdfInspector.restartSidecar(),
   saveFile: (req: SaveFileRequest) => window.pdfInspector.saveFile(req),
+  // Opening a link is a pure shell/browser action: no sidecar request is sent,
+  // so it must stay outside `callWithTimeout` — a slow or refused open would
+  // otherwise be reported as a "Sidecar timeout" and restart the sidecar. The
+  // bridge failure is folded into the typed result the UI already handles.
+  openExternal: async (url: string): Promise<OpenExternalResult> => {
+    try {
+      return await window.pdfInspector.openExternal(url);
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  },
 };

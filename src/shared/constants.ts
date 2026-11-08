@@ -103,4 +103,10 @@ export const IPC_CHANNELS = {
   DIFF_PDFS: 'pdf:diff',
   PICK_DIFF_PDF: 'pdf:pick-diff',
   SAVE_FILE: 'file:save',
+  /**
+   * Ask the shell to open one external link. Not a `pdf:` channel: it never
+   * touches the sidecar or the open document, and it is the only place a URL
+   * from a PDF reaches the operating system.
+   */
+  OPEN_EXTERNAL: 'app:open-external',
 } as const;

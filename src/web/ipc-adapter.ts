@@ -24,6 +24,8 @@ import type {
 } from '../renderer/types/ipc-protocol';
 import type { PageData, PdfMetadata } from '../renderer/types/pdf-objects';
 import type { SaveFileRequest } from '../shared/constants';
+import { UNSAFE_EXTERNAL_URL_ERROR, toSafeExternalUrl } from '../shared/external-url';
+import type { OpenExternalResult } from '../shared/external-url';
 import type { AuditDocumentResult, AuditPagesResult } from '../shared/audit-types';
 import { isFileSource } from '../shared/diff-types';
 import type {
@@ -374,6 +376,39 @@ function saveFile(req: SaveFileRequest): SaveFileResult {
   return { canceled: false, filePath: req.defaultPath };
 }
 
+/**
+ * Open one external link in a new tab.
+ *
+ * Exported so the safety policy can be verified without a real `window.open`.
+ * The URL is re-validated here: the browser adapter is a full bridge
+ * implementation and must not trust its caller any more than the main process
+ * does. Only the sanitized URL is ever passed on — never PDF.js `unsafeUrl` —
+ * and `noopener,noreferrer` is always requested so the target page gets neither
+ * a `window.opener` handle back into the app nor a `Referer`.
+ *
+ * A blocked popup is not reported as a failure: per the HTML spec `window.open`
+ * returns `null` when `noopener` is requested whether or not a tab opened, so
+ * that value carries no signal. Only a browser without `window.open` and a
+ * thrown error are treated as failures.
+ */
+export function openExternalInBrowser(url: string): OpenExternalResult {
+  const safeUrl = toSafeExternalUrl(url);
+  if (safeUrl === null) {
+    return { ok: false, error: UNSAFE_EXTERNAL_URL_ERROR };
+  }
+
+  if (typeof window.open !== 'function') {
+    return { ok: false, error: 'Opening links is not available in this browser' };
+  }
+
+  try {
+    window.open(safeUrl, '_blank', 'noopener,noreferrer');
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Unknown error' };
+  }
+}
+
 /** Create a `window.pdfInspector`-compatible object backed by the HTTP API. */
 export function createWebIpc(): IpcApi {
   return {
@@ -433,6 +468,10 @@ export function createWebIpc(): IpcApi {
     restartSidecar: () => postJson<RestartResult>('/api/restart', {}),
 
     saveFile: async (req: SaveFileRequest) => saveFile(req),
+
+    // Never reaches the backend: opening a link is a pure browser action, and
+    // the adapter validates the URL itself instead of trusting the annotation.
+    openExternal: async (url: string) => openExternalInBrowser(url),
   };
 }
 

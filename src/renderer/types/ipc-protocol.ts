@@ -1,5 +1,6 @@
 import { PdfMetadata, PageData } from './pdf-objects';
 import type { SaveFileRequest } from '../../shared/constants';
+import type { OpenExternalResult } from '../../shared/external-url';
 import type { AuditDocumentResult, AuditPagesResult } from '../../shared/audit-types';
 import type {
   DiffOptionsInput,
@@ -10,6 +11,7 @@ import type {
 } from '../../shared/diff-types';
 
 export type { SaveFileRequest };
+export type { OpenExternalResult };
 export type {
   AuditCategory,
   AuditDocumentInfo,
@@ -103,4 +105,13 @@ export interface IpcApi {
   getImageData(streamId: string): Promise<{ base64?: string; format?: string; error?: string }>;
   getSidecarStatus(): Promise<{ running: boolean }>;
   restartSidecar(): Promise<{ success: boolean; running: boolean; error?: string }>;
+  /**
+   * Open one external link in the OS/browser.
+   *
+   * Deliberately never rejects on a policy violation: the URL is re-validated
+   * on the other side of the bridge (main process / browser adapter) and an
+   * unsafe or unopenable target comes back as `{ ok: false, error }` so the UI
+   * can report it without treating it as a crash.
+   */
+  openExternal(url: string): Promise<OpenExternalResult>;
 }

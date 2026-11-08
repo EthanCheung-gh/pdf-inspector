@@ -31,4 +31,7 @@ contextBridge.exposeInMainWorld('pdfInspector', {
   getSidecarStatus: () => ipcRenderer.invoke(IPC_CHANNELS.SIDECAR_STATUS),
   restartSidecar: () => ipcRenderer.invoke(IPC_CHANNELS.RESTART_SIDECAR),
   saveFile: (req: SaveFileRequest) => ipcRenderer.invoke(IPC_CHANNELS.SAVE_FILE, req),
+  // The main process re-validates the URL before calling `shell.openExternal`;
+  // nothing else about the document or the sidecar is involved.
+  openExternal: (url: string) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_EXTERNAL, url),
 });
