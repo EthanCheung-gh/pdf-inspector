@@ -5,6 +5,7 @@ import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { useAuditStore } from '../../store/audit-store';
 import { useDiffStore } from '../../store/diff-store';
 import { usePdfStore } from '../../store/pdf-store';
+import { useRawStore } from '../../store/raw-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
 import { SearchBox } from './SearchBox';
 import { ExportDialog } from './ExportDialog';
@@ -46,6 +47,7 @@ export const Toolbar: React.FC = () => {
   const diffNewName = useDiffStore((state) => state.newName);
   const openDiffSetup = useDiffStore((state) => state.openSetup);
   const auditActive = useAuditStore((state) => state.active);
+  const rawActive = useRawStore((state) => state.active);
   const { navigate } = usePageNavigation();
 
   // A pane is visible only when it is expanded *and* focus mode is off. The
@@ -143,18 +145,28 @@ export const Toolbar: React.FC = () => {
   // the exported JSON never expose an absolute path.
   const documentName = sourceUrl ?? (filePath ? (filePath.split(/[\\/]/).pop() ?? filePath) : null);
   const diffTitle = `${diffOldName ?? '—'} → ${diffNewName ?? '—'}`;
-  // Diff and Audit each replace the Inspect panes; while either is open the
-  // Inspect-only controls would act on a document the user cannot see.
-  const workspaceActive = diffActive || auditActive;
+  // Diff, Audit and Raw each replace the Inspect panes; while one of them is
+  // open the Inspect-only controls would act on a document the user cannot see.
+  const workspaceActive = diffActive || auditActive || rawActive;
   const displayTitle = diffActive ? diffTitle : sourceUrl ?? filePath ?? undefined;
   const filename = diffActive ? diffTitle : documentName ?? 'No file open';
 
   const handleAudit = useCallback(() => {
     if (!filePath) return;
-    // The two workspaces are mutually exclusive: leaving Diff here keeps them
-    // from both claiming the area the Inspect panes give up.
+    // The three workspaces are mutually exclusive: leaving the other two here
+    // keeps them from all claiming the area the Inspect panes give up.
     if (useDiffStore.getState().active) useDiffStore.getState().exitWorkspace();
+    if (useRawStore.getState().active) useRawStore.getState().close();
     useAuditStore.getState().open(filePath, documentName ?? filePath);
+  }, [documentName, filePath]);
+
+  const handleRaw = useCallback(() => {
+    if (!filePath) return;
+    // Same mutual exclusion as Audit: Diff/Audit own the panes right now, so
+    // close them first and then open the raw view of the same document.
+    if (useDiffStore.getState().active) useDiffStore.getState().exitWorkspace();
+    if (useAuditStore.getState().active) useAuditStore.getState().close();
+    useRawStore.getState().open(filePath, documentName ?? filePath);
   }, [documentName, filePath]);
 
   return (
@@ -200,10 +212,26 @@ export const Toolbar: React.FC = () => {
       >
         Audit
       </button>
+      <button
+        className={`${styles.button} ${rawActive ? styles.active : ''}`}
+        type="button"
+        onClick={handleRaw}
+        disabled={!filePath || diffActive || auditActive}
+        aria-pressed={rawActive}
+        title={
+          diffActive || auditActive
+            ? 'Close the comparison/audit before reading raw objects'
+            : filePath
+              ? 'Browse the raw object graph and content streams of the open document'
+              : 'Open a PDF to inspect its raw objects'
+        }
+      >
+        Raw
+      </button>
 
-      {/* Everything below drives the Inspect document; while Diff or Audit owns
-          the workspace those controls would act on a hidden document, so only
-          the document-independent entries above stay available. "Back to
+      {/* Everything below drives the Inspect document; while Diff, Audit or Raw
+          owns the workspace those controls would act on a hidden document, so
+          only the document-independent entries above stay available. "Back to
           Inspect" lives in each workspace header next to its own controls. */}
       {!workspaceActive && (
         <>

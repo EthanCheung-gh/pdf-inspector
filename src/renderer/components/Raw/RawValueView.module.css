@@ -1,0 +1,137 @@
+/*
+ * Value tree of the Raw workspace (object detail and content operands).
+ *
+ * Everything is monospace and can shrink: no fixed widths, no `nowrap` on
+ * values that may be long strings, so a value can never push the panel into a
+ * horizontal scrollbar.
+ */
+
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.key {
+  flex: 0 0 auto;
+  color: #9fc4ea;
+}
+
+.text,
+.ref {
+  min-width: 0;
+  color: #d7dce2;
+  overflow-wrap: anywhere;
+}
+
+.text[data-kind='null'],
+.text[data-kind='boolean'] {
+  color: #c9a9f0;
+}
+
+.text[data-kind='number'] {
+  color: #f0c48a;
+}
+
+.text[data-kind='name'] {
+  color: #9ed9ae;
+}
+
+.text[data-kind='string'] {
+  color: #e6e9ee;
+}
+
+.text[data-kind='dict'],
+.text[data-kind='array'],
+.text[data-kind='stream'] {
+  color: #8e99a6;
+}
+
+.ref {
+  padding: 0 4px;
+  color: #9fc4ea;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.ref:hover {
+  background: #23303d;
+  border-color: #3d5773;
+}
+
+.ref:focus-visible {
+  outline: 2px solid #5b9cff;
+  outline-offset: 1px;
+}
+
+.children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0 0 0 14px;
+  list-style: none;
+  border-left: 1px solid #262d34;
+}
+
+.notice {
+  margin: 0;
+  padding: 2px 0 2px 14px;
+  color: #8e99a6;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.streamMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 2px 0 2px 14px;
+  font-family: inherit;
+  font-size: 10px;
+}
+
+.metaItem {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+
+.metaItem dt {
+  color: #8e99a6;
+}
+
+.metaItem dd {
+  margin: 0;
+  color: #d7dce2;
+  overflow-wrap: anywhere;
+}
+
+.preview {
+  max-height: 180px;
+  margin: 2px 0 2px 14px;
+  padding: 4px 6px;
+  overflow: auto;
+  color: #e6e9ee;
+  background: #1a1f25;
+  border: 1px solid #333b44;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

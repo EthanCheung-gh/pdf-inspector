@@ -1,0 +1,218 @@
+/*
+ * Raw object tree.
+ *
+ * Rows are single-line with an ellipsized label/summary so a deeply nested
+ * object cannot widen the tree pane; the pane itself scrolls vertically and
+ * never horizontally.
+ */
+
+.tree {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.meta {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 5px 8px;
+  color: #8e99a6;
+  border-bottom: 1px solid #262d34;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.roots {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 2px 0;
+  list-style: none;
+}
+
+.roots > .node > .row {
+  padding-left: 4px;
+}
+
+.node {
+  min-width: 0;
+}
+
+.children {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0 0 0 12px;
+  list-style: none;
+  border-left: 1px solid #262d34;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  padding: 1px 6px 1px 2px;
+  border-radius: 3px;
+}
+
+.row:hover {
+  background: #212730;
+}
+
+.selectedRow {
+  background: #26333f;
+  box-shadow: inset 2px 0 0 #4b93e6;
+}
+
+.toggle,
+.togglePlaceholder {
+  flex: 0 0 14px;
+  width: 14px;
+  padding: 0;
+  color: #8e99a6;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.toggle {
+  cursor: pointer;
+}
+
+.toggle:hover {
+  color: #d7dce2;
+}
+
+.toggle:focus-visible {
+  outline: 2px solid #5b9cff;
+  outline-offset: 1px;
+}
+
+.label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: #9fc4ea;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.refButton {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  color: #e6e9ee;
+  background: #22282f;
+  border: 1px solid #414954;
+  border-radius: 3px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.refButton:hover {
+  background: #2c343d;
+}
+
+.refButton:focus-visible {
+  outline: 2px solid #5b9cff;
+  outline-offset: 1px;
+}
+
+.refSelected {
+  color: #fff;
+  background: #2d6db5;
+  border-color: #4b93e6;
+}
+
+.value,
+.summary {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: #d7dce2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.value[data-kind='null'],
+.value[data-kind='boolean'] {
+  color: #c9a9f0;
+}
+
+.value[data-kind='number'] {
+  color: #f0c48a;
+}
+
+.value[data-kind='name'] {
+  color: #9ed9ae;
+}
+
+.summary,
+.summary[data-kind='dict'],
+.summary[data-kind='array'],
+.summary[data-kind='stream'] {
+  color: #8e99a6;
+  font-size: 10px;
+}
+
+.notice,
+.noticeRow,
+.messageRow {
+  margin: 0;
+  padding: 2px 8px 2px 20px;
+  color: #8e99a6;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.messageRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.errorText {
+  color: #f08a8a;
+  overflow-wrap: anywhere;
+}
+
+.retryButton {
+  padding: 1px 6px;
+  color: #d7dce2;
+  background: #2a3139;
+  border: 1px solid #414954;
+  border-radius: 3px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+}
+
+.retryButton:hover {
+  background: #353e49;
+}
+
+.retryButton:focus-visible {
+  outline: 2px solid #5b9cff;
+  outline-offset: 1px;
+}
+
+.message {
+  margin: 0;
+  padding: 8px;
+  color: #8e99a6;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}

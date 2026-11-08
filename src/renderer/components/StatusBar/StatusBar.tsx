@@ -1,10 +1,13 @@
 import { describeFilterCriteria } from '../../services/filter-summary';
 import { countFilteredChanges } from '../../services/diff-view';
+import { formatRawRef } from '../Raw/RawValueView';
 import { useAuditStore } from '../../store/audit-store';
 import { useCursorStore, type CursorPdfPoint } from '../../store/cursor-store';
 import { useDiffStore } from '../../store/diff-store';
 import { usePdfStore } from '../../store/pdf-store';
+import { useRawStore, type RawTab } from '../../store/raw-store';
 import type { PageData } from '../../types/pdf-objects';
+import type { RawDocument, RawObject, RawPageContent, RawRef } from '../../types/raw-pdf';
 import styles from './StatusBar.module.css';
 
 const formatCoordinate = (value: number): string => {
@@ -40,6 +43,44 @@ const StatusTail: React.FC<{ sidecarRunning: boolean }> = ({ sidecarRunning }) =
   </>
 );
 
+/** The parts of `raw-store` the raw status line describes. */
+export interface RawStatusSnapshot {
+  document: RawDocument | null;
+  tab: RawTab;
+  selected: RawRef | null;
+  object: RawObject | null;
+  content: RawPageContent | null;
+  contentPage: number | null;
+  loading: boolean;
+}
+
+/**
+ * One line for the Raw workspace: the selected object, or the page and its
+ * operator count. The Inspect selection, filters and cursor are deliberately
+ * absent — they describe a document the user cannot see while Raw is open.
+ */
+export function formatRawStatus(snapshot: RawStatusSnapshot): string {
+  const { document, tab, selected, object, content, contentPage, loading } = snapshot;
+
+  if (!document) return loading ? 'Raw: loading document…' : 'Raw: no document';
+
+  if (tab === 'content') {
+    const page = contentPage ?? 1;
+    const shown = content !== null && content.page === page ? content : null;
+    if (!shown) {
+      return `Raw: page ${page}/${document.pages}${loading ? ' · loading…' : ''}`;
+    }
+    const operators = shown.streams.reduce((total, stream) => total + stream.operators.length, 0);
+    return `Raw: page ${shown.page}/${document.pages} · ${plural(operators, 'operator')}`;
+  }
+
+  if (!selected) return 'Raw: no object selected';
+  const ref = formatRawRef(selected);
+  return object
+    ? `Raw: object ${ref} · ${object.summary}`
+    : `Raw: object ${ref}${loading ? ' · loading…' : ''}`;
+}
+
 export const StatusBar = (): JSX.Element => {
   const isLoading = usePdfStore((state) => state.isLoading);
   const currentPage = usePdfStore((state) => state.currentPage);
@@ -72,6 +113,18 @@ export const StatusBar = (): JSX.Element => {
   const auditProgress = useAuditStore((state) => state.progress);
   const auditReport = useAuditStore((state) => state.report);
   const auditError = useAuditStore((state) => state.error);
+
+  // Raw is the third workspace that replaces the Inspect panes; its line
+  // reports the object tree or the page content instead of the document.
+  const rawActive = useRawStore((state) => state.active);
+  const rawDocument = useRawStore((state) => state.document);
+  const rawTab = useRawStore((state) => state.tab);
+  const rawSelected = useRawStore((state) => state.selected);
+  const rawObject = useRawStore((state) => state.object);
+  const rawContent = useRawStore((state) => state.content);
+  const rawContentPage = useRawStore((state) => state.contentPage);
+  const rawLoading = useRawStore((state) => state.loading);
+  const rawError = useRawStore((state) => state.error);
 
   if (diffActive) {
     return (
@@ -109,6 +162,30 @@ export const StatusBar = (): JSX.Element => {
         {auditError && (
           <span className={styles.error} role="alert">
             Audit failed: {auditError}
+          </span>
+        )}
+        <StatusTail sidecarRunning={sidecarRunning} />
+      </footer>
+    );
+  }
+
+  if (rawActive) {
+    return (
+      <footer className={styles.statusBar} aria-label="Application status">
+        <span className={styles.documentStatus} data-testid="status-raw">
+          {formatRawStatus({
+            document: rawDocument,
+            tab: rawTab,
+            selected: rawSelected,
+            object: rawObject,
+            content: rawContent,
+            contentPage: rawContentPage,
+            loading: rawLoading,
+          })}
+        </span>
+        {rawError && (
+          <span className={styles.error} role="alert">
+            Raw failed: {rawError}
           </span>
         )}
         <StatusTail sidecarRunning={sidecarRunning} />

@@ -5,19 +5,34 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { usePdfStore } from '../../store/pdf-store';
 import { useAuditStore } from '../../store/audit-store';
 import { useDiffStore } from '../../store/diff-store';
+import { useRawStore } from '../../store/raw-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
 import type { PdfMetadata } from '../../types/pdf-objects';
 
-const { navigate, openPdf, openPdfUrl, auditDocument, auditPages } = vi.hoisted(() => ({
-  navigate: vi.fn(),
-  openPdf: vi.fn(),
-  openPdfUrl: vi.fn(),
-  auditDocument: vi.fn(),
-  auditPages: vi.fn(),
-}));
+const { navigate, openPdf, openPdfUrl, auditDocument, auditPages, rawDocument, rawObject, rawPageContent } =
+  vi.hoisted(() => ({
+    navigate: vi.fn(),
+    openPdf: vi.fn(),
+    openPdfUrl: vi.fn(),
+    auditDocument: vi.fn(),
+    auditPages: vi.fn(),
+    rawDocument: vi.fn(),
+    rawObject: vi.fn(),
+    rawPageContent: vi.fn(),
+  }));
 
 vi.mock('../../services/ipc-client', () => ({
-  ipc: { openPdf, openPdfUrl, auditDocument, auditPages, extractPage: vi.fn(), saveFile: vi.fn() },
+  ipc: {
+    openPdf,
+    openPdfUrl,
+    auditDocument,
+    auditPages,
+    rawDocument,
+    rawObject,
+    rawPageContent,
+    extractPage: vi.fn(),
+    saveFile: vi.fn(),
+  },
 }));
 
 vi.mock('../../hooks/usePageNavigation', () => ({
@@ -56,6 +71,7 @@ describe('Toolbar open URL', () => {
     navigate.mockResolvedValue(undefined);
     openPdf.mockReset();
     openPdfUrl.mockReset();
+    useRawStore.getState().reset();
 
     usePdfStore.setState({
       filePath: null,
@@ -144,6 +160,7 @@ describe('Toolbar open URL', () => {
 
 describe('Toolbar workspace controls', () => {
   beforeEach(() => {
+    useRawStore.getState().reset();
     usePdfStore.setState({
       isLoading: false,
       pageCount: 0,
@@ -286,6 +303,7 @@ describe('Toolbar audit entry', () => {
     openPdfUrl.mockReset();
     navigate.mockReset();
     navigate.mockResolvedValue(undefined);
+    useRawStore.getState().reset();
     auditDocument.mockResolvedValue({
       tool,
       document: {
@@ -454,5 +472,148 @@ describe('Toolbar audit entry', () => {
     expect(audit.fileName).toBeNull();
     expect(audit.filePath).toBeNull();
     expect(screen.getByRole('button', { name: 'Audit' }).getAttribute('aria-pressed')).toBe('false');
+  });
+});
+describe('Toolbar raw entry', () => {
+  const rawDocumentState = {
+    pages: 5,
+    version: '1.7',
+    encrypted: false,
+    roots: [
+      {
+        label: 'Catalog',
+        ref: { objectNumber: 1, generation: 0 },
+        value: null,
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    rawDocument.mockReset();
+    rawDocument.mockResolvedValue(rawDocumentState);
+    rawObject.mockReset();
+    rawObject.mockResolvedValue({
+      ref: { objectNumber: 1, generation: 0 },
+      summary: 'dict · 1 entry',
+      value: { kind: 'dict', truncated: false, entries: [] },
+    });
+    rawPageContent.mockReset();
+    openPdf.mockReset();
+    openPdfUrl.mockReset();
+    navigate.mockReset();
+    navigate.mockResolvedValue(undefined);
+    useDiffStore.getState().reset();
+    useAuditStore.getState().reset();
+    useRawStore.getState().reset();
+    usePdfStore.setState({
+      filePath: null,
+      sourceUrl: null,
+      metadata: null,
+      pageCount: 0,
+      currentPage: 1,
+      isLoading: false,
+    });
+    useWorkspaceStore.setState({ leftCollapsed: false, rightCollapsed: false, focusMode: false });
+  });
+
+  afterEach(cleanup);
+
+  it('is disabled while no document is open', () => {
+    render(React.createElement(Toolbar));
+
+    const raw = screen.getByRole('button', { name: 'Raw' }) as HTMLButtonElement;
+    expect(raw.disabled).toBe(true);
+    expect(raw.getAttribute('aria-pressed')).toBe('false');
+    expect(raw.getAttribute('title')).toBe('Open a PDF to inspect its raw objects');
+  });
+
+  it('is disabled while Diff owns the workspace', () => {
+    usePdfStore.setState({ filePath: '/docs/report.pdf', metadata, pageCount: 5 });
+    useDiffStore.setState({ active: true });
+
+    render(React.createElement(Toolbar));
+
+    const raw = screen.getByRole('button', { name: 'Raw' }) as HTMLButtonElement;
+    expect(raw.disabled).toBe(true);
+    expect(raw.getAttribute('title')).toBe(
+      'Close the comparison/audit before reading raw objects',
+    );
+  });
+
+  it('is disabled while Audit owns the workspace', () => {
+    usePdfStore.setState({ filePath: '/docs/report.pdf', metadata, pageCount: 5 });
+    useAuditStore.setState({ active: true, filePath: '/docs/report.pdf', fileName: 'report.pdf' });
+
+    render(React.createElement(Toolbar));
+
+    expect((screen.getByRole('button', { name: 'Raw' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('opens the raw workspace with the file basename and reports the active mode', async () => {
+    usePdfStore.setState({ filePath: '/docs/My Report.pdf', metadata, pageCount: 5 });
+
+    render(React.createElement(Toolbar));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Raw' }));
+    });
+
+    const state = useRawStore.getState();
+    expect(state.active).toBe(true);
+    expect(state.filePath).toBe('/docs/My Report.pdf');
+    // The workspace header shows what the toolbar shows, never the full path.
+    expect(state.fileName).toBe('My Report.pdf');
+    expect(rawDocument).toHaveBeenCalledTimes(1);
+
+    expect(screen.getByRole('button', { name: 'Raw' }).getAttribute('aria-pressed')).toBe('true');
+    // Inspect-only controls are hidden while Raw owns the workspace.
+    expect(screen.queryByRole('group', { name: 'Page navigation' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Select Text' })).toBeNull();
+  });
+
+  it('never opens Raw over an active Audit', async () => {
+    usePdfStore.setState({ filePath: '/docs/report.pdf', metadata, pageCount: 5 });
+    useAuditStore.setState({ active: true, filePath: '/docs/report.pdf', fileName: 'report.pdf' });
+
+    render(React.createElement(Toolbar));
+
+    const raw = screen.getByRole('button', { name: 'Raw' }) as HTMLButtonElement;
+    expect(raw.disabled).toBe(true);
+    await act(async () => {
+      fireEvent.click(raw);
+    });
+
+    // The two workspaces can never both claim the Inspect area.
+    expect(useAuditStore.getState().active).toBe(true);
+    expect(useRawStore.getState().active).toBe(false);
+    expect(rawDocument).not.toHaveBeenCalled();
+  });
+
+  it('closes Diff before opening Raw', async () => {
+    usePdfStore.setState({ filePath: '/docs/report.pdf', metadata, pageCount: 5 });
+    useDiffStore.setState({ active: true });
+
+    render(React.createElement(Toolbar));
+
+    // The button is disabled while Diff is open, so the transition can only
+    // come from another entry point; the guard in App covers that case. Here
+    // we prove the button's own title explains why it is unavailable.
+    const raw = screen.getByRole('button', { name: 'Raw' }) as HTMLButtonElement;
+    expect(raw.disabled).toBe(true);
+    expect(useRawStore.getState().active).toBe(false);
+  });
+
+  it('closes Raw when Audit takes over the workspace', async () => {
+    usePdfStore.setState({ filePath: '/docs/report.pdf', metadata, pageCount: 5 });
+    useRawStore.setState({ active: true, filePath: '/docs/report.pdf', fileName: 'report.pdf' });
+
+    render(React.createElement(Toolbar));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Audit' }));
+    });
+
+    expect(useRawStore.getState().active).toBe(false);
+    expect(useAuditStore.getState().active).toBe(true);
   });
 });

@@ -8,8 +8,10 @@ import { useAuditStore } from '../../store/audit-store';
 import { useCursorStore } from '../../store/cursor-store';
 import { useDiffStore } from '../../store/diff-store';
 import { usePdfStore } from '../../store/pdf-store';
+import { useRawStore } from '../../store/raw-store';
+import type { RawDocument, RawPageContent } from '../../types/raw-pdf';
 
-import { StatusBar, plural } from './StatusBar';
+import { StatusBar, formatRawStatus, plural } from './StatusBar';
 
 const selectedWord: PdfWord = {
   type: 'word',
@@ -58,6 +60,7 @@ describe('StatusBar', () => {
     useCursorStore.setState({ cursorPdfPoint: null });
     useAuditStore.getState().reset();
     useDiffStore.getState().reset();
+    useRawStore.getState().reset();
   });
 
   it('announces background font analysis progress', () => {
@@ -321,5 +324,162 @@ describe('StatusBar audit mode', () => {
 
     expect(screen.getByTestId('status-audit').textContent).toBe('Audit: no report yet');
     expect(screen.getByRole('alert').textContent).toBe('Audit failed: Sidecar is not running');
+  });
+});
+
+describe('StatusBar raw mode', () => {
+  afterEach(cleanup);
+
+  const document: RawDocument = {
+    pages: 5,
+    version: '1.7',
+    encrypted: false,
+    roots: [],
+  };
+
+  const content: RawPageContent = {
+    page: 2,
+    truncated: false,
+    streams: [
+      {
+        ref: { objectNumber: 12, generation: 0 },
+        length: 128,
+        filters: [],
+        truncated: false,
+        error: null,
+        operators: [
+          { index: 0, offset: 0, operator: 'BT', operands: [] },
+          { index: 1, offset: 4, operator: 'Tj', operands: [] },
+          { index: 2, offset: 9, operator: 'ET', operands: [] },
+        ],
+      },
+    ],
+  };
+
+  const enterRaw = (overrides: Partial<ReturnType<typeof useRawStore.getState>> = {}): void => {
+    // The bar shows exactly one workspace; the other stores are reset so a
+    // leftover mode from another test cannot win the branch.
+    useAuditStore.getState().reset();
+    useDiffStore.getState().reset();
+    useRawStore.setState({
+      active: true,
+      filePath: '/docs/raw.pdf',
+      fileName: 'raw.pdf',
+      document,
+      selected: null,
+      object: null,
+      content: null,
+      contentPage: null,
+      tab: 'object',
+      loading: false,
+      error: null,
+      ...overrides,
+    });
+  };
+
+  it('describes the selected object instead of the Inspect selection', () => {
+    usePdfStore.setState({
+      selectedObject: selectedWord,
+      filterCriteria: { types: ['word'] },
+      pageData,
+    });
+    enterRaw({
+      selected: { objectNumber: 1, generation: 0 },
+      object: {
+        ref: { objectNumber: 1, generation: 0 },
+        summary: 'dict · 2 entries',
+        value: { kind: 'null' },
+      },
+    });
+
+    render(React.createElement(StatusBar));
+
+    expect(screen.getByTestId('status-raw').textContent).toBe(
+      'Raw: object 1 0 R · dict · 2 entries',
+    );
+    // The Inspect document is hidden behind the workspace.
+    expect(screen.queryByRole('group', { name: /^Selected / })).toBeNull();
+    expect(screen.queryByLabelText(/^Active filters:/)).toBeNull();
+    expect(screen.queryByText(/^Page 3\/12/)).toBeNull();
+  });
+
+  it('describes the content page and its operator count', () => {
+    enterRaw({ tab: 'content', content, contentPage: 2 });
+
+    render(React.createElement(StatusBar));
+
+    expect(screen.getByTestId('status-raw').textContent).toBe('Raw: page 2/5 · 3 operators');
+  });
+
+  it('reports loading and missing data', () => {
+    enterRaw({ document: null, loading: true });
+
+    render(React.createElement(StatusBar));
+
+    expect(screen.getByTestId('status-raw').textContent).toBe('Raw: loading document…');
+  });
+
+  it('reports an object that is still loading', () => {
+    enterRaw({ selected: { objectNumber: 7, generation: 0 }, object: null, loading: true });
+
+    render(React.createElement(StatusBar));
+
+    expect(screen.getByTestId('status-raw').textContent).toBe('Raw: object 7 0 R · loading…');
+  });
+
+  it('shows a raw failure in the bar', () => {
+    enterRaw({ document: null, loading: false, error: 'sidecar is not running' });
+
+    render(React.createElement(StatusBar));
+
+    expect(screen.getByTestId('status-raw').textContent).toBe('Raw: no document');
+    expect(screen.getByRole('alert').textContent).toBe('Raw failed: sidecar is not running');
+  });
+
+  it('formats the raw status line on its own', () => {
+    expect(
+      formatRawStatus({
+        document: null,
+        tab: 'object',
+        selected: null,
+        object: null,
+        content: null,
+        contentPage: null,
+        loading: false,
+      }),
+    ).toBe('Raw: no document');
+    expect(
+      formatRawStatus({
+        document,
+        tab: 'object',
+        selected: null,
+        object: null,
+        content: null,
+        contentPage: null,
+        loading: false,
+      }),
+    ).toBe('Raw: no object selected');
+    expect(
+      formatRawStatus({
+        document,
+        tab: 'content',
+        selected: null,
+        object: null,
+        content: null,
+        contentPage: 3,
+        loading: true,
+      }),
+    ).toBe('Raw: page 3/5 · loading…');
+    expect(
+      formatRawStatus({
+        document,
+        tab: 'content',
+        selected: null,
+        object: null,
+        content,
+        contentPage: 2,
+        loading: false,
+      }),
+    ).toBe('Raw: page 2/5 · 3 operators');
   });
 });

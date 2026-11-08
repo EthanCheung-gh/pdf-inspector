@@ -5,6 +5,7 @@ import { DiffWorkspace } from './components/Diff/DiffWorkspace';
 import { InspectorPanel } from './components/InspectorPanel/InspectorPanel';
 import { LeftPanel } from './components/LeftPanel/LeftPanel';
 import { PdfViewport } from './components/PdfViewport/PdfViewport';
+import { RawWorkspace } from './components/Raw/RawWorkspace';
 import { StatusBar } from './components/StatusBar/StatusBar';
 import { Toolbar } from './components/Toolbar/Toolbar';
 import { PanelRail } from './components/Workspace/PanelRail';
@@ -13,6 +14,7 @@ import { ipc } from './services/ipc-client';
 import { useAuditStore } from './store/audit-store';
 import { useDiffStore } from './store/diff-store';
 import { usePdfStore } from './store/pdf-store';
+import { useRawStore } from './store/raw-store';
 import {
   LEFT_PANEL_LIMITS,
   RIGHT_PANEL_LIMITS,
@@ -32,6 +34,8 @@ const App = (): JSX.Element => {
   const diffActive = useDiffStore((state) => state.active);
   const auditActive = useAuditStore((state) => state.active);
   const auditFilePath = useAuditStore((state) => state.filePath);
+  const rawActive = useRawStore((state) => state.active);
+  const rawFilePath = useRawStore((state) => state.filePath);
   const documentPath = usePdfStore((state) => state.filePath);
 
   const leftWidth = useWorkspaceStore((state) => state.leftWidth);
@@ -56,7 +60,18 @@ const App = (): JSX.Element => {
   // comparison is what the user just asked for; Audit is simply left.
   useEffect(() => {
     if (diffActive && useAuditStore.getState().active) useAuditStore.getState().close();
+    if (diffActive && useRawStore.getState().active) useRawStore.getState().close();
   }, [diffActive]);
+
+  // Raw is the third workspace that replaces the Inspect panes, so the same
+  // exclusion applies in both directions. The toolbar closes the others before
+  // opening Raw; this guard makes it unconditional (drag/drop, a future entry
+  // point), so only one workspace is ever mounted.
+  useEffect(() => {
+    if (!rawActive) return;
+    if (useDiffStore.getState().active) useDiffStore.getState().exitWorkspace();
+    if (useAuditStore.getState().active) useAuditStore.getState().close();
+  }, [rawActive]);
 
   // An audit only ever describes one document. The open paths reset the audit
   // themselves, but this guard makes that unconditional: whatever changes the
@@ -69,7 +84,16 @@ const App = (): JSX.Element => {
     useAuditStore.getState().reset();
   }, [auditFilePath, documentPath]);
 
-  const workspaceActive = diffActive || auditActive;
+  // The raw view is a read-only view of one open document. When the Inspect
+  // document changes, the object graph on screen belongs to a file that is no
+  // longer open, so it is dropped (which also returns to Inspect) instead of
+  // showing objects of the previous file.
+  useEffect(() => {
+    if (rawFilePath === null || rawFilePath === documentPath) return;
+    useRawStore.getState().reset();
+  }, [rawFilePath, documentPath]);
+
+  const workspaceActive = diffActive || auditActive || rawActive;
 
   useEffect(() => {
     const updateSidecarStatus = async (): Promise<void> => {
@@ -89,11 +113,17 @@ const App = (): JSX.Element => {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
-      // The Diff and Audit workspaces own the keyboard while either is open:
-      // their shortcuts (Escape, T, R, F, Ctrl+F) belong to the hidden Inspect
-      // document, so acting on them would silently mutate state the user cannot
-      // see.
-      if (useDiffStore.getState().active || useAuditStore.getState().active) return;
+      // The Diff, Audit and Raw workspaces own the keyboard while any of them
+      // is open: their shortcuts (Escape, T, R, F, Ctrl+F) belong to the hidden
+      // Inspect document, so acting on them would silently mutate state the user
+      // cannot see.
+      if (
+        useDiffStore.getState().active ||
+        useAuditStore.getState().active ||
+        useRawStore.getState().active
+      ) {
+        return;
+      }
 
       if ((event.ctrlKey || event.metaKey) && (event.key === 'f' || event.key === 'F')) {
         event.preventDefault();
@@ -139,8 +169,8 @@ const App = (): JSX.Element => {
       <Toolbar />
       <main className={styles.main}>
         {/*
-         * The Inspect workspace stays mounted while Diff or Audit is open: its
-         * local component state (font analysis, tab-local state) and the
+         * The Inspect workspace stays mounted while Diff, Audit or Raw is open:
+         * its local component state (font analysis, tab-local state) and the
          * document in `pdf-store` must be exactly as they were when the
          * workspace is left again.
          */}
@@ -206,7 +236,8 @@ const App = (): JSX.Element => {
         </div>
 
         {diffActive && <DiffWorkspace />}
-        {!diffActive && auditActive && <AuditWorkspace />}
+        {!diffActive && rawActive && <RawWorkspace />}
+        {!diffActive && !rawActive && auditActive && <AuditWorkspace />}
       </main>
       <StatusBar />
       {/* Mounted once at app level: the toolbar entry and the workspace's

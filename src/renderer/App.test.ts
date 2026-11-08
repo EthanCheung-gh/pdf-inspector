@@ -6,8 +6,10 @@ import { buildAuditReport, type AuditFinding } from '../shared/audit-types';
 import { useAuditStore } from './store/audit-store';
 import { useDiffStore } from './store/diff-store';
 import { usePdfStore } from './store/pdf-store';
+import { useRawStore } from './store/raw-store';
 import { useWorkspaceStore } from './store/workspace-store';
 import type { PdfMetadata, PdfWord } from './types/pdf-objects';
+import type { RawDocument } from './types/raw-pdf';
 import { makeSampleResult } from './services/__tests__/diff-fixtures';
 
 vi.mock('./services/ipc-client', () => ({
@@ -21,6 +23,9 @@ vi.mock('./services/ipc-client', () => ({
     diffPdfs: vi.fn(),
     auditDocument: vi.fn(),
     auditPages: vi.fn(),
+    rawDocument: vi.fn(),
+    rawObject: vi.fn(),
+    rawPageContent: vi.fn(),
   },
 }));
 
@@ -46,6 +51,9 @@ vi.mock('./components/Diff/DiffSetupDialog', () => ({
 vi.mock('./components/Audit/AuditWorkspace', () => ({
   AuditWorkspace: () => React.createElement('div', { 'data-testid': 'audit-workspace' }),
 }));
+vi.mock('./components/Raw/RawWorkspace', () => ({
+  RawWorkspace: () => React.createElement('div', { 'data-testid': 'raw-workspace' }),
+}));
 
 import App from './App';
 
@@ -64,6 +72,7 @@ const metadata: PdfMetadata = {
 beforeEach(() => {
   useDiffStore.getState().reset();
   useAuditStore.getState().reset();
+  useRawStore.getState().reset();
   useWorkspaceStore.setState({
     leftCollapsed: false,
     rightCollapsed: false,
@@ -378,6 +387,193 @@ describe('App audit mode', () => {
 
     act(() => {
       enterAudit();
+    });
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.keyDown(window, { key: 't' });
+    fireEvent.keyDown(window, { key: 'r' });
+    fireEvent.keyDown(window, { key: 'f' });
+    fireEvent.keyDown(window, { key: 'F', ctrlKey: true });
+
+    const pdf = usePdfStore.getState();
+    expect(pdf.selectedObject).toBe(selectedWord);
+    expect(pdf.filterCriteria).toEqual({ types: ['word'] });
+    expect(pdf.textSelectionMode).toBe(false);
+    expect(pdf.regionMode).toBe(false);
+    expect(pdf.searchOpen).toBe(false);
+    expect(useWorkspaceStore.getState().focusMode).toBe(false);
+  });
+});
+
+describe('App raw mode', () => {
+  const rawDocumentFixture: RawDocument = {
+    pages: 5,
+    version: '1.7',
+    encrypted: false,
+    roots: [
+      {
+        label: 'Catalog',
+        ref: { objectNumber: 1, generation: 0 },
+        value: null,
+      },
+    ],
+  };
+
+  const enterRaw = (): void => {
+    useRawStore.setState({
+      active: true,
+      filePath: '/docs/inspecting.pdf',
+      fileName: 'inspecting.pdf',
+      document: rawDocumentFixture,
+      selected: { objectNumber: 1, generation: 0 },
+      object: { ref: { objectNumber: 1, generation: 0 }, summary: 'dict', value: { kind: 'null' } },
+      loading: false,
+      error: null,
+    });
+  };
+
+  it('replaces the Inspect panes with the Raw workspace and keeps the shell usable', () => {
+    render(React.createElement(App));
+
+    act(() => {
+      enterRaw();
+    });
+
+    expect(screen.getByTestId('inspect-area').hidden).toBe(true);
+    expect(screen.getByTestId('raw-workspace')).toBeTruthy();
+    expect(screen.queryByTestId('diff-workspace')).toBeNull();
+    expect(screen.queryByTestId('audit-workspace')).toBeNull();
+    // The Raw entry reports the active mode; the other entries stay visible.
+    expect(screen.getByRole('button', { name: 'Raw' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Diff' })).toBeTruthy();
+    // Inspect-only controls would act on the hidden document, so they are gone.
+    expect(screen.queryByRole('button', { name: 'Select Text' })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Page navigation' })).toBeNull();
+
+    // The pane components stay mounted (hidden) so their local state survives.
+    expect(screen.getByTestId('pdf-viewport')).toBeTruthy();
+    expect(screen.getByTestId('left-panel')).toBeTruthy();
+    expect(screen.getByLabelText('Application status').textContent).toContain('Raw: object 1 0 R');
+  });
+
+  it('restores the exact Inspect state when leaving Raw', () => {
+    render(React.createElement(App));
+    const pageDataBefore = usePdfStore.getState().pageData;
+
+    act(() => {
+      enterRaw();
+    });
+    act(() => {
+      useRawStore.getState().close();
+    });
+
+    expect(screen.getByTestId('inspect-area').hidden).toBe(false);
+    expect(screen.queryByTestId('raw-workspace')).toBeNull();
+
+    const pdf = usePdfStore.getState();
+    expect(pdf.filePath).toBe('/docs/inspecting.pdf');
+    expect(pdf.currentPage).toBe(3);
+    expect(pdf.zoom).toBe(1.5);
+    expect(pdf.pageData).toBe(pageDataBefore);
+    // The loaded object graph survives so Raw can be reopened without a read.
+    expect(useRawStore.getState().document).not.toBeNull();
+    expect(useRawStore.getState().active).toBe(false);
+  });
+
+  it('leaves Audit when Raw takes over the workspace', () => {
+    render(React.createElement(App));
+
+    act(() => {
+      useAuditStore.setState({
+        active: true,
+        filePath: '/docs/inspecting.pdf',
+        fileName: 'inspecting.pdf',
+        report: null,
+        loading: false,
+        progress: null,
+        error: null,
+      });
+    });
+    expect(screen.getByTestId('audit-workspace')).toBeTruthy();
+
+    act(() => {
+      enterRaw();
+    });
+
+    expect(useAuditStore.getState().active).toBe(false);
+    expect(screen.getByTestId('raw-workspace')).toBeTruthy();
+    expect(screen.queryByTestId('audit-workspace')).toBeNull();
+    expect(screen.getByTestId('inspect-area').hidden).toBe(true);
+  });
+
+  it('leaves Raw when a comparison takes over the workspace', () => {
+    render(React.createElement(App));
+
+    act(() => {
+      enterRaw();
+    });
+    expect(screen.getByTestId('raw-workspace')).toBeTruthy();
+
+    act(() => {
+      useDiffStore.getState().applyResult(makeSampleResult());
+      useDiffStore.getState().enterWorkspace();
+    });
+
+    // Only one workspace is ever mounted: Diff wins, Raw is left.
+    expect(useRawStore.getState().active).toBe(false);
+    expect(screen.getByTestId('diff-workspace')).toBeTruthy();
+    expect(screen.queryByTestId('raw-workspace')).toBeNull();
+    expect(screen.getByTestId('inspect-area').hidden).toBe(true);
+  });
+
+  it('drops a stale raw view when the open document changes elsewhere', () => {
+    render(React.createElement(App));
+
+    act(() => {
+      enterRaw();
+    });
+    expect(screen.getByTestId('raw-workspace')).toBeTruthy();
+
+    act(() => {
+      usePdfStore.setState({ filePath: '/docs/other.pdf' });
+    });
+
+    const raw = useRawStore.getState();
+    expect(raw.active).toBe(false);
+    expect(raw.document).toBeNull();
+    expect(raw.fileName).toBeNull();
+
+    expect(screen.queryByTestId('raw-workspace')).toBeNull();
+    expect(screen.getByTestId('inspect-area').hidden).toBe(false);
+    const status = screen.getByLabelText('Application status').textContent ?? '';
+    expect(status).not.toContain('Raw:');
+    expect(status).toContain('Page 3/5');
+  });
+
+  it('leaves Inspect state alone when its shortcuts are pressed while Raw is open', () => {
+    const selectedWord: PdfWord = {
+      type: 'word',
+      page: 2,
+      x0: 10,
+      y0: 20,
+      x1: 30,
+      y1: 32,
+      text: 'Hello',
+      fontname: 'Helvetica',
+      size: 11,
+    };
+    usePdfStore.setState({
+      selectedObject: selectedWord,
+      filterCriteria: { types: ['word'] },
+      textSelectionMode: false,
+      regionMode: false,
+      searchOpen: false,
+    });
+
+    render(React.createElement(App));
+
+    act(() => {
+      enterRaw();
     });
 
     fireEvent.keyDown(window, { key: 'Escape' });
