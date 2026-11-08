@@ -3,6 +3,18 @@ import { IPC_CHANNELS } from '../shared/constants';
 import type { SaveFileRequest } from '../shared/constants';
 import type { DiffOptionsInput, DiffSide, DiffSource } from '../shared/diff-types';
 
+/**
+ * Structural mirror of the renderer's `RawRef` (src/renderer/types/raw-pdf.ts).
+ *
+ * Declared here rather than imported so the composite node tsconfig project
+ * (main/preload) never pulls renderer files in; the fields are the whole
+ * contract of the `pdf:raw-object` request argument.
+ */
+interface RawObjectRef {
+  objectNumber: number;
+  generation: number;
+}
+
 contextBridge.exposeInMainWorld('pdfInspector', {
   openPdf: () => ipcRenderer.invoke(IPC_CHANNELS.OPEN_PDF),
   openPdfUrl: (url: string) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_PDF_URL, url),
@@ -28,6 +40,11 @@ contextBridge.exposeInMainWorld('pdfInspector', {
   // so the Inspect document (and the sidecar session) is never touched.
   pickDiffPdf: (side: DiffSide) => ipcRenderer.invoke(IPC_CHANNELS.PICK_DIFF_PDF, side),
   getImageData: (streamId: string) => ipcRenderer.invoke(IPC_CHANNELS.GET_IMAGE_DATA, streamId),
+  // Raw reads are read-only: they forward to the sidecar without opening,
+  // closing or replacing the current document.
+  rawDocument: () => ipcRenderer.invoke(IPC_CHANNELS.RAW_DOCUMENT),
+  rawObject: (ref: RawObjectRef) => ipcRenderer.invoke(IPC_CHANNELS.RAW_OBJECT, ref),
+  rawPageContent: (page: number) => ipcRenderer.invoke(IPC_CHANNELS.RAW_PAGE_CONTENT, page),
   getSidecarStatus: () => ipcRenderer.invoke(IPC_CHANNELS.SIDECAR_STATUS),
   restartSidecar: () => ipcRenderer.invoke(IPC_CHANNELS.RESTART_SIDECAR),
   saveFile: (req: SaveFileRequest) => ipcRenderer.invoke(IPC_CHANNELS.SAVE_FILE, req),

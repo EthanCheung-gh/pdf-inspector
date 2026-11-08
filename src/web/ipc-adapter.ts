@@ -23,6 +23,12 @@ import type {
   SaveFileResult,
 } from '../renderer/types/ipc-protocol';
 import type { PageData, PdfMetadata } from '../renderer/types/pdf-objects';
+import type {
+  RawDocument,
+  RawObject,
+  RawPageContent,
+  RawRef,
+} from '../renderer/types/raw-pdf';
 import type { SaveFileRequest } from '../shared/constants';
 import { UNSAFE_EXTERNAL_URL_ERROR, toSafeExternalUrl } from '../shared/external-url';
 import type { OpenExternalResult } from '../shared/external-url';
@@ -456,6 +462,20 @@ export function createWebIpc(): IpcApi {
       rpc<{ base64?: string; format?: string; error?: string }>('get_image_data', {
         stream_id: streamId,
       }),
+
+    // Raw reads inspect the document the backend already has open; all three are
+    // plain allowlisted RPCs and never upload or replace that document. The ref
+    // is translated to the sidecar's snake_case keys here, exactly like the
+    // desktop handler does, so both bridges send the same params.
+    rawDocument: () => rpc<RawDocument>('raw_document'),
+
+    rawObject: (ref: RawRef) =>
+      rpc<RawObject>('raw_object', {
+        object_number: ref.objectNumber,
+        generation: ref.generation,
+      }),
+
+    rawPageContent: (page: number) => rpc<RawPageContent>('raw_page_content', { page }),
 
     getSidecarStatus: async () => {
       const response = await fetch('/api/status', { method: 'GET' });

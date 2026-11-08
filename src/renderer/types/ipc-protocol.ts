@@ -1,4 +1,5 @@
 import { PdfMetadata, PageData } from './pdf-objects';
+import type { RawDocument, RawObject, RawPageContent, RawRef } from './raw-pdf';
 import type { SaveFileRequest } from '../../shared/constants';
 import type { OpenExternalResult } from '../../shared/external-url';
 import type { AuditDocumentResult, AuditPagesResult } from '../../shared/audit-types';
@@ -12,6 +13,17 @@ import type {
 
 export type { SaveFileRequest };
 export type { OpenExternalResult };
+export type {
+  RawContentOperator,
+  RawContentStream,
+  RawDocument,
+  RawEntry,
+  RawObject,
+  RawPageContent,
+  RawRef,
+  RawRoot,
+  RawValue,
+} from './raw-pdf';
 export type {
   AuditCategory,
   AuditDocumentInfo,
@@ -103,6 +115,23 @@ export interface IpcApi {
    */
   pickDiffPdf(side: DiffSide): Promise<PickDiffPdfResult>;
   getImageData(streamId: string): Promise<{ base64?: string; format?: string; error?: string }>;
+  /**
+   * Read the document's trailer roots (Catalog, Info, Encrypt, ID, Pages).
+   *
+   * Read-only and document-scoped: like the audit calls, the raw readers inspect
+   * the document the sidecar already has open and never send `open`, so the
+   * Inspect page/zoom/selection (and the Diff/Audit inputs) stay untouched.
+   */
+  rawDocument(): Promise<RawDocument>;
+  /**
+   * Read exactly one indirect object.
+   *
+   * References inside the returned value are never resolved: the tree expands a
+   * `ref` by calling this again, so no request can walk the object graph.
+   */
+  rawObject(ref: RawRef): Promise<RawObject>;
+  /** Read the decoded content-stream operators of one 1-based page. */
+  rawPageContent(page: number): Promise<RawPageContent>;
   getSidecarStatus(): Promise<{ running: boolean }>;
   restartSidecar(): Promise<{ success: boolean; running: boolean; error?: string }>;
   /**

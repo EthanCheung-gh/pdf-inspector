@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { SidecarManager } from './sidecar';
 import { deleteDownloadedFile, downloadPdfToFile, parsePdfUrl } from './pdf-url';
-import { IPC_CHANNELS, ANALYZE_FONTS_TIMEOUT_MS, AUDIT_TIMEOUT_MS, DIFF_TIMEOUT_MS, EXTRACT_PAGE_TIMEOUT_MS, OPEN_PDF_TIMEOUT_MS } from '../shared/constants';
+import { IPC_CHANNELS, ANALYZE_FONTS_TIMEOUT_MS, AUDIT_TIMEOUT_MS, DIFF_TIMEOUT_MS, EXTRACT_PAGE_TIMEOUT_MS, OPEN_PDF_TIMEOUT_MS, RAW_TIMEOUT_MS } from '../shared/constants';
 import type { SaveFileRequest } from '../shared/constants';
 import { UNSAFE_EXTERNAL_URL_ERROR, toSafeExternalUrl } from '../shared/external-url';
 import type { OpenExternalResult } from '../shared/external-url';
@@ -66,6 +66,30 @@ async function trackOpenDocument(filePath: string, tempFile: string | null): Pro
   if (previousTempFile && previousTempFile !== filePath) {
     await deleteDownloadedFile(previousTempFile);
   }
+}
+
+/**
+ * Translate the renderer's `RawRef` argument into the RPC's snake_case params.
+ *
+ * Range validation belongs to the sidecar, which is the only side that knows
+ * the document's object count; main only guarantees that the request carries a
+ * usable object number so a malformed argument cannot reach the sidecar as
+ * `{object_number: undefined}`. `generation` is forwarded only when supplied
+ * (generation `0` is a real generation, so the check is on the type).
+ */
+function rawObjectParams(ref: unknown): { object_number: number; generation?: number } {
+  const candidate = (ref ?? {}) as { objectNumber?: unknown; generation?: number };
+  if (typeof candidate.objectNumber !== 'number' || !Number.isFinite(candidate.objectNumber)) {
+    throw new Error('rawObject requires the objectNumber of a raw PDF reference');
+  }
+
+  const params: { object_number: number; generation?: number } = {
+    object_number: candidate.objectNumber,
+  };
+  if (typeof candidate.generation === 'number' && Number.isFinite(candidate.generation)) {
+    params.generation = candidate.generation;
+  }
+  return params;
 }
 
 export function registerIpcHandlers(sidecar: SidecarManager): void {
@@ -199,6 +223,25 @@ export function registerIpcHandlers(sidecar: SidecarManager): void {
 
   ipcMain.handle(IPC_CHANNELS.GET_IMAGE_DATA, async (_event, streamId: string) => {
     return sidecar.send('get_image_data', { stream_id: streamId });
+  });
+
+  // Raw PDF reads. Like the audit channels these inspect the document the
+  // sidecar already has open: no handler sends `open`, so the Inspect document,
+  // its caches and the Diff/Audit inputs stay exactly as they are. Each raw
+  // request is bounded by its own budget instead of the 30s default, because it
+  // may decode content streams for a page.
+  ipcMain.handle(IPC_CHANNELS.RAW_DOCUMENT, async () => {
+    return sidecar.send('raw_document', {}, RAW_TIMEOUT_MS);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.RAW_OBJECT, async (_event, ref: unknown) => {
+    return sidecar.send('raw_object', rawObjectParams(ref), RAW_TIMEOUT_MS);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.RAW_PAGE_CONTENT, async (_event, page: number) => {
+    // The sidecar validates that the page is 1-based and inside the document;
+    // main only translates the argument to the RPC's `page` param.
+    return sidecar.send('raw_page_content', { page }, RAW_TIMEOUT_MS);
   });
 
   ipcMain.handle(

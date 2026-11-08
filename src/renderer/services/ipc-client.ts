@@ -1,4 +1,5 @@
 import { IpcApi, SaveFileRequest } from '../types/ipc-protocol';
+import type { RawRef } from '../types/raw-pdf';
 import type { DiffOptionsInput, DiffSide, DiffSource } from '../../shared/diff-types';
 import type { OpenExternalResult } from '../../shared/external-url';
 import {
@@ -8,6 +9,7 @@ import {
   EXTRACT_PAGE_RENDERER_TIMEOUT_MS,
   OPEN_PDF_RENDERER_TIMEOUT_MS,
   OPEN_PDF_URL_TIMEOUT_MS,
+  RAW_RENDERER_TIMEOUT_MS,
 } from '../../shared/constants';
 
 declare global {
@@ -140,6 +142,32 @@ export const ipc = {
       ANALYZE_FONTS_RENDERER_TIMEOUT_MS,
     ),
   getImageData: (streamId: string) => callWithTimeout(() => window.pdfInspector.getImageData(streamId), 'getImageData'),
+  // Raw reads decode one object or one page's content streams in the sidecar, so
+  // they get the same dedicated budget as font analysis: the renderer must stay
+  // patient longer than main so main's clear timeout message wins the race.
+  //
+  // Only a timeout can restart the sidecar (see `callWithTimeout`); an invalid
+  // object/page is rejected by the sidecar's range check and propagates as a
+  // plain error, so a bad reference never costs the user a restart. A retry
+  // re-sends the captured ref/page because the arguments are closed over.
+  rawDocument: () =>
+    callWithTimeout(
+      () => window.pdfInspector.rawDocument(),
+      'rawDocument',
+      RAW_RENDERER_TIMEOUT_MS,
+    ),
+  rawObject: (ref: RawRef) =>
+    callWithTimeout(
+      () => window.pdfInspector.rawObject(ref),
+      'rawObject',
+      RAW_RENDERER_TIMEOUT_MS,
+    ),
+  rawPageContent: (page: number) =>
+    callWithTimeout(
+      () => window.pdfInspector.rawPageContent(page),
+      'rawPageContent',
+      RAW_RENDERER_TIMEOUT_MS,
+    ),
   // Audit requests walk the document (metadata/fonts/page geometry, then 10-page
   // batches), so they get the same kind of dedicated budget as font analysis:
   // the renderer must stay patient longer than main so main's clear timeout

@@ -123,6 +123,27 @@ export const AUDIT_TIMEOUT_MS = 120_000;
 export const AUDIT_RENDERER_TIMEOUT_MS = AUDIT_TIMEOUT_MS + 5_000;
 
 /**
+ * Timeout for one `raw_document` / `raw_object` / `raw_page_content` request.
+ *
+ * The raw reads are lazy and bounded (one object, one page's content streams,
+ * and never a full binary stream), but they still open the document and decode
+ * content streams in the sidecar, so they get the same budget as font analysis
+ * and the audit instead of the 30s default. The budget is per request: the raw
+ * workspace issues one call at a time and each of them is bounded separately.
+ */
+export const RAW_TIMEOUT_MS = 120_000;
+
+/**
+ * Renderer-side budget for `rawDocument` / `rawObject` / `rawPageContent`.
+ *
+ * Larger than the main-process budget for the same reason as
+ * `ANALYZE_FONTS_RENDERER_TIMEOUT_MS`: main must time out first so its clear
+ * `Request "raw_object" timed out after 120s` error surfaces instead of a
+ * renderer-side "Sidecar timeout" that triggers a restart.
+ */
+export const RAW_RENDERER_TIMEOUT_MS = RAW_TIMEOUT_MS + 5_000;
+
+/**
  * Timeout for one `extract_page` request.
  *
  * Extraction is normally sub-0.1s, but a single complex page (many tables,
@@ -157,6 +178,17 @@ export const IPC_CHANNELS = {
   AUDIT_PAGES: 'pdf:audit-pages',
   DIFF_PDFS: 'pdf:diff',
   PICK_DIFF_PDF: 'pdf:pick-diff',
+  /**
+   * Raw PDF reading (see src/renderer/types/raw-pdf.ts).
+   *
+   * Read-only: these channels inspect the trailer roots, one indirect object and
+   * one page's decoded content streams of the document the sidecar already has
+   * open. They never send `open`, so opening the Raw workspace cannot change the
+   * Inspect document, the Diff inputs or an audit.
+   */
+  RAW_DOCUMENT: 'pdf:raw-document',
+  RAW_OBJECT: 'pdf:raw-object',
+  RAW_PAGE_CONTENT: 'pdf:raw-page-content',
   SAVE_FILE: 'file:save',
   /**
    * Ask the shell to open one external link. Not a `pdf:` channel: it never
