@@ -36,6 +36,31 @@ export const ANALYZE_FONTS_TIMEOUT_MS = 120_000;
 export const ANALYZE_FONTS_RENDERER_TIMEOUT_MS = ANALYZE_FONTS_TIMEOUT_MS + 5_000;
 
 /**
+ * Timeout for the `open` request (pdfplumber open + font-resource scan).
+ *
+ * Opening is not a cheap handshake: the sidecar opens the document with
+ * pdfplumber and walks its font resources to build the metadata the UI shows,
+ * so a large or damaged PDF legitimately takes far longer than the generic 30s
+ * request budget. Every `open` request in the main process and the web backend
+ * passes this budget explicitly; all other methods keep the default.
+ */
+export const OPEN_PDF_TIMEOUT_MS = 120_000;
+
+/**
+ * Renderer-side budget for `openPdf`.
+ *
+ * Deliberately LARGER than the main-process budget for the same reason as
+ * `ANALYZE_FONTS_RENDERER_TIMEOUT_MS`: the renderer's timer starts one IPC hop
+ * earlier, so with an equal budget it would always fire first and turn a
+ * legitimately slow open into a restart-triggering
+ * "Sidecar timeout: openPdf exceeded ...ms", hiding main's clear
+ * `Request "open" timed out after 120s` error. The extra headroom means main's
+ * timeout surfaces first and no restart is attempted; the renderer timer is
+ * only a backstop for a main process that never answers.
+ */
+export const OPEN_PDF_RENDERER_TIMEOUT_MS = OPEN_PDF_TIMEOUT_MS + 5_000;
+
+/**
  * Budget for downloading a remote PDF in the main process.
  *
  * A URL download is bounded separately from the IPC round trip: the download
@@ -45,8 +70,16 @@ export const ANALYZE_FONTS_RENDERER_TIMEOUT_MS = ANALYZE_FONTS_TIMEOUT_MS + 5_00
  */
 export const PDF_URL_TIMEOUT_MS = 60_000;
 
-/** Timeout the renderer allows for the `openPdfUrl` IPC request. */
-export const OPEN_PDF_URL_TIMEOUT_MS = 120_000;
+/**
+ * Timeout the renderer allows for the `openPdfUrl` IPC request.
+ *
+ * Main performs the download (PDF_URL_TIMEOUT_MS) and then the sidecar open
+ * (OPEN_PDF_TIMEOUT_MS) sequentially, so the renderer must outlast both plus the
+ * same 5s headroom as the other dedicated renderer budgets. With only an open
+ * budget's worth of time, a slow download followed by a slow open would make the
+ * renderer lose the race and restart the sidecar.
+ */
+export const OPEN_PDF_URL_TIMEOUT_MS = PDF_URL_TIMEOUT_MS + OPEN_PDF_TIMEOUT_MS + 5_000;
 
 /**
  * Timeout for the `diff_documents` request.
@@ -88,6 +121,28 @@ export const AUDIT_TIMEOUT_MS = 120_000;
  * renderer-side "Sidecar timeout" that triggers a restart.
  */
 export const AUDIT_RENDERER_TIMEOUT_MS = AUDIT_TIMEOUT_MS + 5_000;
+
+/**
+ * Timeout for one `extract_page` request.
+ *
+ * Extraction is normally sub-0.1s, but a single complex page (many tables,
+ * nested objects, thousands of words/rects) is extracted in one shot, so a
+ * legitimately slow page must not be reported as a failed page load after the
+ * generic 30s budget. The value matches the other expensive reads and stays
+ * per-request: it never extends the budget of a metadata/image call.
+ */
+export const EXTRACT_PAGE_TIMEOUT_MS = 120_000;
+
+/**
+ * Renderer-side budget for `extractPage`.
+ *
+ * Larger than the main-process budget for the same reason as
+ * `ANALYZE_FONTS_RENDERER_TIMEOUT_MS`: main must time out first so its clear
+ * `Request "extract_page" timed out after 120s` error surfaces instead of a
+ * renderer-side "Sidecar timeout" that would restart the sidecar and hide the
+ * real cause of a failed page load.
+ */
+export const EXTRACT_PAGE_RENDERER_TIMEOUT_MS = EXTRACT_PAGE_TIMEOUT_MS + 5_000;
 
 export const IPC_CHANNELS = {
   OPEN_PDF: 'pdf:open',

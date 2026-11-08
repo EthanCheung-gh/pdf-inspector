@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ANALYZE_FONTS_RENDERER_TIMEOUT_MS,
   ANALYZE_FONTS_TIMEOUT_MS,
+  EXTRACT_PAGE_RENDERER_TIMEOUT_MS,
+  EXTRACT_PAGE_TIMEOUT_MS,
+  OPEN_PDF_RENDERER_TIMEOUT_MS,
+  OPEN_PDF_TIMEOUT_MS,
   OPEN_PDF_URL_TIMEOUT_MS,
   PDF_URL_TIMEOUT_MS,
 } from '../../../shared/constants';
@@ -9,13 +13,14 @@ import {
 const mockRestartSidecar = vi.fn();
 const mockExtractPage = vi.fn();
 const mockAnalyzeFonts = vi.fn();
+const mockOpenPdf = vi.fn();
 const mockOpenPdfUrl = vi.fn();
 
 globalThis.window = {
   pdfInspector: {
     restartSidecar: mockRestartSidecar,
     extractPage: mockExtractPage,
-    openPdf: vi.fn(),
+    openPdf: mockOpenPdf,
     openPdfUrl: mockOpenPdfUrl,
     extractMetadata: vi.fn(),
     analyzeFonts: mockAnalyzeFonts,
@@ -42,7 +47,7 @@ describe('ipc-client timeout recovery', () => {
     vi.useRealTimers();
   });
 
-  it('extractPage resolves when the sidecar responds before 30 seconds', async () => {
+  it('extractPage resolves when the sidecar responds before the page budget', async () => {
     const pageData = { width: 612, height: 792, chars: [], words: [], rects: [], lines: [], curves: [], images: [], tables: [] };
     mockExtractPage.mockResolvedValue(pageData);
 
@@ -51,7 +56,7 @@ describe('ipc-client timeout recovery', () => {
     expect(mockRestartSidecar).not.toHaveBeenCalled();
   });
 
-  it('restarts and retries once after a 30 second extraction timeout', async () => {
+  it('restarts and retries once after the page extraction timeout', async () => {
     const pageData = { width: 612, height: 792, chars: [], words: [], rects: [], lines: [], curves: [], images: [], tables: [] };
     mockRestartSidecar.mockResolvedValue({ success: true, running: true });
     mockExtractPage
@@ -59,7 +64,7 @@ describe('ipc-client timeout recovery', () => {
       .mockResolvedValueOnce(pageData);
 
     const promise = ipc.extractPage(3);
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(EXTRACT_PAGE_RENDERER_TIMEOUT_MS);
     await vi.runAllTicks();
 
     await expect(promise).resolves.toEqual(pageData);
@@ -72,17 +77,19 @@ describe('ipc-client timeout recovery', () => {
     mockExtractPage.mockImplementation(() => new Promise(() => {}));
 
     const promise = ipc.extractPage(3);
-    const rejection = expect(promise).rejects.toThrow('Sidecar timeout: extractPage exceeded 30000ms');
-    await vi.advanceTimersByTimeAsync(30_000);
+    const rejection = expect(promise).rejects.toThrow(
+      `Sidecar timeout: extractPage exceeded ${EXTRACT_PAGE_RENDERER_TIMEOUT_MS}ms`,
+    );
+    await vi.advanceTimersByTimeAsync(EXTRACT_PAGE_RENDERER_TIMEOUT_MS);
     await vi.runAllTicks();
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(EXTRACT_PAGE_RENDERER_TIMEOUT_MS);
 
     await rejection;
     expect(mockRestartSidecar).toHaveBeenCalledTimes(1);
     expect(mockExtractPage).toHaveBeenCalledTimes(2);
   });
 
-  it('stops restarting after three timeouts within a minute', async () => {
+  it('stops restarting after three timeouts inside the restart window', async () => {
     vi.setSystemTime(new Date('2100-01-01T00:00:00Z'));
     mockRestartSidecar.mockResolvedValue({ success: true, running: true });
     mockExtractPage.mockImplementation(() => new Promise(() => {}));
@@ -90,10 +97,12 @@ describe('ipc-client timeout recovery', () => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       vi.setSystemTime(new Date('2100-01-01T00:00:00Z'));
       const promise = ipc.extractPage(3);
-      const rejection = expect(promise).rejects.toThrow('Sidecar timeout: extractPage exceeded 30000ms');
-      await vi.advanceTimersByTimeAsync(30_000);
+      const rejection = expect(promise).rejects.toThrow(
+        `Sidecar timeout: extractPage exceeded ${EXTRACT_PAGE_RENDERER_TIMEOUT_MS}ms`,
+      );
+      await vi.advanceTimersByTimeAsync(EXTRACT_PAGE_RENDERER_TIMEOUT_MS);
       await vi.runAllTicks();
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(EXTRACT_PAGE_RENDERER_TIMEOUT_MS);
       await rejection;
     }
 
@@ -102,10 +111,54 @@ describe('ipc-client timeout recovery', () => {
     const cappedRejection = expect(cappedPromise).rejects.toThrow(
       'Sidecar repeatedly crashes. Please restart the application.',
     );
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(EXTRACT_PAGE_RENDERER_TIMEOUT_MS);
     await cappedRejection;
 
     expect(mockRestartSidecar).toHaveBeenCalledTimes(3);
+  });
+
+  it('extractPage keeps waiting past the 30s default', async () => {
+    // A single complex page (many tables/objects) is a legitimate slow request:
+    // the generic 30s budget must not turn it into a restart.
+    mockExtractPage.mockImplementation(() => new Promise(() => {}));
+
+    let settled = false;
+    const promise = ipc.extractPage(3);
+    void promise.then(
+      () => { settled = true; },
+      () => { settled = true; },
+    );
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.runAllTicks();
+
+    expect(settled).toBe(false);
+    expect(mockRestartSidecar).not.toHaveBeenCalled();
+  });
+
+  it('surfaces the main-process extract_page timeout without restarting', async () => {
+    // Main times out first (120s) and rejects the IPC call with its own error;
+    // the renderer budget must not have fired by then.
+    mockExtractPage.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          setTimeout(() => reject(new Error('Request "extract_page" timed out after 120s')), EXTRACT_PAGE_TIMEOUT_MS);
+        }),
+    );
+
+    const promise = ipc.extractPage(3);
+    const rejection = expect(promise).rejects.toThrow(
+      'Request "extract_page" timed out after 120s',
+    );
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(mockRestartSidecar).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(EXTRACT_PAGE_RENDERER_TIMEOUT_MS);
+    await rejection;
+
+    expect(mockRestartSidecar).not.toHaveBeenCalled();
+    expect(mockExtractPage).toHaveBeenCalledTimes(1);
   });
 
   it('analyzeFonts resolves when the sidecar responds in time', async () => {
@@ -267,17 +320,88 @@ describe('ipc-client timeout recovery', () => {
     expect(mockOpenPdfUrl).toHaveBeenCalledWith('https://example.com/report.pdf');
     expect(mockRestartSidecar).not.toHaveBeenCalled();
   });
+
+  it('openPdf keeps waiting past the 30s default', async () => {
+    // Opening a large/corrupt PDF is legitimately slow: the generic budget must
+    // not turn it into a "Sidecar timeout" and a restart.
+    mockOpenPdf.mockImplementation(() => new Promise(() => {}));
+
+    let settled = false;
+    const promise = ipc.openPdf();
+    void promise.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.runAllTicks();
+
+    expect(settled).toBe(false);
+    expect(mockRestartSidecar).not.toHaveBeenCalled();
+  });
+
+  it('surfaces main\u2019s open timeout instead of restarting the sidecar', async () => {
+    // Main times out first (120s) and rejects the IPC call with its own error;
+    // the renderer's 125s backstop must not have fired yet.
+    mockOpenPdf.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          setTimeout(() => reject(new Error('Request "open" timed out after 120s')), 120_000);
+        }),
+    );
+
+    const promise = ipc.openPdf();
+    const rejection = expect(promise).rejects.toThrow('Request "open" timed out after 120s');
+
+    await vi.advanceTimersByTimeAsync(OPEN_PDF_TIMEOUT_MS);
+    await rejection;
+
+    expect(mockRestartSidecar).not.toHaveBeenCalled();
+    expect(mockOpenPdf).toHaveBeenCalledTimes(1);
+  });
+
+  it('restarts and retries openPdf once after its own renderer backstop', async () => {
+    mockRestartSidecar.mockResolvedValue({ success: true, running: true });
+    mockOpenPdf
+      .mockImplementationOnce(() => new Promise(() => {}))
+      .mockResolvedValueOnce({ canceled: false, path: '/tmp/large.pdf' });
+
+    const promise = ipc.openPdf();
+    await vi.advanceTimersByTimeAsync(OPEN_PDF_RENDERER_TIMEOUT_MS);
+    await vi.runAllTicks();
+
+    await expect(promise).resolves.toEqual({ canceled: false, path: '/tmp/large.pdf' });
+    expect(mockRestartSidecar).toHaveBeenCalledTimes(1);
+    expect(mockOpenPdf).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('IPC timeout budgets', () => {
+  it('gives page extraction 120s and lets main lose the race, never the renderer', () => {
+    expect(EXTRACT_PAGE_TIMEOUT_MS).toBe(120_000);
+    expect(EXTRACT_PAGE_RENDERER_TIMEOUT_MS).toBe(125_000);
+    expect(EXTRACT_PAGE_RENDERER_TIMEOUT_MS).toBeGreaterThan(EXTRACT_PAGE_TIMEOUT_MS);
+  });
+
   it('lets the main process lose the analyzeFonts race, never the renderer', () => {
     // The renderer timer starts one IPC hop earlier, so it needs headroom.
     expect(ANALYZE_FONTS_RENDERER_TIMEOUT_MS).toBeGreaterThan(ANALYZE_FONTS_TIMEOUT_MS);
   });
 
+  it('lets the main process lose the openPdf race, never the renderer', () => {
+    expect(OPEN_PDF_TIMEOUT_MS).toBe(120_000);
+    expect(OPEN_PDF_RENDERER_TIMEOUT_MS).toBeGreaterThan(OPEN_PDF_TIMEOUT_MS);
+  });
+
   it('covers the whole main-process openPdfUrl path', () => {
-    // Worst case in main: the download budget plus a default-budget sidecar
-    // open. The renderer must outlast both.
-    expect(OPEN_PDF_URL_TIMEOUT_MS).toBeGreaterThan(PDF_URL_TIMEOUT_MS + 30_000);
+    // Worst case in main: the download budget plus a full open budget (a large
+    // PDF may use all of OPEN_PDF_TIMEOUT_MS). The renderer must outlast both.
+    expect(OPEN_PDF_URL_TIMEOUT_MS).toBeGreaterThan(
+      PDF_URL_TIMEOUT_MS + OPEN_PDF_TIMEOUT_MS,
+    );
   });
 });

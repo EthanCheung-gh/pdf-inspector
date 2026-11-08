@@ -46,6 +46,8 @@ import {
   ANALYZE_FONTS_TIMEOUT_MS,
   AUDIT_TIMEOUT_MS,
   DIFF_TIMEOUT_MS,
+  EXTRACT_PAGE_TIMEOUT_MS,
+  OPEN_PDF_TIMEOUT_MS,
   SIDECAR_SCRIPT,
 } from '../src/shared/constants';
 import { diffOptionsToRpc } from '../src/shared/diff-types';
@@ -96,6 +98,25 @@ const RPC_ALLOWLIST = new Set([
   'audit_pages',
   'get_image_data',
 ]);
+
+/**
+ * Per-method request budgets.
+ *
+ * Methods that walk or decode large parts of the document get a dedicated
+ * budget; every other allowlisted method keeps the 30s default. Kept as a table
+ * (not a growing ternary) so a new expensive method cannot silently inherit the
+ * default and so the parity with the desktop handlers stays readable.
+ *
+ * `extract_page` is here for the same reason it has a budget in the desktop
+ * handlers: one request extracts a whole page (tables included), which a single
+ * complex page can stretch past 30s even though a normal page takes <0.1s.
+ */
+const RPC_TIMEOUTS: Record<string, number> = {
+  extract_page: EXTRACT_PAGE_TIMEOUT_MS,
+  analyze_fonts: ANALYZE_FONTS_TIMEOUT_MS,
+  audit_document: AUDIT_TIMEOUT_MS,
+  audit_pages: AUDIT_TIMEOUT_MS,
+};
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -248,8 +269,9 @@ interface PendingRequest {
  * - one child process at a time; `start()` coalesces concurrent callers;
  * - stdout is line-buffered; the first `{"ready":true}` line resolves start;
  * - `stdin` writes are serialized, but responses may arrive out of order;
- * - every request has its own timeout (30s default, 120s for analyze_fonts and
- *   both audit methods; the diff endpoint passes 300s);
+ * - every request has its own timeout (30s default; 120s for `open`, `extract_page`,
+ *   analyze_fonts, both audit methods; the diff endpoint
+ *   passes 300s);
  * - an exit rejects all pending requests and clears the running state;
  * - `send()` lazily starts the sidecar once, unless stop() was requested;
  * - `restart()` shuts the old process down, spawns a new one and re-opens the
@@ -498,6 +520,10 @@ export class SidecarManager {
    * Re-open the tracked document after a fresh spawn. Shared by concurrent
    * callers; failures are logged because a request that triggered the start
    * should still see the original operation's result.
+   *
+   * The restore is a full `open` (parse plus the sidecar's font-resource scan),
+   * so it gets OPEN_PDF_TIMEOUT_MS rather than the 30s default: a large document
+   * would otherwise look like a hung sidecar right after every restart.
    */
   private restoreDocument(): Promise<void> {
     const filePath = this.documentPath;
@@ -506,7 +532,7 @@ export class SidecarManager {
 
     const attempt = (async (): Promise<void> => {
       try {
-        await this.writeRequest('open', { path: filePath }, DEFAULT_REQUEST_TIMEOUT_MS);
+        await this.writeRequest('open', { path: filePath }, OPEN_PDF_TIMEOUT_MS);
       } catch (error) {
         console.error('[sidecar] Failed to re-open current document:', toErrorMessage(error));
       }
@@ -693,14 +719,21 @@ export class DocumentRegistry {
 
     let metadata: unknown;
     try {
-      metadata = await this.sidecar.send('open', { path: filePath });
+      // Opening parses the document and scans its font resources, so a large or
+      // damaged PDF can exceed the 30s default; the open gets its own budget.
+      metadata = await this.sidecar.send('open', { path: filePath }, OPEN_PDF_TIMEOUT_MS);
     } catch (error) {
       // The sidecar dropped the old document before failing the new one. Put
       // the previous document back so the browser's current view stays valid,
       // then propagate the original error unchanged.
       if (previous) {
         try {
-          await this.sidecar.send('open', { path: previous.filePath });
+          // Restoring is the same full open, so it needs the same budget.
+          await this.sidecar.send(
+            'open',
+            { path: previous.filePath },
+            OPEN_PDF_TIMEOUT_MS,
+          );
           this.sidecar.setDocumentPath(previous.filePath);
         } catch (restoreError) {
           console.error(
@@ -1495,14 +1528,10 @@ async function handleRpc(
   const params = body.params ?? {};
   if (!isRecord(params)) throw new HttpError(400, '"params" must be an object');
 
-  // Font analysis and both audit passes walk large parts of the document; every
-  // other allowlisted method keeps the default budget.
-  const timeoutMs =
-    method === 'analyze_fonts'
-      ? ANALYZE_FONTS_TIMEOUT_MS
-      : method === 'audit_document' || method === 'audit_pages'
-        ? AUDIT_TIMEOUT_MS
-        : DEFAULT_REQUEST_TIMEOUT_MS;
+  // Page extraction, font analysis and both audit passes walk or decode large
+  // parts of the document; every other allowlisted method keeps the default
+  // budget.
+  const timeoutMs = RPC_TIMEOUTS[method] ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
   const result = await context.sidecar.send(method, params, timeoutMs);
   sendJson(res, 200, result);

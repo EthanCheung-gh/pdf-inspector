@@ -30,7 +30,12 @@ vi.mock('electron', () => ({
 
 vi.mock('node:fs/promises', () => ({ writeFile: vi.fn() }));
 
-import { ANALYZE_FONTS_TIMEOUT_MS, IPC_CHANNELS } from '../../shared/constants';
+import {
+  ANALYZE_FONTS_TIMEOUT_MS,
+  EXTRACT_PAGE_TIMEOUT_MS,
+  IPC_CHANNELS,
+  OPEN_PDF_TIMEOUT_MS,
+} from '../../shared/constants';
 import type { SidecarManager } from '../sidecar';
 
 interface SidecarStub {
@@ -96,7 +101,11 @@ describe('registerIpcHandlers document restorer', () => {
     await restorer!();
 
     expect(sidecar.send).toHaveBeenCalledTimes(1);
-    expect(sidecar.send).toHaveBeenCalledWith('open', { path: '/tmp/example.pdf' });
+    expect(sidecar.send).toHaveBeenCalledWith(
+      'open',
+      { path: '/tmp/example.pdf' },
+      OPEN_PDF_TIMEOUT_MS,
+    );
   });
 });
 
@@ -118,14 +127,18 @@ describe('OPEN_PDF failure handling', () => {
     // First the failing open, then exactly one best-effort reopen of the file
     // that is still tracked (the sidecar closed it before the failed open).
     expect(sidecar.send.mock.calls).toEqual([
-      ['open', { path: '/tmp/broken.pdf' }],
-      ['open', { path: '/tmp/first.pdf' }],
+      ['open', { path: '/tmp/broken.pdf' }, OPEN_PDF_TIMEOUT_MS],
+      ['open', { path: '/tmp/first.pdf' }, OPEN_PDF_TIMEOUT_MS],
     ]);
 
     // `currentFilePath` is unchanged, so a later restore still opens /tmp/first.pdf.
     sidecar.send.mockClear();
     await restorer!();
-    expect(sidecar.send).toHaveBeenCalledWith('open', { path: '/tmp/first.pdf' });
+    expect(sidecar.send).toHaveBeenCalledWith(
+      'open',
+      { path: '/tmp/first.pdf' },
+      OPEN_PDF_TIMEOUT_MS,
+    );
   });
 
   it('does not attempt a reopen when no document was open yet', async () => {
@@ -140,7 +153,11 @@ describe('OPEN_PDF failure handling', () => {
     );
 
     expect(sidecar.send).toHaveBeenCalledTimes(1);
-    expect(sidecar.send).toHaveBeenCalledWith('open', { path: '/tmp/broken.pdf' });
+    expect(sidecar.send).toHaveBeenCalledWith(
+      'open',
+      { path: '/tmp/broken.pdf' },
+      OPEN_PDF_TIMEOUT_MS,
+    );
   });
 
   it('still propagates the original error when the reopen also fails', async () => {
@@ -182,7 +199,11 @@ describe('RESTART_SIDECAR handler', () => {
 
     await restorer!();
     expect(sidecar.send).toHaveBeenCalledTimes(1);
-    expect(sidecar.send).toHaveBeenCalledWith('open', { path: '/tmp/example.pdf' });
+    expect(sidecar.send).toHaveBeenCalledWith(
+      'open',
+      { path: '/tmp/example.pdf' },
+      OPEN_PDF_TIMEOUT_MS,
+    );
   });
 
   it('reports failures instead of throwing', async () => {
@@ -231,16 +252,71 @@ describe('ANALYZE_FONTS request timeout', () => {
   it('leaves the other channels on the 30s default', async () => {
     // Handlers receive `(event, ...args)`; the stub event is unused here.
     const event = {} as unknown;
-    await invoke(IPC_CHANNELS.EXTRACT_PAGE, event, 4);
     await invoke(IPC_CHANNELS.EXTRACT_METADATA);
     await invoke(IPC_CHANNELS.GET_IMAGE_DATA, event, 'Im1');
 
     // Exactly two arguments: no per-request timeout, so SidecarManager.send()
     // applies its 30s default.
     expect(sidecar.send.mock.calls).toEqual([
-      ['extract_page', { page: 4 }],
       ['extract_metadata'],
       ['get_image_data', { stream_id: 'Im1' }],
+    ]);
+  });
+});
+
+describe('EXTRACT_PAGE request timeout', () => {
+  it('requests a 120s budget for page extraction', async () => {
+    // Extraction is normally sub-0.1s, but one complex page (many tables and
+    // objects) is extracted in one shot and must not look like a failed page.
+    expect(EXTRACT_PAGE_TIMEOUT_MS).toBe(120_000);
+
+    await invoke(IPC_CHANNELS.EXTRACT_PAGE, {}, 4);
+
+    expect(sidecar.send).toHaveBeenCalledTimes(1);
+    expect(sidecar.send).toHaveBeenCalledWith(
+      'extract_page',
+      { page: 4 },
+      EXTRACT_PAGE_TIMEOUT_MS,
+    );
+  });
+
+  it('keeps extract_metadata on the 30s default while extraction gets 120s', async () => {
+    const event = {} as unknown;
+    await invoke(IPC_CHANNELS.EXTRACT_PAGE, event, 1);
+    await invoke(IPC_CHANNELS.EXTRACT_METADATA);
+
+    expect(sidecar.send.mock.calls).toEqual([
+      ['extract_page', { page: 1 }, EXTRACT_PAGE_TIMEOUT_MS],
+      // No explicit budget: the cheap metadata read keeps `send()`'s default.
+      ['extract_metadata'],
+    ]);
+  });
+});
+
+describe('OPEN_PDF request timeout', () => {
+  it('opens the chosen file with the 120s open budget', async () => {
+    expect(OPEN_PDF_TIMEOUT_MS).toBe(120_000);
+
+    await openDocument('/tmp/large.pdf');
+
+    expect(sidecar.send).toHaveBeenCalledTimes(1);
+    expect(sidecar.send).toHaveBeenCalledWith(
+      'open',
+      { path: '/tmp/large.pdf' },
+      OPEN_PDF_TIMEOUT_MS,
+    );
+  });
+
+  it('keeps open on its own budget while extraction has its own', async () => {
+    const event = {} as unknown;
+    await openDocument('/tmp/large.pdf');
+    await invoke(IPC_CHANNELS.EXTRACT_PAGE, event, 1);
+
+    // Both channels carry an explicit budget, but they are independent: a page
+    // extraction must not inherit (or extend) the 120s document-open budget.
+    expect(sidecar.send.mock.calls).toEqual([
+      ['open', { path: '/tmp/large.pdf' }, OPEN_PDF_TIMEOUT_MS],
+      ['extract_page', { page: 1 }, EXTRACT_PAGE_TIMEOUT_MS],
     ]);
   });
 });

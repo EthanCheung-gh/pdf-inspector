@@ -21,7 +21,7 @@ import {
   type DocumentRegistry,
   type SidecarManager,
 } from '../web-server';
-import { DIFF_TIMEOUT_MS } from '../../src/shared/constants';
+import { DIFF_TIMEOUT_MS, OPEN_PDF_TIMEOUT_MS } from '../../src/shared/constants';
 import type { DiffResult } from '../../src/shared/diff-types';
 
 const PDF_BYTES = '%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n';
@@ -350,9 +350,11 @@ describe('POST /api/open (shared upload path)', () => {
     expect(payload.canceled).toBe(false);
     expect(payload.path).toMatch(/^\/doc\/[^/]+\/doc\.pdf$/);
     expect(registry.getCurrent()?.name).toBe('doc.pdf');
-    expect(send).toHaveBeenCalledWith('open', {
-      path: expect.stringMatching(/doc\.pdf$/),
-    });
+    expect(send).toHaveBeenCalledWith(
+      'open',
+      { path: expect.stringMatching(/doc\.pdf$/) },
+      OPEN_PDF_TIMEOUT_MS,
+    );
   });
 
   it('rejects a non-PDF without changing the current document', async () => {

@@ -42,7 +42,7 @@ vi.mock('../pdf-url', async (importOriginal) => {
   };
 });
 
-import { IPC_CHANNELS } from '../../shared/constants';
+import { IPC_CHANNELS, OPEN_PDF_TIMEOUT_MS } from '../../shared/constants';
 import type { SidecarManager } from '../sidecar';
 
 interface SidecarStub {
@@ -121,7 +121,12 @@ describe('OPEN_PDF_URL success', () => {
     expect(calledOptions).toEqual({ directory: TEMP_PDF_DIR });
 
     expect(sidecar.send).toHaveBeenCalledTimes(1);
-    expect(sidecar.send).toHaveBeenCalledWith('open', { path: FIRST_DOWNLOAD });
+    // The downloaded document is opened with the open budget, not the default.
+    expect(sidecar.send).toHaveBeenCalledWith(
+      'open',
+      { path: FIRST_DOWNLOAD },
+      OPEN_PDF_TIMEOUT_MS,
+    );
 
     expect(result).toEqual({
       canceled: false,
@@ -142,7 +147,11 @@ describe('OPEN_PDF_URL success', () => {
     await restorer!();
 
     expect(sidecar.send).toHaveBeenCalledTimes(1);
-    expect(sidecar.send).toHaveBeenCalledWith('open', { path: FIRST_DOWNLOAD });
+    expect(sidecar.send).toHaveBeenCalledWith(
+      'open',
+      { path: FIRST_DOWNLOAD },
+      OPEN_PDF_TIMEOUT_MS,
+    );
   });
 
   it('rejects a non-http(s) URL before downloading anything', async () => {
@@ -172,7 +181,11 @@ describe('OPEN_PDF_URL success', () => {
 
     // The first document is still the tracked one.
     await restorer!();
-    expect(sidecar.send).toHaveBeenCalledWith('open', { path: FIRST_DOWNLOAD });
+    expect(sidecar.send).toHaveBeenCalledWith(
+      'open',
+      { path: FIRST_DOWNLOAD },
+      OPEN_PDF_TIMEOUT_MS,
+    );
   });
 });
 
@@ -195,14 +208,18 @@ describe('OPEN_PDF_URL failure handling', () => {
 
     // Failing open, then exactly one best-effort reopen of the previous file.
     expect(sidecar.send.mock.calls).toEqual([
-      ['open', { path: FIRST_DOWNLOAD }],
-      ['open', { path: '/tmp/local.pdf' }],
+      ['open', { path: FIRST_DOWNLOAD }, OPEN_PDF_TIMEOUT_MS],
+      ['open', { path: '/tmp/local.pdf' }, OPEN_PDF_TIMEOUT_MS],
     ]);
 
     // The tracked document is unchanged, so a later restore opens the local file.
     sidecar.send.mockClear();
     await restorer!();
-    expect(sidecar.send).toHaveBeenCalledWith('open', { path: '/tmp/local.pdf' });
+    expect(sidecar.send).toHaveBeenCalledWith(
+      'open',
+      { path: '/tmp/local.pdf' },
+      OPEN_PDF_TIMEOUT_MS,
+    );
   });
 
   it('deletes the new download and keeps the previous download when the open fails', async () => {
@@ -225,7 +242,11 @@ describe('OPEN_PDF_URL failure handling', () => {
 
     sidecar.send.mockClear();
     await restorer!();
-    expect(sidecar.send).toHaveBeenCalledWith('open', { path: FIRST_DOWNLOAD });
+    expect(sidecar.send).toHaveBeenCalledWith(
+      'open',
+      { path: FIRST_DOWNLOAD },
+      OPEN_PDF_TIMEOUT_MS,
+    );
   });
 });
 
@@ -246,7 +267,11 @@ describe('temp file lifecycle', () => {
     // The new download is the tracked document, the old one is gone.
     sidecar.send.mockClear();
     await restorer!();
-    expect(sidecar.send).toHaveBeenCalledWith('open', { path: SECOND_DOWNLOAD });
+    expect(sidecar.send).toHaveBeenCalledWith(
+      'open',
+      { path: SECOND_DOWNLOAD },
+      OPEN_PDF_TIMEOUT_MS,
+    );
   });
 
   it('keeps a downloaded file when the same URL is reopened', async () => {
@@ -272,7 +297,11 @@ describe('temp file lifecycle', () => {
 
     sidecar.send.mockClear();
     await restorer!();
-    expect(sidecar.send).toHaveBeenCalledWith('open', { path: '/tmp/local.pdf' });
+    expect(sidecar.send).toHaveBeenCalledWith(
+      'open',
+      { path: '/tmp/local.pdf' },
+      OPEN_PDF_TIMEOUT_MS,
+    );
   });
 
   it('keeps the download when the open dialog is cancelled', async () => {
@@ -287,6 +316,10 @@ describe('temp file lifecycle', () => {
 
     sidecar.send.mockClear();
     await restorer!();
-    expect(sidecar.send).toHaveBeenCalledWith('open', { path: FIRST_DOWNLOAD });
+    expect(sidecar.send).toHaveBeenCalledWith(
+      'open',
+      { path: FIRST_DOWNLOAD },
+      OPEN_PDF_TIMEOUT_MS,
+    );
   });
 });

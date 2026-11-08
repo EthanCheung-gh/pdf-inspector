@@ -5,6 +5,8 @@ import {
   ANALYZE_FONTS_RENDERER_TIMEOUT_MS,
   AUDIT_RENDERER_TIMEOUT_MS,
   DIFF_RENDERER_TIMEOUT_MS,
+  EXTRACT_PAGE_RENDERER_TIMEOUT_MS,
+  OPEN_PDF_RENDERER_TIMEOUT_MS,
   OPEN_PDF_URL_TIMEOUT_MS,
 } from '../../shared/constants';
 
@@ -24,10 +26,10 @@ let restartTimestamps: number[] = [];
  * Window in which `MAX_RESTARTS` restarts are allowed.
  *
  * A method with a longer request budget also retries further apart, so a fixed
- * 60s window would let a 120s method restart the sidecar forever (every retry
- * would look like a fresh start). Scaling the window with the budget keeps the
- * cap meaningful: extraction keeps its original 60s (30s * 2), font analysis
- * gets 240s.
+ * 60s window would let a long-budget method restart the sidecar forever (every
+ * retry would look like a fresh start). Scaling the window with the budget keeps
+ * the cap meaningful: a cheap 30s method keeps the original 60s (30s * 2), page
+ * extraction gets 250s (125s * 2) and font analysis 250s as well.
  */
 function restartWindowMs(timeoutMs: number): number {
   return Math.max(RESTART_WINDOW_MS, timeoutMs * 2);
@@ -93,12 +95,36 @@ async function callWithTimeout<T>(
 }
 
 export const ipc = {
-  openPdf: () => callWithTimeout(() => window.pdfInspector.openPdf(), 'openPdf'),
+  // Opening a document makes the sidecar parse it (pdfplumber open plus the
+  // font-resource metadata scan), which a large or corrupt PDF can stretch far
+  // past 30s. The renderer therefore waits longer than main's open budget so
+  // main's clear `Request "open" timed out after 120s` surfaces first: an equal
+  // budget would make the renderer lose the race one IPC hop early and restart
+  // the sidecar instead of reporting the real error.
+  openPdf: () =>
+    callWithTimeout(
+      () => window.pdfInspector.openPdf(),
+      'openPdf',
+      OPEN_PDF_RENDERER_TIMEOUT_MS,
+    ),
   // A URL open downloads the whole document in the main process before the
-  // sidecar parses it, so it needs a budget beyond the 30s default.
+  // sidecar parses it, so it needs a budget beyond the 30s default — and beyond
+  // the download plus open budgets main actually spends.
   openPdfUrl: (url: string) =>
     callWithTimeout(() => window.pdfInspector.openPdfUrl(url), 'openPdfUrl', OPEN_PDF_URL_TIMEOUT_MS),
-  extractPage: (page: number) => callWithTimeout(() => window.pdfInspector.extractPage(page), 'extractPage'),
+  // One page is extracted per navigation and normally returns in well under
+  // 0.1s, but a single complex page (many tables and objects) is extracted in
+  // one shot, so it gets its own budget instead of the 30s default. The renderer
+  // waits longer than main so main's clear `Request "extract_page" timed out
+  // after 120s` surfaces first; an equal budget would make the renderer lose the
+  // race one IPC hop early and restart the sidecar instead of reporting why the
+  // page failed.
+  extractPage: (page: number) =>
+    callWithTimeout(
+      () => window.pdfInspector.extractPage(page),
+      'extractPage',
+      EXTRACT_PAGE_RENDERER_TIMEOUT_MS,
+    ),
   extractMetadata: () => callWithTimeout(() => window.pdfInspector.extractMetadata(), 'extractMetadata'),
   // Must be LARGER than the main-process budget so main's own timeout (and its
   // clear error) surfaces first: an equal budget would make the renderer lose

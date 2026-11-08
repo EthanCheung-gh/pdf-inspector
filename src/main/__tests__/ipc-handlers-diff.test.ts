@@ -28,7 +28,7 @@ vi.mock('electron', () => ({
 
 vi.mock('node:fs/promises', () => ({ writeFile: vi.fn() }));
 
-import { DIFF_TIMEOUT_MS, IPC_CHANNELS } from '../../shared/constants';
+import { DIFF_TIMEOUT_MS, IPC_CHANNELS, OPEN_PDF_TIMEOUT_MS } from '../../shared/constants';
 import type { DiffResult } from '../../shared/diff-types';
 import type { SidecarManager } from '../sidecar';
 
@@ -162,7 +162,11 @@ describe('DIFF_PDFS handler', () => {
     // A later restart still restores the document the user was inspecting.
     sidecar.send.mockClear();
     await restorer!();
-    expect(sidecar.send).toHaveBeenCalledWith('open', { path: '/docs/current.pdf' });
+    expect(sidecar.send).toHaveBeenCalledWith(
+      'open',
+      { path: '/docs/current.pdf' },
+      OPEN_PDF_TIMEOUT_MS,
+    );
   });
 
   it('rejects missing paths without calling the sidecar', async () => {

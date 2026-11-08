@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { SidecarManager } from './sidecar';
 import { deleteDownloadedFile, downloadPdfToFile, parsePdfUrl } from './pdf-url';
-import { IPC_CHANNELS, ANALYZE_FONTS_TIMEOUT_MS, AUDIT_TIMEOUT_MS, DIFF_TIMEOUT_MS } from '../shared/constants';
+import { IPC_CHANNELS, ANALYZE_FONTS_TIMEOUT_MS, AUDIT_TIMEOUT_MS, DIFF_TIMEOUT_MS, EXTRACT_PAGE_TIMEOUT_MS, OPEN_PDF_TIMEOUT_MS } from '../shared/constants';
 import type { SaveFileRequest } from '../shared/constants';
 import { UNSAFE_EXTERNAL_URL_ERROR, toSafeExternalUrl } from '../shared/external-url';
 import type { OpenExternalResult } from '../shared/external-url';
@@ -28,16 +28,20 @@ let currentTempFile: string | null = null;
  * (and the renderer still shows it). Best-effort re-open the previous document
  * to keep main and the sidecar in sync, then propagate the original error
  * unchanged.
+ *
+ * Both requests use OPEN_PDF_TIMEOUT_MS: opening parses the document (and scans
+ * its font resources), which a large PDF can stretch past the 30s default, and a
+ * restore is exactly as expensive as the open it follows.
  */
 async function openInSidecar(sidecar: SidecarManager, filePath: string): Promise<unknown> {
   const previousFilePath = currentFilePath;
 
   try {
-    return await sidecar.send('open', { path: filePath });
+    return await sidecar.send('open', { path: filePath }, OPEN_PDF_TIMEOUT_MS);
   } catch (err) {
     if (previousFilePath && previousFilePath !== filePath) {
       try {
-        await sidecar.send('open', { path: previousFilePath });
+        await sidecar.send('open', { path: previousFilePath }, OPEN_PDF_TIMEOUT_MS);
       } catch (restoreErr) {
         console.error('[main] Failed to re-open previous document:', restoreErr);
       }
@@ -70,10 +74,15 @@ export function registerIpcHandlers(sidecar: SidecarManager): void {
   // through SidecarManager.start(), which calls this hook exactly once and
   // swallows/logs failures. Without it a crash-restart would leave the sidecar
   // with no open PDF and every extract/analyze call would fail.
+  //
+  // The restore is a full `open` (parse + font-resource scan), so it gets the
+  // same budget as a user-visible open instead of the 30s default: with the
+  // default, re-opening a large PDF after a crash would time out and leave the
+  // sidecar empty even though the open itself was healthy.
   sidecar.setDocumentRestorer(async () => {
     const filePath = currentFilePath;
     if (!filePath) return;
-    await sidecar.send('open', { path: filePath });
+    await sidecar.send('open', { path: filePath }, OPEN_PDF_TIMEOUT_MS);
   });
 
   ipcMain.handle(IPC_CHANNELS.OPEN_PDF, async () => {
@@ -104,8 +113,9 @@ export function registerIpcHandlers(sidecar: SidecarManager): void {
     const url = parsePdfUrl(rawUrl);
 
     // Download into a per-app temp directory. `downloadPdfToFile` applies its
-    // own PDF_URL_TIMEOUT_MS / MAX_PDF_BYTES defaults; the renderer allows the
-    // larger OPEN_PDF_URL_TIMEOUT_MS for download plus sidecar open.
+    // own PDF_URL_TIMEOUT_MS / MAX_PDF_BYTES defaults; the sidecar open that
+    // follows uses OPEN_PDF_TIMEOUT_MS (through `openInSidecar`) and the
+    // renderer allows OPEN_PDF_URL_TIMEOUT_MS for both steps together.
     const directory = path.join(app.getPath('temp'), 'pdf-inspector');
     const downloadedPath = await downloadPdfToFile(url, { directory });
 
@@ -141,8 +151,12 @@ export function registerIpcHandlers(sidecar: SidecarManager): void {
     }
   });
 
+  // One page is extracted per navigation and normally takes well under 0.1s,
+  // but a single complex page (many tables and objects) is extracted in one
+  // shot and can legitimately exceed the generic 30s budget. The longer budget
+  // is per request, so it cannot extend a metadata or image call.
   ipcMain.handle(IPC_CHANNELS.EXTRACT_PAGE, async (_event, page: number) => {
-    return sidecar.send('extract_page', { page });
+    return sidecar.send('extract_page', { page }, EXTRACT_PAGE_TIMEOUT_MS);
   });
 
   ipcMain.handle(IPC_CHANNELS.EXTRACT_METADATA, async () => {

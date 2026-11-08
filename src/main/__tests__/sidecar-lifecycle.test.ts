@@ -499,30 +499,32 @@ describe('SidecarManager per-request timeouts', () => {
       await sidecar.start();
 
       const fonts = sidecar.send('analyze_fonts', {}, ANALYZE_FONTS_TIMEOUT_MS);
-      const page = sidecar.send('extract_page', { page: 1 });
+      // `extract_metadata` is an ordinary request: only handlers opt into a
+      // longer budget, so sending without one still uses the 30s default.
+      const metadata = sidecar.send('extract_metadata');
 
       let fontsSettled = false;
-      let pageSettled = false;
+      let metadataSettled = false;
       void fonts.then(
         () => { fontsSettled = true; },
         () => { fontsSettled = true; },
       );
-      void page.then(
-        () => { pageSettled = true; },
-        () => { pageSettled = true; },
+      void metadata.then(
+        () => { metadataSettled = true; },
+        () => { metadataSettled = true; },
       );
 
       const fontsRejection = expect(fonts).rejects.toThrow(
         'Request "analyze_fonts" timed out after 120s',
       );
-      const pageRejection = expect(page).rejects.toThrow(
-        'Request "extract_page" timed out after 30s',
+      const metadataRejection = expect(metadata).rejects.toThrow(
+        'Request "extract_metadata" timed out after 30s',
       );
 
       // At the default budget only the ordinary request has failed.
       await vi.advanceTimersByTimeAsync(DEFAULT_REQUEST_TIMEOUT_MS);
-      await pageRejection;
-      expect(pageSettled).toBe(true);
+      await metadataRejection;
+      expect(metadataSettled).toBe(true);
       expect(fontsSettled).toBe(false);
 
       // Font analysis keeps waiting until its own (longer) budget runs out.

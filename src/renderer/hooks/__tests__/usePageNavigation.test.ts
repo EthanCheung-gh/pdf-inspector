@@ -74,13 +74,39 @@ describe('usePageNavigation', () => {
     expect(ipc.extractPage).not.toHaveBeenCalled();
   });
 
-  it('sets a friendly error for the latest failed extraction', async () => {
+  it('sets an error that includes the underlying failure for the latest extraction', async () => {
     vi.mocked(ipc.extractPage).mockRejectedValue(new Error('Extraction failed'));
     const { result } = renderHook(() => usePageNavigation());
 
     await act(async () => { await result.current.navigate(3); });
 
-    expect(usePdfStore.getState().error).toBe('Failed to load page data. Please try again.');
+    // The cause (timeout, restart, sidecar error) must stay visible so a failed
+    // page is diagnosable instead of collapsing into one generic sentence.
+    expect(usePdfStore.getState().error).toBe(
+      'Failed to load page data: Extraction failed. Please try again.',
+    );
     expect(usePdfStore.getState().isLoading).toBe(false);
+  });
+
+  it('keeps the generic message when the failure has no detail', async () => {
+    vi.mocked(ipc.extractPage).mockRejectedValue(new Error('   '));
+    const { result } = renderHook(() => usePageNavigation());
+
+    await act(async () => { await result.current.navigate(3); });
+
+    expect(usePdfStore.getState().error).toBe('Failed to load page data. Please try again.');
+  });
+
+  it('does not double the final period of a multi-sentence failure', async () => {
+    vi.mocked(ipc.extractPage).mockRejectedValue(
+      new Error('Sidecar repeatedly crashes. Please restart the application.'),
+    );
+    const { result } = renderHook(() => usePageNavigation());
+
+    await act(async () => { await result.current.navigate(3); });
+
+    expect(usePdfStore.getState().error).toBe(
+      'Failed to load page data: Sidecar repeatedly crashes. Please restart the application. Please try again.',
+    );
   });
 });

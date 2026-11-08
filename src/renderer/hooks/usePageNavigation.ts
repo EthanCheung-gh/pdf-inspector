@@ -27,7 +27,18 @@ export function usePageNavigation() {
     } catch (error) {
       if (requestId === latestNavigationRequestId) {
         console.error('Failed to load page data:', error);
-        store.setError('Failed to load page data. Please try again.');
+        // Surface the underlying message (a timeout, a restart, a sidecar
+        // error) so a failed page is diagnosable from the UI; the generic
+        // sentence is still used when the error carries no usable message.
+        const message =
+          error instanceof Error ? error.message.trim() : String(error ?? '').trim();
+        // A message that already ends a sentence must not produce "..".
+        const detail = message.replace(/[.\s]+$/, '');
+        store.setError(
+          detail
+            ? `Failed to load page data: ${detail}. Please try again.`
+            : 'Failed to load page data. Please try again.',
+        );
       }
     } finally {
       if (requestId === latestNavigationRequestId) {
