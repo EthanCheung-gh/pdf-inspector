@@ -1,0 +1,269 @@
+name: PDF Inspector Audit
+description: >-
+  Audit a local PDF for font, page, image, metadata, structure and security
+  findings, write JSON/HTML reports and fail the step when findings match the
+  configured severity threshold.
+
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  path:
+    description: >-
+      PDF path, absolute or relative to the workspace. Local files only;
+      http(s) URLs are rejected.
+    required: true
+  fail-on:
+    description: >-
+      Which findings fail the step: error, warning or none. "warning" fails on
+      warnings and errors, "error" only on errors, "none" always exits 0.
+    required: false
+    default: error
+  format:
+    description: >-
+      Primary output used for the step summary and default artifact path:
+      summary, json or html. JSON/HTML payloads are written to files, not the log.
+    required: false
+    default: summary
+  json-path:
+    description: >-
+      Where to write the JSON AuditReport. Defaults to the runner temp directory
+      when format is json; set it explicitly to keep JSON alongside a
+      summary/html run (that adds one extra CLI pass).
+    required: false
+    default: ''
+  report-path:
+    description: >-
+      Where to write the standalone HTML report. Defaults to the runner temp
+      directory when format is html; set it explicitly to keep HTML alongside a
+      summary/json run (that adds one extra CLI pass).
+    required: false
+    default: ''
+  python-version:
+    description: Python version used to run the audit CLI.
+    required: false
+    default: '3.12'
+
+outputs:
+  exit-code:
+    description: >-
+      CLI exit code: 0 no threshold match, 1 fail-on matched, 2 usage/read/audit
+      error. Always 0 when fail-on is none.
+    value: ${{ steps.audit.outputs.exit-code }}
+  json-path:
+    description: >-
+      Path of the JSON report written by this run (as given, so relative inputs
+      stay workspace-relative), or empty when no JSON artifact was requested or
+      produced.
+    value: ${{ steps.audit.outputs.json-path }}
+  report-path:
+    description: >-
+      Path of the HTML report written by this run (as given, so relative inputs
+      stay workspace-relative), or empty when no HTML artifact was requested or
+      produced.
+    value: ${{ steps.audit.outputs.report-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_FORMAT: ${{ inputs.format }}
+      run: |
+        set -euo pipefail
+
+        error() {
+          echo "::error::$*"
+          exit 2
+        }
+
+        if [ -z "$INPUT_PATH" ]; then
+          error "input 'path' is required (path to a local PDF file)"
+        fi
+
+        lowered="$(printf '%s' "$INPUT_PATH" | tr '[:upper:]' '[:lower:]')"
+        case "$lowered" in
+          http://* | https://*)
+            error "input 'path' must be a local path, not a URL: $INPUT_PATH (remote inputs are not supported)"
+            ;;
+        esac
+
+        if [ ! -f "$INPUT_PATH" ]; then
+          error "input 'path' file not found (relative to $PWD): $INPUT_PATH"
+        fi
+
+        case "$INPUT_FAIL_ON" in
+          error | warning | none) ;;
+          *)
+            error "input 'fail-on' must be one of error, warning, none (got '$INPUT_FAIL_ON')"
+            ;;
+        esac
+
+        case "$INPUT_FORMAT" in
+          summary | json | html) ;;
+          *)
+            error "input 'format' must be one of summary, json, html (got '$INPUT_FORMAT')"
+            ;;
+        esac
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install audit dependencies
+      shell: bash
+      env:
+        # The action lives in audit/, so the sidecar requirements are one level up.
+        REQUIREMENTS: ${{ github.action_path }}/../sidecar/requirements.txt
+      run: |
+        set -euo pipefail
+        python -m pip install --upgrade pip
+        python -m pip install -r "$REQUIREMENTS"
+        python -c "import pdfplumber"  # fail early when the install is broken
+
+    - name: Run PDF audit
+      id: audit
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_JSON_PATH: ${{ inputs.json-path }}
+        INPUT_REPORT_PATH: ${{ inputs.report-path }}
+        RUNNER_TEMP_DIR: ${{ runner.temp }}
+      run: |
+        set -uo pipefail
+
+        cli="${ACTION_PATH}/../sidecar/cli.py"
+        if [ ! -f "$cli" ]; then
+          echo "::error::cannot find the audit CLI at $cli"
+          exit 2
+        fi
+
+        fail_on="$INPUT_FAIL_ON"
+        format="$INPUT_FORMAT"
+        json_path="$INPUT_JSON_PATH"
+        report_path="$INPUT_REPORT_PATH"
+
+        ensure_parent() {
+          local path="$1" parent
+          [ -n "$path" ] || return 0
+          parent="$(dirname -- "$path")"
+          [ -z "$parent" ] || [ -d "$parent" ] || mkdir -p -- "$parent"
+        }
+
+        # Default artifacts live in the runner temp directory so nothing is
+        # written into the repository; callers override with json-path/report-path.
+        if [ -z "$json_path" ] && [ "$format" = "json" ]; then
+          json_path="${RUNNER_TEMP_DIR}/pdf-inspector-audit.json"
+        fi
+        if [ -z "$report_path" ] && [ "$format" = "html" ]; then
+          report_path="${RUNNER_TEMP_DIR}/pdf-inspector-audit-report.html"
+        fi
+
+        primary_output=""
+        case "$format" in
+          json) primary_output="$json_path" ;;
+          html) primary_output="$report_path" ;;
+        esac
+        ensure_parent "$primary_output"
+        # A stale payload from an earlier step in the same job must not mask a
+        # run that never wrote its output.
+        if [ -n "$primary_output" ]; then
+          rm -f -- "$primary_output"
+        fi
+
+        args=(audit "$INPUT_PATH" --format "$format" --fail-on "$fail_on")
+        if [ -n "$primary_output" ]; then
+          args+=(--output "$primary_output")
+        fi
+
+        echo "::group::python ${cli} ${args[*]}"
+        # GitHub's bash shell enables `-e`; a non-zero audit exit is expected
+        # when --fail-on matches, so capture it instead of aborting before the
+        # action outputs are written.
+        set +e
+        python "$cli" "${args[@]}"
+        exit_code=$?
+        set -e
+        echo "::endgroup::"
+
+        # A run that was asked for a payload file must leave one behind; a
+        # missing file usually means the Python environment is broken, and an
+        # interpreter failure also exits 1 like a matched threshold.
+        if [ -n "$primary_output" ] && [ ! -s "$primary_output" ]; then
+          echo "::error::pdf-inspector did not write $primary_output (exit code $exit_code); see the CLI error above (broken Python environment or invalid input PDF)"
+          exit 2
+        fi
+
+        # json-path/report-path may name the artifact of the *other* format;
+        # produce it with a quiet, non-failing second pass.
+        secondary_exit=0
+        write_secondary() {
+          local payload_format="$1" path="$2"
+          [ -n "$path" ] || return 0
+          ensure_parent "$path"
+          python "$cli" audit "$INPUT_PATH" \
+            --format "$payload_format" --output "$path" --fail-on none --quiet
+        }
+
+        if [ "$format" != "json" ] && [ -n "$INPUT_JSON_PATH" ]; then
+          set +e
+          write_secondary json "$json_path"
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            secondary_exit=$status
+            echo "::error::failed to write the JSON report to $json_path"
+            json_path=""
+          fi
+        fi
+        if [ "$format" != "html" ] && [ -n "$INPUT_REPORT_PATH" ]; then
+          set +e
+          write_secondary html "$report_path"
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            secondary_exit=$status
+            echo "::error::failed to write the HTML report to $report_path"
+            report_path=""
+          fi
+        fi
+
+        {
+          echo "exit-code=$exit_code"
+          echo "json-path=$json_path"
+          echo "report-path=$report_path"
+        } >> "$GITHUB_OUTPUT"
+
+        {
+          echo "### PDF audit: \`$INPUT_PATH\`"
+          echo
+          echo "| Field | Value |"
+          echo "| --- | --- |"
+          echo "| exit code | \`$exit_code\` |"
+          echo "| fail-on | \`$fail_on\` |"
+          echo "| format | \`$format\` |"
+          if [ -n "$json_path" ]; then
+            echo "| JSON | \`$json_path\` |"
+          fi
+          if [ -n "$report_path" ]; then
+            echo "| HTML | \`$report_path\` |"
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        if [ "$exit_code" -ne 0 ]; then
+          echo "::error::pdf-inspector audit exited with code $exit_code (1 = findings matched --fail-on $fail_on, 2 = usage/read/audit error)"
+          exit "$exit_code"
+        fi
+        if [ "$secondary_exit" -ne 0 ]; then
+          exit "$secondary_exit"
+        fi
