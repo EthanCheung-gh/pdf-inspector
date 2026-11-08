@@ -9,6 +9,7 @@ from extractor import PdfExtractor
 from cache import PageCache
 from diff import DiffError, DiffOptions, diff_files
 from audit import AuditError, audit_document, audit_pages
+from raw import RawError, raw_document, raw_object, raw_page_content
 
 
 class RpcError(Exception):
@@ -148,6 +149,17 @@ class SidecarSession:
         if method == 'audit_pages':
             return self._audit_pages(params)
 
+        if method == 'raw_document':
+            return self._raw_dispatch(raw_document)
+
+        if method == 'raw_object':
+            return self._raw_dispatch(
+                raw_object, params.get('object_number'), params.get('generation')
+            )
+
+        if method == 'raw_page_content':
+            return self._raw_dispatch(raw_page_content, params.get('page'))
+
         if method == 'shutdown':
             self.close_extractor()
             self.should_exit = True
@@ -206,6 +218,19 @@ class SidecarSession:
         if self._extractor is None:
             raise RpcError('No PDF open')
         return self._extractor
+
+    def _raw_dispatch(self, function: Callable[..., Any], *args: Any) -> Any:
+        """Run a raw-document method on the open extractor.
+
+        ``RawError``/``ValueError`` are user errors (bad page, object number or
+        generation): they become an ``RpcError`` so the renderer gets the
+        message without a traceback.
+        """
+        extractor = self._require_extractor()
+        try:
+            return function(extractor, *args)
+        except (RawError, ValueError) as exc:
+            raise RpcError(str(exc)) from exc
 
 
 def main():
