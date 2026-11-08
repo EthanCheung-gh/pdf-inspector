@@ -122,6 +122,8 @@ describe('web ipc adapter', () => {
     expect(Object.keys(api()).sort()).toEqual(
       [
         'analyzeFonts',
+        'auditDocument',
+        'auditPages',
         'diffPdfs',
         'extractMetadata',
         'extractPage',

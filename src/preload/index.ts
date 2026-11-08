@@ -10,6 +10,9 @@ contextBridge.exposeInMainWorld('pdfInspector', {
   extractMetadata: () => ipcRenderer.invoke(IPC_CHANNELS.EXTRACT_METADATA),
   analyzeFonts: (startPage?: number, endPage?: number) =>
     ipcRenderer.invoke(IPC_CHANNELS.ANALYZE_FONTS, startPage, endPage),
+  auditDocument: () => ipcRenderer.invoke(IPC_CHANNELS.AUDIT_DOCUMENT),
+  auditPages: (startPage: number, endPage: number) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_PAGES, startPage, endPage),
   diffPdfs: (oldSource: DiffSource, newSource: DiffSource, options?: DiffOptionsInput) => {
     // Electron's structured clone cannot carry a `File`, and the rejection the
     // clone would throw is opaque. Reject with an actionable message instead;

@@ -42,7 +42,12 @@ import {
   downloadPdfToFile,
   parsePdfUrl,
 } from '../src/main/pdf-url';
-import { ANALYZE_FONTS_TIMEOUT_MS, DIFF_TIMEOUT_MS, SIDECAR_SCRIPT } from '../src/shared/constants';
+import {
+  ANALYZE_FONTS_TIMEOUT_MS,
+  AUDIT_TIMEOUT_MS,
+  DIFF_TIMEOUT_MS,
+  SIDECAR_SCRIPT,
+} from '../src/shared/constants';
 import { diffOptionsToRpc } from '../src/shared/diff-types';
 import type { DiffSide } from '../src/shared/diff-types';
 
@@ -87,6 +92,8 @@ const RPC_ALLOWLIST = new Set([
   'extract_page',
   'extract_metadata',
   'analyze_fonts',
+  'audit_document',
+  'audit_pages',
   'get_image_data',
 ]);
 
@@ -241,7 +248,8 @@ interface PendingRequest {
  * - one child process at a time; `start()` coalesces concurrent callers;
  * - stdout is line-buffered; the first `{"ready":true}` line resolves start;
  * - `stdin` writes are serialized, but responses may arrive out of order;
- * - every request has its own timeout (30s default, 120s for analyze_fonts);
+ * - every request has its own timeout (30s default, 120s for analyze_fonts and
+ *   both audit methods; the diff endpoint passes 300s);
  * - an exit rejects all pending requests and clears the running state;
  * - `send()` lazily starts the sidecar once, unless stop() was requested;
  * - `restart()` shuts the old process down, spawns a new one and re-opens the
@@ -1487,8 +1495,14 @@ async function handleRpc(
   const params = body.params ?? {};
   if (!isRecord(params)) throw new HttpError(400, '"params" must be an object');
 
+  // Font analysis and both audit passes walk large parts of the document; every
+  // other allowlisted method keeps the default budget.
   const timeoutMs =
-    method === 'analyze_fonts' ? ANALYZE_FONTS_TIMEOUT_MS : DEFAULT_REQUEST_TIMEOUT_MS;
+    method === 'analyze_fonts'
+      ? ANALYZE_FONTS_TIMEOUT_MS
+      : method === 'audit_document' || method === 'audit_pages'
+        ? AUDIT_TIMEOUT_MS
+        : DEFAULT_REQUEST_TIMEOUT_MS;
 
   const result = await context.sidecar.send(method, params, timeoutMs);
   sendJson(res, 200, result);

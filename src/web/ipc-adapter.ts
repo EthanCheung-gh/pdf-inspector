@@ -24,6 +24,7 @@ import type {
 } from '../renderer/types/ipc-protocol';
 import type { PageData, PdfMetadata } from '../renderer/types/pdf-objects';
 import type { SaveFileRequest } from '../shared/constants';
+import type { AuditDocumentResult, AuditPagesResult } from '../shared/audit-types';
 import { isFileSource } from '../shared/diff-types';
 import type {
   DiffOptionsInput,
@@ -397,6 +398,13 @@ export function createWebIpc(): IpcApi {
       if (typeof endPage === 'number') params.end_page = endPage;
       return rpc<{ fonts: FontStat[] }>('analyze_fonts', params);
     },
+
+    // The audit inspects the document the backend already has open; both calls
+    // are plain allowlisted RPCs and never upload or replace that document.
+    auditDocument: () => rpc<AuditDocumentResult>('audit_document'),
+
+    auditPages: (startPage: number, endPage: number) =>
+      rpc<AuditPagesResult>('audit_pages', { start_page: startPage, end_page: endPage }),
 
     diffPdfs,
 

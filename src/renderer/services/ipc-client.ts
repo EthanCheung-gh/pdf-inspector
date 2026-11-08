@@ -2,6 +2,7 @@ import { IpcApi, SaveFileRequest } from '../types/ipc-protocol';
 import type { DiffOptionsInput, DiffSide, DiffSource } from '../../shared/diff-types';
 import {
   ANALYZE_FONTS_RENDERER_TIMEOUT_MS,
+  AUDIT_RENDERER_TIMEOUT_MS,
   DIFF_RENDERER_TIMEOUT_MS,
   OPEN_PDF_URL_TIMEOUT_MS,
 } from '../../shared/constants';
@@ -112,6 +113,23 @@ export const ipc = {
       ANALYZE_FONTS_RENDERER_TIMEOUT_MS,
     ),
   getImageData: (streamId: string) => callWithTimeout(() => window.pdfInspector.getImageData(streamId), 'getImageData'),
+  // Audit requests walk the document (metadata/fonts/page geometry, then 10-page
+  // batches), so they get the same kind of dedicated budget as font analysis:
+  // the renderer must stay patient longer than main so main's clear timeout
+  // message wins the race. `auditPages` re-sends its captured range on a retry;
+  // `auditDocument` takes no arguments.
+  auditDocument: () =>
+    callWithTimeout(
+      () => window.pdfInspector.auditDocument(),
+      'auditDocument',
+      AUDIT_RENDERER_TIMEOUT_MS,
+    ),
+  auditPages: (startPage: number, endPage: number) =>
+    callWithTimeout(
+      () => window.pdfInspector.auditPages(startPage, endPage),
+      'auditPages',
+      AUDIT_RENDERER_TIMEOUT_MS,
+    ),
   // A diff extracts both documents page by page, so it gets the same kind of
   // dedicated budget as font analysis: the renderer must stay patient longer
   // than main so main's clear timeout message wins the race.

@@ -69,6 +69,26 @@ export const DIFF_TIMEOUT_MS = 300_000;
  */
 export const DIFF_RENDERER_TIMEOUT_MS = DIFF_TIMEOUT_MS + 5_000;
 
+/**
+ * Timeout for one `audit_document` / `audit_pages` request.
+ *
+ * A document audit inspects metadata, fonts and every page in batches, so it is
+ * as expensive as font analysis and gets the same generous budget. The budget is
+ * per request: the renderer runs one document pass plus one call per 10-page
+ * batch, and each of those calls is bounded separately.
+ */
+export const AUDIT_TIMEOUT_MS = 120_000;
+
+/**
+ * Renderer-side budget for `auditDocument` / `auditPages`.
+ *
+ * Larger than the main-process budget for the same reason as
+ * `ANALYZE_FONTS_RENDERER_TIMEOUT_MS`: main must time out first so its clear
+ * `Request "audit_pages" timed out after 120s` error surfaces instead of a
+ * renderer-side "Sidecar timeout" that triggers a restart.
+ */
+export const AUDIT_RENDERER_TIMEOUT_MS = AUDIT_TIMEOUT_MS + 5_000;
+
 export const IPC_CHANNELS = {
   OPEN_PDF: 'pdf:open',
   OPEN_PDF_URL: 'pdf:open-url',
@@ -78,6 +98,8 @@ export const IPC_CHANNELS = {
   SIDECAR_STATUS: 'pdf:sidecar-status',
   RESTART_SIDECAR: 'pdf:restart-sidecar',
   ANALYZE_FONTS: 'pdf:analyze-fonts',
+  AUDIT_DOCUMENT: 'pdf:audit-document',
+  AUDIT_PAGES: 'pdf:audit-pages',
   DIFF_PDFS: 'pdf:diff',
   PICK_DIFF_PDF: 'pdf:pick-diff',
   SAVE_FILE: 'file:save',

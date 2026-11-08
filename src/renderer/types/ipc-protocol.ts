@@ -1,5 +1,6 @@
 import { PdfMetadata, PageData } from './pdf-objects';
 import type { SaveFileRequest } from '../../shared/constants';
+import type { AuditDocumentResult, AuditPagesResult } from '../../shared/audit-types';
 import type {
   DiffOptionsInput,
   DiffResult,
@@ -9,6 +10,17 @@ import type {
 } from '../../shared/diff-types';
 
 export type { SaveFileRequest };
+export type {
+  AuditCategory,
+  AuditDocumentInfo,
+  AuditDocumentResult,
+  AuditFinding,
+  AuditPagesResult,
+  AuditReport,
+  AuditSeverity,
+  AuditSummary,
+  AuditTool,
+} from '../../shared/audit-types';
 export type {
   DiffChange,
   DiffChangeKind,
@@ -58,6 +70,16 @@ export interface IpcApi {
   extractPage(page: number): Promise<PageData>;
   extractMetadata(): Promise<PdfMetadata>;
   analyzeFonts(startPage?: number, endPage?: number): Promise<{ fonts: FontStat[] }>;
+  /**
+   * Run the document-level audit pass (metadata, fonts, page geometry, ...).
+   *
+   * The page-level checks are requested separately in 10-page batches through
+   * `auditPages` so extraction and progress stay responsive; the renderer merges
+   * both halves into one `AuditReport`.
+   */
+  auditDocument(): Promise<AuditDocumentResult>;
+  /** Audit pages `startPage`..`endPage` (1-based, inclusive). */
+  auditPages(startPage: number, endPage: number): Promise<AuditPagesResult>;
   /**
    * Diff two PDFs without touching the currently open document.
    *

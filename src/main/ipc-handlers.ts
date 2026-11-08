@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { SidecarManager } from './sidecar';
 import { deleteDownloadedFile, downloadPdfToFile, parsePdfUrl } from './pdf-url';
-import { IPC_CHANNELS, ANALYZE_FONTS_TIMEOUT_MS, DIFF_TIMEOUT_MS } from '../shared/constants';
+import { IPC_CHANNELS, ANALYZE_FONTS_TIMEOUT_MS, AUDIT_TIMEOUT_MS, DIFF_TIMEOUT_MS } from '../shared/constants';
 import type { SaveFileRequest } from '../shared/constants';
 import { diffOptionsToRpc } from '../shared/diff-types';
 import type { DiffOptionsInput } from '../shared/diff-types';
@@ -149,8 +149,8 @@ export function registerIpcHandlers(sidecar: SidecarManager): void {
 
   ipcMain.handle(IPC_CHANNELS.ANALYZE_FONTS, async (_event, startPage?: number, endPage?: number) => {
     // Font analysis walks every page and every font, so a large PDF legitimately
-    // exceeds the default request timeout. Only this channel gets the longer
-    // budget; the others keep the 30s default.
+    // exceeds the default request timeout. This channel, like the audit
+    // channels below, gets a longer budget; the others keep the 30s default.
     //
     // The page range is optional and 1-based/inclusive. Omitting both arguments
     // sends `{}`, which the sidecar treats as the whole document — the pre-range
@@ -160,6 +160,25 @@ export function registerIpcHandlers(sidecar: SidecarManager): void {
     if (endPage !== undefined) params.end_page = endPage;
 
     return sidecar.send('analyze_fonts', params, ANALYZE_FONTS_TIMEOUT_MS);
+  });
+
+  // A document audit inspects metadata, fonts and page geometry, and the
+  // renderer then asks for page batches of 10. Every audit request walks a lot
+  // of the document, so both channels get the dedicated audit budget instead of
+  // the 30s default. The audit never opens a document: it inspects the one the
+  // Inspect workspace already opened.
+  ipcMain.handle(IPC_CHANNELS.AUDIT_DOCUMENT, async () => {
+    return sidecar.send('audit_document', {}, AUDIT_TIMEOUT_MS);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.AUDIT_PAGES, async (_event, startPage: number, endPage: number) => {
+    // The sidecar validates that the range is 1-based, inclusive and inside the
+    // document; main only translates the arguments to the RPC's snake_case keys.
+    return sidecar.send(
+      'audit_pages',
+      { start_page: startPage, end_page: endPage },
+      AUDIT_TIMEOUT_MS,
+    );
   });
 
   ipcMain.handle(IPC_CHANNELS.GET_IMAGE_DATA, async (_event, streamId: string) => {
