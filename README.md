@@ -1,6 +1,6 @@
 # PDF Inspector
 
-面向开发者的 PDF 结构检查工具——在 PDF.js 渲染结果之上叠加 pdfplumber 的坐标级对象数据，直观检查字符、单词、线条、曲线、矩形、表格和图片。提供 Electron 桌面应用与浏览器（Node HTTP 后端）两种运行方式。
+面向开发者的 PDF 结构检查工具——在 PDF.js 渲染结果之上叠加 pdfplumber 的坐标级对象数据，直观检查字符、单词、线条、曲线、矩形、表格和图片，并以只读方式检查注释、链接与表单字段。提供 Electron 桌面应用与浏览器（Node HTTP 后端）两种运行方式。
 
 [![CI](https://github.com/EthanCheung-gh/pdf-inspector/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/EthanCheung-gh/pdf-inspector/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-v0.2.0-blue.svg)](https://github.com/EthanCheung-gh/pdf-inspector)
@@ -18,6 +18,7 @@
 | ![叠加模式：同一页上叠加旧/新对象框](docs/images/diff-overlay.png) | **叠加模式**<br>在同一页叠加旧/新对象框（移除红、新增绿、移动橙、修改蓝），适合定位同一区域的改动。 |
 | ![文档体检工作区：严重级别汇总、筛选器、发现列表与右侧选中发现详情](docs/images/audit-workspace.png) | **文档体检**<br>跨字体、页面、图片、元数据、结构与安全的整档审计；按严重级别汇总，可按严重级别/类别筛选，选中条目查看证据与修复建议，并可跳转到对应页面。 |
 | ![PDF 审计 HTML 报告：文档信息、严重级别汇总与逐条发现](docs/images/audit-report.png) | **审计报告（HTML）**<br>CLI `audit --format html` 生成单文件报告：文档信息、严重级别汇总与逐条发现（证据、建议）；内联 CSS、无脚本、无外部资源。 |
+| ![注释、链接与表单：Annots 列表、画布框选与 Inspector 只读表单详情](docs/images/annotations.png) | **注释、链接与表单**<br>`Annots` 标签页列出当前页的链接、表单字段、标记与注释；画布同步绘制只读框，选中后在 Inspector 查看字段值、选项与链接目标。 |
 
 *截图来自 Web 构建；桌面端使用同一套 React UI，界面与功能一致。*
 
@@ -32,7 +33,7 @@
 
 ### 导航与结构
 
-- 左侧面板包含四个标签页：`Objects`（按页展示全部对象）、`Outline`（PDF 书签）、`Fonts`（字体统计）与 `Layers`（叠加层控制）。
+- 左侧面板包含五个标签页：`Objects`（按页展示全部对象）、`Outline`（PDF 书签）、`Fonts`（字体统计）、`Layers`（叠加层控制）与 `Annots`（当前页注释、链接与表单字段）。
 - `Objects` 标签页的对象树按页展示全部对象，页面节点可折叠/展开。
 - `Outline` 标签页读取 PDF 书签（outline），点击条目直接跳转到对应页面。
 - 当前页码显示与上一页/下一页导航，并实时显示缩放比例。
@@ -80,6 +81,16 @@
 - Inspector 新增 `Page` 标签页：显示当前页尺寸与 `/Rotate` 旋转角，并可在 pt 与 mm 之间切换。
 - 列出 MediaBox、CropBox、TrimBox、BleedBox、ArtBox 的原始坐标；每个框可独立显示或隐藏，画布以不同颜色和虚线样式叠加。
 - 画布可显示页面顶部与左侧标尺，单位跟随 pt/mm；状态栏显示页面尺寸、旋转角以及光标相对 MediaBox 原点的坐标（与 Inspector 的对象坐标一致）。
+
+### 注释、链接与表单
+
+- **当前页注释列表**：左侧 `Annots` 标签页列出当前页由 PDF.js 解析出的注释（Link、Widget、Text、Highlight 等），顶部显示 `N annotations · L links · F form fields` 汇总；可按 Kind 与 Subtype 过滤，`Show boxes` 控制画布框的显示。
+- **画布框与选中**：注释按类型着色——链接蓝、表单紫、标记黄、注释橙、图章青、其他灰；悬停加亮，选中使用金色描边。点击注释框会选中该注释并切换到 Inspector，点击对象则清除注释选中，两者不会同时高亮。
+- **Inspector 详情**：`Inspect` 显示 subtype / kind / 页码 / Rect、标题与内容、修改时间、颜色与不透明度；链接额外显示目标与 `Open link` / `Go to page N`，表单字段显示字段名、类型、值、默认值、Flags 与选项。
+- **内部与外部链接**：外部链接只在用户显式点击 `Open link` 时打开，且仅允许 `http(s)`；PDF.js 的原始 `unsafeUrl` 只用于显示，不安全目标会禁用按钮并提示“仅支持 http(s)”。渲染层、桌面主进程与 Web 适配器都会再次校验 URL，打开失败不会影响文档状态。内部目标解析为页码后，使用与 Prev/Next 相同的翻页导航。
+- **表单只读**：字段值、默认值、Flags 与选项全部以文本呈现，没有输入框、没有重置/提交按钮，也没有写回 PDF 的路径；签名字段只作为字段显示并标注未验证。
+- **隐藏与弹出注释**：Popup 注释不单独列出（改为显示父注释的内容）；隐藏注释在列表中带 `Hidden` 标记，但默认不绘制画布框。
+- **范围**：只处理当前页，翻页时重新加载并清除上一页的选中；这是纯读取功能，不修改 PDF。数据来源、链接策略与非目标详见 [docs/annotations.md](docs/annotations.md)。
 
 ### PDF Diff
 
@@ -177,7 +188,7 @@ npm run web:start  # 直接启动已构建的 dist-web-server/server.mjs
 python scripts/generate-web-samples.py
 ```
 
-随后在 Web 界面打开 `/samples/basic.pdf`（小型示例，含表格与图片）或 `/samples/large.pdf`（多页文档，便于观察字体分批分析）。
+随后在 Web 界面打开 `/samples/basic.pdf`（小型示例，含表格与图片）、`/samples/large.pdf`（多页文档，便于观察字体分批分析）或 `/samples/annotations.pdf`（两页示例，含外部/内部链接、文本注释、高亮与表单字段，用于 `Annots` 标签页）。
 
 > **安全提示**：Web 服务没有身份认证，任何能访问该端口的人都可以上传/下载文档、调用解析接口。默认绑定 `0.0.0.0`，请仅在可信网络使用；本机使用时建议 `HOST=127.0.0.1 npm run web`。
 
@@ -193,6 +204,7 @@ python scripts/generate-web-samples.py
 8. **搜索与导出**：`Ctrl/Cmd+F` 搜索；通过 Export 选择当前页/整档、JSON/CSV 与要包含的元素类型。
 9. **比较版本**：点击工具栏 `Diff` 选择 Old/New 两份 PDF，按需设置位置容差与忽略项后 Compare；在左侧变更列表选择条目查看详情，或切换 Side by side / Overlay，`Export JSON` 保存结果。
 10. **文档体检**：点击工具栏 `Audit` 对当前文档执行整档审计，查看严重级别汇总，按严重级别/类别筛选，选中发现查看证据与建议；需要时点击 `Open page` 跳转到对应页面，或用 `Export JSON` 保存完整报告。
+11. **检查注释与表单**：切换到左侧 `Annots` 标签页查看当前页的注释、链接与表单字段，按 Kind/Subtype 过滤；点击列表行或画布上的注释框，在 Inspector 的 `Inspect` 中查看只读详情。外部链接需点击 `Open link` 才会打开，内部链接使用 `Go to page N` 跳转；表单字段不能编辑或提交。
 
 ## CLI 与 CI
 
@@ -374,6 +386,7 @@ pdf-inspector/
 │   └── freeze-sidecar.sh
 ├── docs/
 │   ├── audit.md           # 文档体检：检查项、AuditReport schema、CLI 与 action
+│   ├── annotations.md     # 注释、链接与表单：数据来源、只读策略与限制
 │   ├── ci.md              # Diff CLI 与 GitHub Action
 │   ├── packaging.md       # 打包说明
 │   ├── images/            # README 截图
@@ -440,6 +453,11 @@ npm run dist:linux       # Linux
 - 文档体检不做 OCR，也不识别扫描页中的文字；扫描页只能得到“有图片但无可提取文本”的提示。
 - 旋转页或 CropBox 偏移页上的审计发现只到页面级，无法给出对象级高亮；带页码的发现仍可跳转到对应页面。
 - 文档体检按 10 页一批串行执行（与字体分析相同），超大文档需要较长时间；页面提取失败是当前唯一的 `error` 来源。CLI 与 action 同样需要 Python 3.10+ 与 sidecar 依赖，且只接受本地路径，打包后的桌面应用不包含 CLI。
+- 注释、链接与表单只覆盖当前页：翻页后重新加载，不提供整档注释索引、跨页搜索或批量浏览；大文档需逐页查看。
+- 注释与表单是只读的：不能新建、编辑或删除注释，不能填写、重置或提交表单，也不导入 XFA 数据；签名字段只显示为字段，不做数字签名验证。
+- 注释与表单不参与导出、Diff、Audit 或 CLI：导出、比较与审计仍只处理对象层，不包含注释、链接与表单字段。
+- 外部链接只在用户点击 `Open link` 时打开，且仅支持 `http(s)`；`mailto:`、`file:`、`data:`、`javascript:` 等目标只显示、不打开。内部链接只跳转到解析出的页码，不恢复滚动位置，未解析的目标保持只读展示。
+- 旋转页（`/Rotate` 为 90/180/270）只提供注释列表与详情，不绘制画布框与命中测试；CropBox 与 MediaBox 不一致的页面，注释框以 MediaBox 为基准，可能整体偏移（与对象叠加层一致）。
 - Web 模式同一时间只维护一份“当前文档”，且没有多用户隔离或认证。
 - 临时文件清理为尽力而为，异常退出后可能需要手动清理系统临时目录。
 - Web 模式需先构建 `dist-web` 与 `dist-web-server`；未构建时服务会提示构建后刷新。
