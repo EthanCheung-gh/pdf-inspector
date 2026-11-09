@@ -161,6 +161,50 @@ jobs:
           print('changed diff OK:', summary)
           PY
 
+      # The reordered pair is part of the G5 follow-up sample work (see
+      # .openbitfun/plans/diff-2.plan.md). The guard keeps an older checkout
+      # without the generated fixture green; this repository generates the
+      # files in the step above, so the assertions below always run for real.
+      - name: Diff reordered PDFs with --fail-on reordered
+        env:
+          REORDERED_BASELINE: web-samples/diff-reordered-old.pdf
+          REORDERED_FIXTURE: web-samples/diff-reordered.pdf
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "$REORDERED_FIXTURE" ]; then
+            echo "::notice::$REORDERED_FIXTURE not generated yet (G5 follow-up); skipping the reordered assertion"
+            exit 0
+          fi
+
+          set +e
+          python sidecar/cli.py diff "$REORDERED_BASELINE" "$REORDERED_FIXTURE" \
+            --format json \
+            --output diff-artifacts/reordered.json \
+            --fail-on reordered
+          code=$?
+          set -e
+
+          echo "pdf-inspector exited with $code"
+          if [ "$code" -ne 1 ]; then
+            echo "::error::expected exit 1 for reordered PDFs with --fail-on reordered, got $code"
+            exit 1
+          fi
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path('diff-artifacts/reordered.json').read_text(encoding='utf-8'))
+          summary = data['summary']
+          assert summary['pagesReordered'] > 0, summary
+          assert any(
+              isinstance(page.get('match'), dict) and page['match'].get('reordered')
+              for page in data['pages']
+          ), 'no reordered page pair in the JSON result'
+          print('reordered diff OK:', summary)
+          PY
+
       - name: Render HTML report and tolerate differences (expect exit 0)
         run: |
           set -euo pipefail

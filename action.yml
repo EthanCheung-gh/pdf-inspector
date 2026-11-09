@@ -21,9 +21,18 @@ inputs:
   fail-on:
     description: >-
       Which differences fail the step: any, added, removed, modified,
-      page-count or none. "none" always exits 0.
+      page-count, reordered or none. "reordered" fails when a paired page moved
+      to a different page number. "none" always exits 0.
     required: false
     default: any
+  ignore-regions:
+    description: >-
+      Optional path to a JSON array of drawn ignore regions (camelCase
+      oldPage/newPage/bbox, MediaBox-relative PDF points). Changes
+      intersecting a region are not reported; the result echoes the masks under
+      options.ignoreRegions.
+    required: false
+    default: ''
   format:
     description: >-
       Primary output used for the step summary and default artifact path:
@@ -79,6 +88,7 @@ runs:
         INPUT_NEW: ${{ inputs.new }}
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
         INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_IGNORE_REGIONS: ${{ inputs.ignore-regions }}
       run: |
         set -euo pipefail
 
@@ -105,9 +115,9 @@ runs:
         done
 
         case "$INPUT_FAIL_ON" in
-          any | added | removed | modified | page-count | none) ;;
+          any | added | removed | modified | page-count | reordered | none) ;;
           *)
-            error "input 'fail-on' must be one of any, added, removed, modified, page-count, none (got '$INPUT_FAIL_ON')"
+            error "input 'fail-on' must be one of any, added, removed, modified, page-count, reordered, none (got '$INPUT_FAIL_ON')"
             ;;
         esac
 
@@ -117,6 +127,18 @@ runs:
             error "input 'format' must be one of summary, json, html (got '$INPUT_FORMAT')"
             ;;
         esac
+
+        if [ -n "$INPUT_IGNORE_REGIONS" ]; then
+          if [ ! -e "$INPUT_IGNORE_REGIONS" ]; then
+            error "input 'ignore-regions' file not found (relative to $PWD): $INPUT_IGNORE_REGIONS"
+          fi
+          if [ ! -f "$INPUT_IGNORE_REGIONS" ]; then
+            error "input 'ignore-regions' must be a JSON file, not a directory: $INPUT_IGNORE_REGIONS"
+          fi
+          if [ ! -s "$INPUT_IGNORE_REGIONS" ]; then
+            error "input 'ignore-regions' file is empty: $INPUT_IGNORE_REGIONS"
+          fi
+        fi
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -145,6 +167,7 @@ runs:
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_JSON_PATH: ${{ inputs.json-path }}
         INPUT_REPORT_PATH: ${{ inputs.report-path }}
+        INPUT_IGNORE_REGIONS: ${{ inputs.ignore-regions }}
         RUNNER_TEMP_DIR: ${{ runner.temp }}
       run: |
         set -uo pipefail
@@ -187,6 +210,13 @@ runs:
         if [ -n "$primary_output" ]; then
           args+=(--output "$primary_output")
         fi
+        # Drawn ignore regions apply to every pass, so JSON, HTML and the step
+        # summary always describe the same masked result.
+        region_args=()
+        if [ -n "$INPUT_IGNORE_REGIONS" ]; then
+          region_args=(--ignore-regions "$INPUT_IGNORE_REGIONS")
+          args+=("${region_args[@]}")
+        fi
 
         echo "::group::python ${cli} ${args[*]}"
         # GitHub's bash shell enables `-e`; a non-zero diff exit is expected
@@ -214,7 +244,8 @@ runs:
           [ -n "$path" ] || return 0
           ensure_parent "$path"
           python "$cli" diff "$INPUT_OLD" "$INPUT_NEW" \
-            --format "$payload_format" --output "$path" --fail-on none --quiet
+            --format "$payload_format" --output "$path" --fail-on none --quiet \
+            ${region_args[@]+"${region_args[@]}"}
         }
 
         if [ "$format" != "json" ] && [ -n "$INPUT_JSON_PATH" ]; then
@@ -240,6 +271,27 @@ runs:
           fi
         fi
 
+        # Page counts, reorder count and region count for the step summary come
+        # from the JSON result: reuse the JSON artifact when this run wrote one,
+        # otherwise do one bounded, non-failing JSON pass. Only counts and page
+        # numbers are printed - never PDF text or object payloads.
+        summary_json=""
+        if [ "$format" = "json" ] && [ -n "$json_path" ] && [ -s "$json_path" ]; then
+          summary_json="$json_path"
+        else
+          summary_json="${RUNNER_TEMP_DIR}/pdf-inspector-diff-summary.json"
+          ensure_parent "$summary_json"
+          set +e
+          python "$cli" diff "$INPUT_OLD" "$INPUT_NEW" \
+            --format json --output "$summary_json" --fail-on none --quiet \
+            ${region_args[@]+"${region_args[@]}"}
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ] || [ ! -s "$summary_json" ]; then
+            summary_json=""
+          fi
+        fi
+
         {
           echo "exit-code=$exit_code"
           echo "json-path=$json_path"
@@ -254,6 +306,9 @@ runs:
           echo "| exit code | \`$exit_code\` |"
           echo "| fail-on | \`$fail_on\` |"
           echo "| format | \`$format\` |"
+          if [ -n "$INPUT_IGNORE_REGIONS" ]; then
+            echo "| ignore regions | \`$INPUT_IGNORE_REGIONS\` |"
+          fi
           if [ -n "$json_path" ]; then
             echo "| JSON | \`$json_path\` |"
           fi
@@ -261,6 +316,83 @@ runs:
             echo "| HTML | \`$report_path\` |"
           fi
         } >> "$GITHUB_STEP_SUMMARY"
+
+        summary_md="${RUNNER_TEMP_DIR}/pdf-inspector-diff-summary.md"
+        if [ -n "$summary_json" ]; then
+          ensure_parent "$summary_md"
+          set +e
+          python - "$summary_json" > "$summary_md" <<'PY'
+        import json
+        import sys
+
+        with open(sys.argv[1], encoding='utf-8') as handle:
+            data = json.load(handle)
+
+        summary = data.get('summary') or {}
+        old = data.get('old') or {}
+        new = data.get('new') or {}
+        regions = (data.get('options') or {}).get('ignoreRegions') or []
+
+
+        def count(key):
+            try:
+                return int(summary.get(key) or 0)
+            except (TypeError, ValueError):
+                return 0
+
+
+        def page_label(page):
+            old_index = page.get('oldIndex')
+            new_index = page.get('newIndex')
+            if old_index is not None and new_index is not None:
+                return str(old_index) if old_index == new_index else '%s/%s' % (old_index, new_index)
+            if new_index is not None:
+                return 'new %s' % new_index
+            if old_index is not None:
+                return 'old %s' % old_index
+            return '?'
+
+
+        changed = [
+            page_label(page)
+            for page in data.get('pages') or []
+            if isinstance(page, dict) and page.get('status') == 'changed'
+        ]
+        limit = 20
+        changed_pages = ', '.join(changed[:limit]) if changed else 'none'
+        if len(changed) > limit:
+            changed_pages += ' (+%d more)' % (len(changed) - limit)
+
+        rows = [
+            ('pages (old -> new)', '%s -> %s' % (old.get('pages', '?'), new.get('pages', '?'))),
+            (
+                'pages added / removed / changed / reordered',
+                '%d / %d / %d / %d'
+                % (
+                    count('pagesAdded'),
+                    count('pagesRemoved'),
+                    count('pagesChanged'),
+                    count('pagesReordered'),
+                ),
+            ),
+            ('changed pages', changed_pages),
+            ('ignored regions', str(len(regions))),
+        ]
+
+        print()
+        print('| Metric | Value |')
+        print('| --- | --- |')
+        for name, value in rows:
+            print('| %s | %s |' % (name, value))
+        PY
+          status=$?
+          set -e
+          if [ "$status" -eq 0 ] && [ -s "$summary_md" ]; then
+            cat "$summary_md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::could not summarise $summary_json for the step summary"
+          fi
+        fi
 
         if [ "$exit_code" -ne 0 ]; then
           echo "::error::pdf-inspector diff exited with code $exit_code (1 = differences matched --fail-on $fail_on, 2 = usage/read/diff error)"
