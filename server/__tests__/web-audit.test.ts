@@ -15,7 +15,7 @@ import {
   createWebServer,
   type DiffUploadStore,
   type DocumentRegistry,
-  type SidecarManager,
+  type SidecarPool,
 } from '../web-server';
 import { ANALYZE_FONTS_TIMEOUT_MS, AUDIT_TIMEOUT_MS } from '../../src/shared/constants';
 import type {
@@ -56,7 +56,7 @@ const PAGES_RESULT: AuditPagesResult = {
 };
 
 let server: Server;
-let sidecar: SidecarManager;
+let sidecar: SidecarPool;
 let registry: DocumentRegistry;
 let diffUploads: DiffUploadStore;
 let send: MockInstance;

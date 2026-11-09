@@ -16,7 +16,7 @@ import {
   createWebServer,
   type DiffUploadStore,
   type DocumentRegistry,
-  type SidecarManager,
+  type SidecarPool,
 } from '../web-server';
 import { AUDIT_TIMEOUT_MS, RAW_TIMEOUT_MS } from '../../src/shared/constants';
 
@@ -63,7 +63,7 @@ const CONTENT = {
 };
 
 let server: Server;
-let sidecar: SidecarManager;
+let sidecar: SidecarPool;
 let registry: DocumentRegistry;
 let diffUploads: DiffUploadStore;
 let send: MockInstance;

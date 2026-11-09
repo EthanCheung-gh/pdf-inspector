@@ -1,8 +1,8 @@
 import { ipcMain, dialog, BrowserWindow, app, shell } from 'electron';
 import { writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
-import { SidecarManager } from './sidecar';
 import { deleteDownloadedFile, downloadPdfToFile, parsePdfUrl } from './pdf-url';
+import type { SidecarTransport } from './sidecar-pool';
 import { IPC_CHANNELS, ANALYZE_FONTS_TIMEOUT_MS, AUDIT_TIMEOUT_MS, DIFF_TIMEOUT_MS, EXTRACT_PAGE_TIMEOUT_MS, OPEN_PDF_TIMEOUT_MS, RAW_TIMEOUT_MS } from '../shared/constants';
 import type { SaveFileRequest } from '../shared/constants';
 import { UNSAFE_EXTERNAL_URL_ERROR, toSafeExternalUrl } from '../shared/external-url';
@@ -33,7 +33,7 @@ let currentTempFile: string | null = null;
  * its font resources), which a large PDF can stretch past the 30s default, and a
  * restore is exactly as expensive as the open it follows.
  */
-async function openInSidecar(sidecar: SidecarManager, filePath: string): Promise<unknown> {
+async function openInSidecar(sidecar: SidecarTransport, filePath: string): Promise<unknown> {
   const previousFilePath = currentFilePath;
 
   try {
@@ -92,7 +92,7 @@ function rawObjectParams(ref: unknown): { object_number: number; generation?: nu
   return params;
 }
 
-export function registerIpcHandlers(sidecar: SidecarManager): void {
+export function registerIpcHandlers(sidecar: SidecarTransport): void {
   // Restore the tracked document on every successful sidecar start — the
   // initial boot, a crash-triggered auto-restart and a manual restart all pass
   // through SidecarManager.start(), which calls this hook exactly once and

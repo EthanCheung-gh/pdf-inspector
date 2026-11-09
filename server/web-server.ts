@@ -53,6 +53,7 @@ import {
 } from '../src/shared/constants';
 import { diffOptionsToRpc } from '../src/shared/diff-types';
 import type { DiffSide } from '../src/shared/diff-types';
+import { laneForMethod } from '../src/main/sidecar-pool';
 
 // ---------------------------------------------------------------------------
 // Layout / constants
@@ -685,6 +686,235 @@ export class SidecarManager {
 }
 
 // ---------------------------------------------------------------------------
+// Two-lane sidecar pool
+// ---------------------------------------------------------------------------
+
+export interface SidecarPoolOptions {
+  /** Interactive lane. Defaults to a manager rooted at the repo. */
+  interactive?: SidecarManager;
+  /** Builds the lazy background lane on its first request. */
+  createBackground?: () => SidecarManager;
+}
+
+/**
+ * The browser backend's two-lane pool.
+ *
+ * Mirrors `src/main/sidecar-pool.ts`: the interactive lane owns page
+ * navigation/opening, the background lane owns fonts/audit/raw/diff and is
+ * created lazily. Route selection comes from the shared `laneForMethod`, so the
+ * desktop and web backends cannot drift.
+ *
+ * Difference from desktop: the web `SidecarManager` restores the tracked
+ * document itself (`setDocumentPath` + `restoreDocument`), so the pool only has
+ * to forward the path to both lanes. A background open is explicit (`send`
+ * skips the restore for `open`), which is why a first background request starts
+ * the lane and opens the current document exactly once.
+ *
+ * `/api/status` and `/api/restart` read `isRunning()` — the interactive lane —
+ * so the observable HTTP contract is unchanged.
+ */
+export class SidecarPool {
+  private readonly interactive: SidecarManager;
+  private readonly createBackground: () => SidecarManager;
+
+  private background: SidecarManager | null = null;
+  private documentPath: string | null = null;
+  private backgroundOpenedPath: string | null = null;
+  /** Serialized background opens; the tail never rejects. */
+  private backgroundSync: Promise<void> = Promise.resolve();
+
+  constructor(options: SidecarPoolOptions = {}) {
+    this.interactive = options.interactive ?? new SidecarManager(ROOT);
+    this.createBackground = options.createBackground ?? (() => new SidecarManager(ROOT));
+  }
+
+  /** Interactive health, as reported by `/api/status`. */
+  isRunning(): boolean {
+    return this.interactive.isRunning();
+  }
+
+  isBackgroundRunning(): boolean {
+    return this.background !== null && this.background.isRunning();
+  }
+
+  /** True once the lazy background lane has been created (running or not). */
+  isBackgroundStarted(): boolean {
+    return this.background !== null;
+  }
+
+  start(): Promise<void> {
+    return this.interactive.start();
+  }
+
+  /**
+   * Track the current document on both lanes. The web manager re-opens this
+   * path after a spawn/restart, so a restarted lane keeps the document without
+   * another explicit open from the pool.
+   */
+  setDocumentPath(filePath: string | null): void {
+    const changed = this.documentPath !== filePath;
+    this.documentPath = filePath;
+    this.interactive.setDocumentPath(filePath);
+    this.background?.setDocumentPath(filePath);
+
+    if (filePath === null) {
+      this.backgroundOpenedPath = null;
+      return;
+    }
+
+    if (changed && this.background?.isRunning()) {
+      this.scheduleBackgroundSync();
+    }
+  }
+
+  async send(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeoutMs?: number,
+  ): Promise<unknown> {
+    if (method === 'open') {
+      return this.openDocument(params, timeoutMs);
+    }
+    if (laneForMethod(method) === 'background') {
+      return this.sendBackground(method, params, timeoutMs);
+    }
+    return this.interactive.send(method, params, timeoutMs);
+  }
+
+  /**
+   * Open on the interactive lane, then queue the same open on a *running*
+   * background lane. Background failures stay isolated: they are logged and
+   * retried by the next background request, never returned to the open caller.
+   */
+  private async openDocument(
+    params: Record<string, unknown>,
+    timeoutMs?: number,
+  ): Promise<unknown> {
+    const filePath = typeof params.path === 'string' ? params.path : null;
+    const openTimeout = timeoutMs ?? OPEN_PDF_TIMEOUT_MS;
+
+    const result = await this.interactive.send('open', params, openTimeout);
+
+    if (filePath !== null) {
+      this.documentPath = filePath;
+      // Keep the managers' restore path in sync even when the caller does not
+      // go through DocumentRegistry::setDocumentPath afterwards.
+      this.interactive.setDocumentPath(filePath);
+      this.background?.setDocumentPath(filePath);
+
+      if (this.background?.isRunning()) {
+        this.scheduleBackgroundSync();
+      }
+    }
+
+    return result;
+  }
+
+  private async sendBackground(
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs?: number,
+  ): Promise<unknown> {
+    const background = this.ensureBackground();
+    await this.enqueueBackgroundSync();
+    return background.send(method, params, timeoutMs);
+  }
+
+  private ensureBackground(): SidecarManager {
+    if (this.background) return this.background;
+
+    const background = this.createBackground();
+    background.setDocumentPath(this.documentPath);
+    this.background = background;
+    return background;
+  }
+
+  private scheduleBackgroundSync(): void {
+    void this.enqueueBackgroundSync().catch((error) => {
+      console.error('[web] Background document sync failed:', toErrorMessage(error));
+    });
+  }
+
+  private enqueueBackgroundSync(): Promise<void> {
+    const run = this.backgroundSync.then(() => this.syncBackgroundDocument());
+    this.backgroundSync = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  /** Await every queued background document open (diagnostics/tests). */
+  whenBackgroundIdle(): Promise<void> {
+    return this.backgroundSync;
+  }
+
+  private async syncBackgroundDocument(): Promise<void> {
+    const background = this.background;
+    if (!background) return;
+
+    // Re-read the target every pass: a switch can land while the lane is being
+    // started or while an open is in flight. Bounded because every pass either
+    // confirms the current document or performs one open.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const target = this.documentPath;
+
+      if (!background.isRunning()) {
+        if (!target) {
+          await background.start();
+          return;
+        }
+        // An explicit `open` on a stopped lane starts it and skips the
+        // manager's own restore, so the document is opened exactly once.
+        await background.send('open', { path: target }, OPEN_PDF_TIMEOUT_MS);
+        this.backgroundOpenedPath = target;
+        continue;
+      }
+
+      if (!target || this.backgroundOpenedPath === target) return;
+
+      await background.send('open', { path: target }, OPEN_PDF_TIMEOUT_MS);
+      this.backgroundOpenedPath = target;
+      return;
+    }
+  }
+
+  /**
+   * Restart both lanes. An interactive failure propagates (`/api/restart`
+   * reports it); a background failure is logged so the interactive lane keeps
+   * its previous behaviour.
+   */
+  async restart(): Promise<void> {
+    await this.interactive.restart();
+
+    const background = this.background;
+    if (!background) return;
+
+    await this.backgroundSync;
+    this.backgroundOpenedPath = null;
+
+    try {
+      await background.restart();
+      // performRestart() re-opens the tracked document on success.
+      if (this.documentPath) this.backgroundOpenedPath = this.documentPath;
+    } catch (error) {
+      console.error('[web] Background sidecar restart failed:', toErrorMessage(error));
+    }
+  }
+
+  /** Stop both lanes. Never rejects: this runs on the shutdown path. */
+  async stop(): Promise<void> {
+    // Invoke both synchronously so the managers mark themselves as stopping
+    // before their first await (no spawn can slip in after the quit path).
+    const background = this.background;
+    const stops = [this.interactive.stop()];
+    if (background) stops.push(background.stop());
+
+    await Promise.allSettled(stops);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Current-document registry
 // ---------------------------------------------------------------------------
 
@@ -709,7 +939,7 @@ export interface OpenedDocument {
 export class DocumentRegistry {
   private current: OpenDocument | null = null;
 
-  constructor(private readonly sidecar: SidecarManager) {}
+  constructor(private readonly sidecar: SidecarPool) {}
 
   getCurrent(): OpenDocument | null {
     return this.current;
@@ -1312,7 +1542,7 @@ async function serveStatic(
 // ---------------------------------------------------------------------------
 
 interface ApiContext {
-  sidecar: SidecarManager;
+  sidecar: SidecarPool;
   registry: DocumentRegistry;
   diffUploads: DiffUploadStore;
 }
@@ -1673,7 +1903,7 @@ async function handleRequest(
 
 export interface WebServerHandle {
   server: Server;
-  sidecar: SidecarManager;
+  sidecar: SidecarPool;
   registry: DocumentRegistry;
   diffUploads: DiffUploadStore;
   port: number;
@@ -1694,11 +1924,14 @@ function resolvePort(value: string | undefined): number {
 /** Build the server and wire the sidecar/document registry (without listening). */
 export function createWebServer(): {
   server: Server;
-  sidecar: SidecarManager;
+  sidecar: SidecarPool;
   registry: DocumentRegistry;
   diffUploads: DiffUploadStore;
 } {
-  const sidecar = new SidecarManager(ROOT);
+  const sidecar = new SidecarPool({
+    interactive: new SidecarManager(ROOT),
+    createBackground: () => new SidecarManager(ROOT),
+  });
   const registry = new DocumentRegistry(sidecar);
   const diffUploads = new DiffUploadStore();
   const context: ApiContext = { sidecar, registry, diffUploads };

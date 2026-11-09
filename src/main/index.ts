@@ -2,13 +2,18 @@ import { app, BrowserWindow, dialog } from 'electron';
 import { execSync } from 'child_process';
 import * as path from 'path';
 import { SidecarManager } from './sidecar';
+import { SidecarPool } from './sidecar-pool';
 import { registerIpcHandlers } from './ipc-handlers';
 import { cleanupDownloadedFiles } from './pdf-url';
 import { getPythonCandidates, setSelectedPython } from '../shared/python-resolver';
 import { resolveStartupPlan, shouldDeferQuit } from './lifecycle';
 
 let mainWindow: BrowserWindow | null = null;
-const sidecar = new SidecarManager();
+// The interactive lane starts at boot; the background lane (Analyze/Audit/Raw/
+// Diff) is created lazily by the pool on its first request.
+const sidecar = new SidecarPool(new SidecarManager(), {
+  createBackground: () => new SidecarManager(),
+});
 /** Set once graceful shutdown begins so the re-issued quit passes through. */
 let shutdownStarted = false;
 

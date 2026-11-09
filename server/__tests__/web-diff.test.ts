@@ -19,7 +19,7 @@ import {
   DiffUploadStore,
   type DiffUploadStoreOptions,
   type DocumentRegistry,
-  type SidecarManager,
+  type SidecarPool,
 } from '../web-server';
 import { DIFF_TIMEOUT_MS, OPEN_PDF_TIMEOUT_MS } from '../../src/shared/constants';
 import type { DiffResult } from '../../src/shared/diff-types';
@@ -54,7 +54,7 @@ const DIFF_RESULT: DiffResult = {
 };
 
 let server: Server;
-let sidecar: SidecarManager;
+let sidecar: SidecarPool;
 let registry: DocumentRegistry;
 let diffUploads: DiffUploadStore;
 let send: MockInstance;

@@ -20,6 +20,7 @@ import type { MockInstance } from 'vitest';
 import {
   createWebServer,
   SidecarManager,
+  SidecarPool,
   type DiffUploadStore,
   type DocumentRegistry,
 } from '../web-server';
@@ -28,7 +29,7 @@ import { EXTRACT_PAGE_TIMEOUT_MS, OPEN_PDF_TIMEOUT_MS } from '../../src/shared/c
 const PDF_BYTES = '%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n';
 
 let server: Server;
-let sidecar: SidecarManager;
+let sidecar: SidecarPool;
 let registry: DocumentRegistry;
 let diffUploads: DiffUploadStore;
 let send: MockInstance;
