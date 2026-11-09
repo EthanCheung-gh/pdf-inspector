@@ -1,0 +1,110 @@
+/*
+ * Document tab strip. It sits between the toolbar and the workspace as a single
+ * auto-height row, so the panes keep the remaining height. Many tabs scroll
+ * horizontally instead of shrinking or wrapping; each tab keeps a fixed max
+ * width so the close button stays reachable at 1280px.
+ */
+.bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 8px;
+  background: #10141a;
+  border-bottom: 1px solid #2a323c;
+}
+
+.tabs {
+  display: flex;
+  flex: 1;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.tab {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  max-width: 220px;
+  min-width: 96px;
+  background: #1b2129;
+  border: 1px solid #2f3a45;
+  border-radius: 4px;
+  color: #b8c1cb;
+}
+
+.tabActive {
+  background: #252e38;
+  border-color: #4a5866;
+  color: #eef2f6;
+}
+
+.label {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 4px 4px 8px;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  outline: none;
+}
+
+.label:disabled,
+.close:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.label:focus-visible,
+.close:focus-visible {
+  box-shadow: 0 0 0 2px rgba(90, 159, 212, 0.6);
+}
+
+.close {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin-right: 4px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  outline: none;
+}
+
+.close:hover:not(:disabled) {
+  background: #3a4551;
+  color: #ffffff;
+}
+
+.status {
+  flex: 0 0 auto;
+  color: #9fb0c0;
+  font-size: 11px;
+}
+
+.error {
+  flex: 0 1 auto;
+  max-width: 420px;
+  overflow: hidden;
+  color: #ff8f8f;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

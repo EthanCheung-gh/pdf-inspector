@@ -429,6 +429,11 @@ export function createWebIpc(): IpcApi {
       return mapOpenResult(response);
     },
 
+    // Deliberately no `openPdfPath`: a browser has no known local paths, and
+    // multi-document tabs on the web need a server-side document registry
+    // (deferred). Leaving the optional method out keeps the desktop-only tab
+    // bar hidden instead of exposing a half-working switch.
+
     extractPage: (page: number) => rpc<PageData>('extract_page', { page }),
 
     extractMetadata: () => rpc<PdfMetadata>('extract_metadata'),

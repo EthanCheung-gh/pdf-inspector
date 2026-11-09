@@ -168,6 +168,14 @@ export const EXTRACT_PAGE_RENDERER_TIMEOUT_MS = EXTRACT_PAGE_TIMEOUT_MS + 5_000;
 export const IPC_CHANNELS = {
   OPEN_PDF: 'pdf:open',
   OPEN_PDF_URL: 'pdf:open-url',
+  /**
+   * Open a PDF whose path the renderer already knows (a document tab).
+   *
+   * Desktop-only: the main process opens the file in the sidecar without a
+   * dialog and returns the usual `OpenPdfResult` metadata. The browser build
+   * omits the method (no local paths), so document tabs stay hidden there.
+   */
+  OPEN_PDF_PATH: 'pdf:open-path',
   EXTRACT_PAGE: 'pdf:extract-page',
   EXTRACT_METADATA: 'pdf:extract-metadata',
   GET_IMAGE_DATA: 'pdf:get-image-data',

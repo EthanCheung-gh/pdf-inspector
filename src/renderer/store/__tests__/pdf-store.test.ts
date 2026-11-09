@@ -216,6 +216,35 @@ describe('search state', () => {
   });
 });
 
+describe('searchIndexProgress', () => {
+  it('defaults to null', () => {
+    expect(usePdfStore.getInitialState().searchIndexProgress).toBeNull();
+  });
+
+  it('setSearchIndexProgress sets and clears', () => {
+    usePdfStore.getState().setSearchIndexProgress({ done: 40, total: 120 });
+    expect(usePdfStore.getState().searchIndexProgress).toEqual({ done: 40, total: 120 });
+    usePdfStore.getState().setSearchIndexProgress(null);
+    expect(usePdfStore.getState().searchIndexProgress).toBeNull();
+  });
+
+  it('setFile resets the progress row', () => {
+    usePdfStore.setState({ searchIndexProgress: { done: 40, total: 120 } });
+    usePdfStore.getState().setFile('/tmp/a.pdf', {
+      pages: 3, version: '1.7', encrypted: false, page_w: 612, page_h: 792,
+      title: '', author: '', producer: '', fonts: [],
+    });
+    expect(usePdfStore.getState().searchIndexProgress).toBeNull();
+  });
+
+  it('clearSearch (closing the box) drops the progress row', () => {
+    usePdfStore.setState({ searchIndexProgress: { done: 40, total: 120 }, searchOpen: true });
+    usePdfStore.getState().clearSearch();
+    expect(usePdfStore.getState().searchIndexProgress).toBeNull();
+    expect(usePdfStore.getState().searchOpen).toBe(false);
+  });
+});
+
 describe('sourceUrl state', () => {
   beforeEach(() => {
     usePdfStore.setState({ filePath: null, sourceUrl: null, metadata: null, pageCount: 0, currentPage: 1 });
@@ -474,5 +503,88 @@ describe('table cell state', () => {
     const state = usePdfStore.getState();
     expect(state.hoveredTableCell).toBeNull();
     expect(state.selectedTableCell).toBeNull();
+  });
+});
+
+describe('resetDocument', () => {
+  const doc = { fake: true } as any;
+
+  beforeEach(() => {
+    usePdfStore.setState({
+      filePath: '/tmp/report.pdf',
+      sourceUrl: null,
+      metadata,
+      pageCount: metadata.pages,
+      currentPage: 4,
+      zoom: 2.5,
+      pageData: pageWithTables([]),
+      allObjects: [table()],
+      hoveredObject: table(),
+      selectedObject: table(),
+      hoveredTableCell: null,
+      selectedTableCell: null,
+      error: 'boom',
+      isLoading: true,
+      pdfDocRef: doc,
+      outline: [{ title: 'Old', bold: false, italic: false, dest: null, items: [] }],
+      fitWidthZoom: 1.5,
+      initialFitWidthZoom: true,
+      searchQuery: 'needle',
+      searchMatches: [{ page: 2, begin: 0, length: 6 }],
+      currentMatchIndex: 0,
+      searchOpen: true,
+      searchIndexProgress: { done: 10, total: 20 },
+      exportProgress: { done: 1, total: 3 },
+      fontStats: [
+        { fontname: 'Helvetica', pages: [1], charCount: 9, sizeMin: 10, sizeMax: 14, colors: ['#000000'] },
+      ],
+      fontProgress: { done: 1, total: 2 },
+      filterCriteria: { types: ['word'] },
+      subset: { source: 'filter', mode: 'intersect', objects: [] },
+      regionMode: true,
+    });
+  });
+
+  it('returns to the empty document state', () => {
+    usePdfStore.getState().resetDocument();
+
+    const state = usePdfStore.getState();
+    expect(state.filePath).toBeNull();
+    expect(state.sourceUrl).toBeNull();
+    expect(state.metadata).toBeNull();
+    expect(state.pageCount).toBe(0);
+    expect(state.currentPage).toBe(1);
+    expect(state.zoom).toBe(1);
+    expect(state.pageData).toBeNull();
+    expect(state.allObjects).toEqual([]);
+    expect(state.hoveredObject).toBeNull();
+    expect(state.selectedObject).toBeNull();
+    expect(state.pdfDocRef).toBeNull();
+    expect(state.outline).toBeNull();
+    expect(state.fitWidthZoom).toBeNull();
+    expect(state.initialFitWidthZoom).toBe(false);
+    expect(state.searchQuery).toBe('');
+    expect(state.searchMatches).toEqual([]);
+    expect(state.currentMatchIndex).toBe(-1);
+    expect(state.searchOpen).toBe(false);
+    expect(state.searchIndexProgress).toBeNull();
+    expect(state.exportProgress).toBeNull();
+    expect(state.fontStats).toBeNull();
+    expect(state.fontProgress).toBeNull();
+    expect(state.filterCriteria).toEqual({});
+    expect(state.subset).toBeNull();
+    expect(state.error).toBeNull();
+    expect(state.isLoading).toBe(false);
+  });
+
+  it('keeps app-level view preferences (overlay visibility, modes)', () => {
+    usePdfStore.getState().setOverlayVisibility({ word: false });
+
+    usePdfStore.getState().resetDocument();
+
+    const state = usePdfStore.getState();
+    expect(state.overlayVisibility.word).toBe(false);
+    expect(state.textSelectionMode).toBe(false);
+    expect(state.regionMode).toBe(true);
   });
 });

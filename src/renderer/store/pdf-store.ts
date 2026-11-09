@@ -120,6 +120,14 @@ export interface PdfState {
   setFilterCriteria: (criteria: FilterCriteria) => void;
   setSubset: (subset: ObjectSubset | null) => void;
   clearSubset: () => void;
+  /**
+   * Return to the empty state: no document, page 1, zoom 100%, no page data,
+   * selection, search, outline, font/audit/export results or subset.
+   *
+   * Used when the last document tab is closed; a remaining tab is restored from
+   * its own snapshot instead, so this is the "nothing is open" case only.
+   */
+  resetDocument: () => void;
 }
 
 export const usePdfStore = create<PdfState>((set, get) => ({
@@ -322,4 +330,38 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   setSubset: (subset) => set({ subset }),
   clearSubset: () => set({ subset: null }),
 
+  // Document-scoped state only: overlay/text/region preferences are app-level
+  // view settings that outlive a document, so closing the last document leaves
+  // them as the user set them.
+  resetDocument: () =>
+    set({
+      filePath: null,
+      sourceUrl: null,
+      metadata: null,
+      pageCount: 0,
+      currentPage: 1,
+      zoom: 1.0,
+      pageData: null,
+      allObjects: [],
+      hoveredObject: null,
+      selectedObject: null,
+      hoveredTableCell: null,
+      selectedTableCell: null,
+      isLoading: false,
+      error: null,
+      pdfDocRef: null,
+      outline: null,
+      fitWidthZoom: null,
+      initialFitWidthZoom: false,
+      searchQuery: '',
+      searchMatches: [],
+      currentMatchIndex: -1,
+      searchOpen: false,
+      searchIndexProgress: null,
+      exportProgress: null,
+      fontStats: null,
+      fontProgress: null,
+      filterCriteria: {},
+      subset: null,
+    }),
 }));

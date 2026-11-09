@@ -80,6 +80,15 @@ export type SaveFileResult =
 export interface IpcApi {
   openPdf(): Promise<OpenPdfResult>;
   openPdfUrl(url: string): Promise<OpenPdfResult>;
+  /**
+   * Open an already known local path without showing a file dialog.
+   *
+   * Optional because only the desktop bridge can do it: the browser build has
+   * no local paths, so it omits the method and the document tab bar stays
+   * hidden (web multi-document is deferred). Callers must check for the method
+   * before relying on tabs.
+   */
+  openPdfPath?(path: string): Promise<OpenPdfResult>;
   saveFile(req: SaveFileRequest): Promise<SaveFileResult>;
   extractPage(page: number): Promise<PageData>;
   extractMetadata(): Promise<PdfMetadata>;

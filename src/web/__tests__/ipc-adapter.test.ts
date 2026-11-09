@@ -144,6 +144,13 @@ describe('web ipc adapter', () => {
     );
   });
 
+  it('has no openPdfPath bridge, so the desktop-only tab bar stays hidden', () => {
+    // Document tabs are desktop-only until a server-side document registry
+    // exists; the renderer hides the tab bar when this method is missing.
+    expect(api().openPdfPath).toBeUndefined();
+    expect('openPdfPath' in api()).toBe(false);
+  });
+
   it('forwards extract_page over POST /api/rpc and returns the result as-is', async () => {
     fetchMock.mockResolvedValue(jsonResponse(PAGE_DATA));
 

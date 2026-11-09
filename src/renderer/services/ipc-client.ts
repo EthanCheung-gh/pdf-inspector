@@ -114,6 +114,24 @@ export const ipc = {
   // the download plus open budgets main actually spends.
   openPdfUrl: (url: string) =>
     callWithTimeout(() => window.pdfInspector.openPdfUrl(url), 'openPdfUrl', OPEN_PDF_URL_TIMEOUT_MS),
+  // Document tabs re-open a path the user already chose, so there is no dialog
+  // and the budget is a normal open budget. The bridge method is optional: only
+  // the desktop preload implements it, so the browser build (where the tab bar
+  // is hidden) gets a clear rejection instead of an opaque `undefined is not a
+  // function` if a caller ever tries anyway.
+  openPdfPath: (path: string) => {
+    const openPdfPath = window.pdfInspector?.openPdfPath;
+    if (typeof openPdfPath !== 'function') {
+      return Promise.reject(
+        new Error('Opening a local path is not available in this build'),
+      );
+    }
+    return callWithTimeout(
+      () => openPdfPath(path),
+      'openPdfPath',
+      OPEN_PDF_RENDERER_TIMEOUT_MS,
+    );
+  },
   // One page is extracted per navigation and normally returns in well under
   // 0.1s, but a single complex page (many tables and objects) is extracted in
   // one shot, so it gets its own budget instead of the 30s default. The renderer

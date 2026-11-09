@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
 import React from 'react';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { usePdfStore } from '../../store/pdf-store';
 import { useAuditStore } from '../../store/audit-store';
 import { useDiffStore } from '../../store/diff-store';
+import { useDocumentTabsStore } from '../../store/document-tabs-store';
 import { useRawStore } from '../../store/raw-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
 import type { PdfMetadata } from '../../types/pdf-objects';
@@ -615,5 +618,226 @@ describe('Toolbar raw entry', () => {
 
     expect(useRawStore.getState().active).toBe(false);
     expect(useAuditStore.getState().active).toBe(true);
+  });
+});
+
+describe('Toolbar document tabs', () => {
+  type BridgeWindow = { pdfInspector?: { openPdfPath?: unknown } };
+
+  beforeEach(() => {
+    openPdf.mockReset();
+    openPdfUrl.mockReset();
+    navigate.mockReset();
+    // The real navigation clears the toolbar's loading flag when it settles;
+    // mirroring that here keeps the Open button usable across two opens.
+    navigate.mockImplementation(async () => {
+      usePdfStore.getState().setLoading(false);
+    });
+    useDocumentTabsStore.getState().reset();
+    usePdfStore.getState().resetDocument();
+    useWorkspaceStore.setState({ leftTab: 'objects', inspectorTab: 'inspect' });
+    // Only the desktop bridge has open-by-path; its presence enables tabs.
+    (window as unknown as BridgeWindow).pdfInspector = { openPdfPath: vi.fn() };
+  });
+
+  afterEach(() => {
+    cleanup();
+    delete (window as unknown as BridgeWindow).pdfInspector;
+  });
+
+  it('adds and activates a tab when a local file is opened', async () => {
+    openPdf.mockResolvedValue({ canceled: false, path: '/home/user/local.pdf', metadata });
+
+    render(React.createElement(Toolbar));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    });
+
+    await waitFor(() => expect(usePdfStore.getState().filePath).toBe('/home/user/local.pdf'));
+
+    const tabs = useDocumentTabsStore.getState().tabs;
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0].name).toBe('local.pdf');
+    expect(tabs[0].path).toBe('/home/user/local.pdf');
+    expect(tabs[0].sourceUrl).toBeNull();
+    expect(useDocumentTabsStore.getState().activeTabId).toBe(tabs[0].id);
+  });
+
+  it('focuses the existing tab instead of duplicating a re-opened path', async () => {
+    openPdf.mockResolvedValue({ canceled: false, path: '/home/user/local.pdf', metadata });
+
+    render(React.createElement(Toolbar));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    });
+    await waitFor(() => expect(useDocumentTabsStore.getState().tabs).toHaveLength(1));
+
+    openPdf.mockResolvedValue({ canceled: false, path: '/home/user/other.pdf', metadata });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    });
+    await waitFor(() => expect(useDocumentTabsStore.getState().tabs).toHaveLength(2));
+
+    openPdf.mockResolvedValue({ canceled: false, path: '/home/user/local.pdf', metadata });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    });
+
+    await waitFor(() => expect(usePdfStore.getState().filePath).toBe('/home/user/local.pdf'));
+    const tabs = useDocumentTabsStore.getState().tabs;
+    expect(tabs).toHaveLength(2);
+    expect(useDocumentTabsStore.getState().activeTabId).toBe(tabs[0].id);
+  });
+
+  it('adds a URL tab named after its source URL', async () => {
+    openPdfUrl.mockResolvedValue({
+      canceled: false,
+      path: '/tmp/download.pdf',
+      metadata,
+      sourceUrl: url,
+    });
+
+    render(React.createElement(Toolbar));
+    openUrlDialog();
+    submitUrl(url);
+
+    await waitFor(() => expect(useDocumentTabsStore.getState().tabs).toHaveLength(1));
+
+    const tab = useDocumentTabsStore.getState().tabs[0];
+    expect(tab.name).toBe(url);
+    expect(tab.sourceUrl).toBe(url);
+    expect(tab.path).toBe('/tmp/download.pdf');
+  });
+
+  it('keeps the outgoing tab snapshot when another document is opened', async () => {
+    openPdf.mockResolvedValue({ canceled: false, path: '/docs/first.pdf', metadata });
+
+    render(React.createElement(Toolbar));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    });
+    await waitFor(() => expect(usePdfStore.getState().filePath).toBe('/docs/first.pdf'));
+
+    // The user navigates and zooms in the first document, then opens another.
+    await act(async () => {
+      usePdfStore.getState().setPage(3);
+      usePdfStore.getState().setZoom(1.75);
+    });
+
+    openPdf.mockResolvedValue({ canceled: false, path: '/docs/second.pdf', metadata });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    });
+    await waitFor(() => expect(usePdfStore.getState().filePath).toBe('/docs/second.pdf'));
+
+    const tabs = useDocumentTabsStore.getState().tabs;
+    expect(tabs.map((tab) => tab.name)).toEqual(['first.pdf', 'second.pdf']);
+    expect(tabs[0].snapshot.currentPage).toBe(3);
+    expect(tabs[0].snapshot.zoom).toBe(1.75);
+    expect(useDocumentTabsStore.getState().activeTabId).toBe(tabs[1].id);
+  });
+
+  it('does not create tabs on the web build (no open-by-path bridge)', async () => {
+    delete (window as unknown as BridgeWindow).pdfInspector;
+    openPdf.mockResolvedValue({ canceled: false, path: '/home/user/local.pdf', metadata });
+
+    render(React.createElement(Toolbar));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    });
+
+    await waitFor(() => expect(usePdfStore.getState().filePath).toBe('/home/user/local.pdf'));
+    expect(useDocumentTabsStore.getState().tabs).toEqual([]);
+    expect(useDocumentTabsStore.getState().activeTabId).toBeNull();
+  });
+});
+
+describe('Toolbar layout with search open', () => {
+  const dockedFile = '/docs/report.pdf';
+
+  const toolbarCss = (): string =>
+    readFileSync(
+      join(process.cwd(), 'src/renderer/components/Toolbar/Toolbar.module.css'),
+      'utf8',
+    );
+
+  const header = (container: HTMLElement): HTMLElement => {
+    const element = container.querySelector('header');
+    if (!element) throw new Error('toolbar header not rendered');
+    return element as HTMLElement;
+  };
+
+  beforeEach(() => {
+    useDocumentTabsStore.getState().reset();
+    useDiffStore.getState().reset();
+    useAuditStore.getState().reset();
+    useRawStore.getState().reset();
+    usePdfStore.setState({
+      filePath: dockedFile,
+      sourceUrl: null,
+      metadata,
+      pageCount: 5,
+      currentPage: 1,
+      isLoading: false,
+      searchOpen: false,
+    });
+    useWorkspaceStore.setState({ leftCollapsed: false, rightCollapsed: false, focusMode: false });
+  });
+
+  afterEach(cleanup);
+
+  it('marks the header as search-open only while the search box is shown', () => {
+    const { container } = render(React.createElement(Toolbar));
+    expect(header(container).className).not.toMatch(/searchOpen/);
+
+    act(() => {
+      // Ctrl+F (or the toolbar button) opens search; the header must advertise
+      // it so the CSS can reclaim the filename's width on narrow screens.
+      usePdfStore.getState().setSearchOpen(true);
+    });
+
+    expect(header(container).className).toMatch(/searchOpen/);
+    expect(screen.getByLabelText('Search document')).toBeTruthy();
+  });
+
+  it('keeps the document name in the DOM so the header title stays available', () => {
+    usePdfStore.setState({ searchOpen: true });
+
+    render(React.createElement(Toolbar));
+
+    // The name is hidden by CSS at 1280px, not unmounted: the title tooltip and
+    // the 1440px+ layout still have it.
+    expect(screen.getByTitle(dockedFile).textContent).toBe('report.pdf');
+  });
+
+  it('does not mark the header as search-open while a workspace owns it', () => {
+    usePdfStore.setState({ searchOpen: true });
+    useDiffStore.setState({ active: true, oldName: 'a.pdf', newName: 'b.pdf' });
+
+    const { container } = render(React.createElement(Toolbar));
+
+    // Diff/Audit/Raw hide the search box and show their own title in the
+    // filename slot, so reclaiming that space would hide information needlessly.
+    expect(screen.queryByLabelText('Search document')).toBeNull();
+    expect(header(container).className).not.toMatch(/searchOpen/);
+  });
+
+  it('reserves the search controls by hiding the filename at 1280px or less', () => {
+    // jsdom cannot measure the row, so the fix is asserted on the CSS contract:
+    // a <=1280px rule that drops the filename exactly when the header is
+    // search-open, with the existing <=1180px rule kept.
+    const css = toolbarCss();
+    const query = css.match(/@media \(max-width: 1280px\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(query).toContain('.toolbar.searchOpen .filename');
+    expect(query).toContain('display: none');
+    expect(css).toContain('@media (max-width: 1180px)');
+
+    // No control is ever hidden by the media queries: only the filename.
+    const mediaBlocks = css.match(/@media[^{]*\{[\s\S]*?\n\}/g) ?? [];
+    expect(mediaBlocks).toHaveLength(2);
+    for (const block of mediaBlocks) {
+      expect(block).not.toMatch(/\.button\s*\{[\s\S]*display:\s*none/);
+      expect(block).not.toMatch(/\.searchBox[\s\S]*display:\s*none/);
+    }
   });
 });

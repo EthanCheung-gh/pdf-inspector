@@ -10,6 +10,7 @@ import { StatusBar } from './components/StatusBar/StatusBar';
 import { Toolbar } from './components/Toolbar/Toolbar';
 import { PanelRail } from './components/Workspace/PanelRail';
 import { PanelSplitter } from './components/Workspace/PanelSplitter';
+import { DocumentTabs } from './components/Workspace/DocumentTabs';
 import { ipc } from './services/ipc-client';
 import { useAuditStore } from './store/audit-store';
 import { useDiffStore } from './store/diff-store';
@@ -167,6 +168,13 @@ const App = (): JSX.Element => {
   return (
     <div className={styles.app}>
       <Toolbar />
+      {/*
+       * Desktop document tabs belong to the Inspect document only: while Diff,
+       * Audit or Raw owns the workspace they are hidden rather than acting on a
+       * document the user cannot see. The bar renders nothing on the web build
+       * (no open-by-path bridge) or while only one document is open.
+       */}
+      {!workspaceActive && <DocumentTabs />}
       <main className={styles.main}>
         {/*
          * The Inspect workspace stays mounted while Diff, Audit or Raw is open:

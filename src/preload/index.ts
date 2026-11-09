@@ -18,6 +18,9 @@ interface RawObjectRef {
 contextBridge.exposeInMainWorld('pdfInspector', {
   openPdf: () => ipcRenderer.invoke(IPC_CHANNELS.OPEN_PDF),
   openPdfUrl: (url: string) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_PDF_URL, url),
+  // Document tabs switch documents by path: no dialog is shown, the path is one
+  // the user already opened in this session.
+  openPdfPath: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_PDF_PATH, filePath),
   extractPage: (page: number) => ipcRenderer.invoke(IPC_CHANNELS.EXTRACT_PAGE, page),
   extractMetadata: () => ipcRenderer.invoke(IPC_CHANNELS.EXTRACT_METADATA),
   analyzeFonts: (startPage?: number, endPage?: number) =>

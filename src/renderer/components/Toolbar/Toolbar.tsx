@@ -4,6 +4,7 @@ import { OVERLAY_LAYER_TOTAL, overlayVisibleCount } from '../../services/overlay
 import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { useAuditStore } from '../../store/audit-store';
 import { useDiffStore } from '../../store/diff-store';
+import { supportsDocumentTabs, useDocumentTabsStore } from '../../store/document-tabs-store';
 import { usePdfStore } from '../../store/pdf-store';
 import { useRawStore } from '../../store/raw-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
@@ -71,12 +72,20 @@ export const Toolbar: React.FC = () => {
         return;
       }
 
+      // Document tabs (desktop only): the outgoing document keeps its page,
+      // zoom and panel state, and the file that is about to open becomes the
+      // active tab. Snapshot before `setFile`, which resets the view.
+      const trackTabs = supportsDocumentTabs();
+      if (trackTabs) useDocumentTabsStore.getState().saveActiveSnapshot();
 
       // An audit describes one document. Swapping the document must drop the
       // old report, filters and selection instead of leaving them attached to a
       // file that is no longer open.
       useAuditStore.getState().reset();
       setFile(result.path, result.metadata);
+      // After `setFile`, so a new tab's snapshot is the fresh document's view.
+      // Opening an already open path focuses that tab instead of duplicating it.
+      if (trackTabs) useDocumentTabsStore.getState().addTab(result);
       await navigate(1);
     } catch (error) {
       if (openRequestId !== openRequestIdRef.current) return;
@@ -92,10 +101,16 @@ export const Toolbar: React.FC = () => {
       // the newest request and must not be clobbered when that one settles.
       openRequestIdRef.current += 1;
 
+      const trackTabs = supportsDocumentTabs();
+      if (trackTabs) useDocumentTabsStore.getState().saveActiveSnapshot();
+
       // Same as `handleOpen`: a URL document is a different document, so the
       // previous audit cannot survive it.
       useAuditStore.getState().reset();
       setFile(result.path, result.metadata, result.sourceUrl ?? null);
+      // A URL tab is keyed by its source URL, so re-opening the same URL focuses
+      // the existing tab even though every open downloads a new temp copy.
+      if (trackTabs) useDocumentTabsStore.getState().addTab(result);
       await navigate(1);
     },
     [navigate, setFile],

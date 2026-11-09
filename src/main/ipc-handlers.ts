@@ -132,6 +132,25 @@ export function registerIpcHandlers(sidecar: SidecarTransport): void {
     return { canceled: false, path: filePath, metadata: meta };
   });
 
+  // Document tabs: switch to a document the renderer already has a path for.
+  //
+  // No dialog is shown — the caller is the tab bar re-opening a document the
+  // user opened earlier in this session. Tracking the file makes it the current
+  // document (so a sidecar restart restores it) and deletes the downloaded temp
+  // copy of the document it replaces; a URL tab re-downloads on activation
+  // because its temp file is owned by the document that replaced it.
+  ipcMain.handle(IPC_CHANNELS.OPEN_PDF_PATH, async (_event, rawPath: unknown) => {
+    if (typeof rawPath !== 'string' || !rawPath.trim()) {
+      throw new Error('openPdfPath requires the path of the PDF to open');
+    }
+
+    const filePath = rawPath;
+    const meta = await openInSidecar(sidecar, filePath);
+    await trackOpenDocument(filePath, null);
+
+    return { canceled: false, path: filePath, metadata: meta };
+  });
+
   ipcMain.handle(IPC_CHANNELS.OPEN_PDF_URL, async (_event, rawUrl: string) => {
     // Parse first: a non-http(s) URL must never reach the network layer.
     const url = parsePdfUrl(rawUrl);

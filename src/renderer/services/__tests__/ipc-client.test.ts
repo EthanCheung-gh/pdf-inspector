@@ -380,6 +380,67 @@ describe('ipc-client timeout recovery', () => {
   });
 });
 
+describe('ipc-client openPdfPath', () => {
+  // The shared fake bridge; the desktop-only method is added/removed per test.
+  const bridge = globalThis.window.pdfInspector as unknown as Record<string, unknown>;
+
+  beforeEach(async () => {
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    vi.resetModules();
+    delete bridge.openPdfPath;
+    ({ ipc } = await import('../ipc-client'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    delete bridge.openPdfPath;
+  });
+
+  it('rejects clearly when the bridge cannot open a known path (web build)', async () => {
+    // The browser adapter omits the method, so the tab bar stays hidden; a
+    // caller that tries anyway must not fail with "undefined is not a function".
+    await expect(ipc.openPdfPath('/docs/a.pdf')).rejects.toThrow(
+      'Opening a local path is not available in this build',
+    );
+  });
+
+  it('forwards the known path and resolves the open result', async () => {
+    const opened = { canceled: false, path: '/docs/a.pdf', metadata: { pages: 3 } };
+    const openPdfPath = vi.fn().mockResolvedValue(opened);
+    bridge.openPdfPath = openPdfPath;
+
+    await expect(ipc.openPdfPath('/docs/a.pdf')).resolves.toEqual(opened);
+
+    expect(openPdfPath).toHaveBeenCalledTimes(1);
+    expect(openPdfPath).toHaveBeenCalledWith('/docs/a.pdf');
+    expect(mockRestartSidecar).not.toHaveBeenCalled();
+  });
+
+  it('keeps waiting past the 30s default for a large document', async () => {
+    bridge.openPdfPath = vi.fn(() => new Promise(() => {}));
+
+    let settled = false;
+    const promise = ipc.openPdfPath('/docs/large.pdf');
+    void promise.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+
+    // A tab switch re-opens a whole document: the generic 30s budget would turn
+    // a legitimately slow open into a "Sidecar timeout" and a restart.
+    await vi.advanceTimersByTimeAsync(OPEN_PDF_TIMEOUT_MS);
+    await vi.runAllTicks();
+
+    expect(settled).toBe(false);
+    expect(mockRestartSidecar).not.toHaveBeenCalled();
+  });
+});
+
 describe('IPC timeout budgets', () => {
   it('gives page extraction 120s and lets main lose the race, never the renderer', () => {
     expect(EXTRACT_PAGE_TIMEOUT_MS).toBe(120_000);
