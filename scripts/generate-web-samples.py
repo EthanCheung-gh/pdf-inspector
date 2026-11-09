@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the deterministic demo PDFs used by the web build.
 
-Creates four files in ``web-samples/``:
+Creates these files in ``web-samples/``:
 
 * ``basic.pdf`` - four pages with multi-font/colour text, a ruled table and a
   small raster image. Small enough to open instantly.
@@ -13,6 +13,13 @@ Creates four files in ``web-samples/``:
 * ``raw.pdf`` - two pages for the ``Raw`` workspace: page 1 has text, several
   named font resources, a raster image XObject (``Do``) and content-stream
   ``BT``/``Tf``/``Tj`` operators, page 2 is a plain text page.
+* ``diff-visual-old.pdf`` / ``diff-visual-new.pdf`` - the same two-page
+  document with a small text, colour and position change on page 1, for the
+  Diff ``Visual`` blend/heatmap view.
+* ``diff-reordered-old.pdf`` / ``diff-reordered.pdf`` - five-page documents
+  where revision B drops the draft page from the front, moves every surviving
+  page to a new ordinal position and appends a release-notes page, so page
+  alignment reports reordered pairs and one added page.
 
 The output is deterministic (fixed metadata, no timestamps, no randomness),
 network-free and fast enough (<5s) to run on every demo setup. Only reportlab
@@ -42,6 +49,20 @@ ACCENT = HexColor("#2563eb")
 ACCENT_SOFT = HexColor("#dbeafe")
 RULE = HexColor("#9ca3af")
 BAND = HexColor("#f3f4f6")
+
+# Diff fixtures reuse a tiny fixed palette so the visual diff has a few solid
+# colour blocks (clear heatmap areas) next to text and moved shapes.
+VISUAL_BADGE_OLD = HexColor("#f59e0b")
+VISUAL_BADGE_NEW = HexColor("#10b981")
+VISUAL_SWATCHES = (
+    ("Red", HexColor("#dc2626")),
+    ("Green", HexColor("#16a34a")),
+    ("Blue", HexColor("#2563eb")),
+)
+# Revision B recolours the first swatch instead of moving it.
+VISUAL_SWATCH_RED_NEW = HexColor("#7c3aed")
+# The blue swatch is shifted right by this many points in revision B.
+VISUAL_SWATCH_SHIFT = 28.0
 
 # Annotation demo values are module constants so the PDF stays byte-identical
 # across runs: no clock, no randomness, fixed strings only.
@@ -664,22 +685,329 @@ def build_large(path: str) -> None:
     doc.save()
 
 
+def _visual_page(doc: canvas.Canvas, *, revised: bool) -> None:
+    """Page 1 of the visual fixture; revision B edits text, colour and position."""
+    content_width = PAGE_WIDTH - 2 * MARGIN
+
+    doc.setFillColor(INK)
+    doc.setFont("Helvetica-Bold", 22)
+    doc.drawString(MARGIN, PAGE_HEIGHT - 88, "Visual diff demo")
+
+    doc.setFillColor(MUTED)
+    doc.setFont("Times-Roman", 12)
+    doc.drawString(MARGIN, PAGE_HEIGHT - 110, "Revision B" if revised else "Revision A")
+
+    doc.setStrokeColor(ACCENT)
+    doc.setLineWidth(1.6)
+    doc.line(MARGIN, PAGE_HEIGHT - 124, MARGIN + 140, PAGE_HEIGHT - 124)
+
+    # Status badge: the fill colour and the label both change in revision B,
+    # so the heatmap has one large, unmistakable colour block.
+    badge_color = VISUAL_BADGE_NEW if revised else VISUAL_BADGE_OLD
+    badge_label = "STATUS: FINAL" if revised else "STATUS: DRAFT"
+    doc.setFillColor(badge_color)
+    doc.rect(MARGIN, PAGE_HEIGHT - 180, 168, 34, stroke=0, fill=1)
+    doc.setFillColor(HexColor("#ffffff"))
+    doc.setFont("Helvetica-Bold", 12)
+    doc.drawString(MARGIN + 16, PAGE_HEIGHT - 169, badge_label)
+
+    # Three swatches: red is recoloured, blue moves right, green is untouched.
+    swatch_top = PAGE_HEIGHT - 236
+    for index, (label, colour) in enumerate(VISUAL_SWATCHES):
+        x = MARGIN + index * 126
+        if revised and label == "Blue":
+            x += VISUAL_SWATCH_SHIFT
+        fill = VISUAL_SWATCH_RED_NEW if revised and label == "Red" else colour
+        doc.setFillColor(fill)
+        doc.rect(x, swatch_top, 96, 64, stroke=0, fill=1)
+        doc.setStrokeColor(RULE)
+        doc.setLineWidth(0.8)
+        doc.rect(x, swatch_top, 96, 64, stroke=1, fill=0)
+        doc.setFillColor(INK)
+        doc.setFont("Helvetica", 10)
+        doc.drawCentredString(x + 48, swatch_top - 16, label)
+
+    # One number in the body text changes.
+    count = "48" if revised else "42"
+    paragraph = (
+        "This fixture is generated twice with the same layout. The status "
+        f"badge, the swatches and this line change: object counts read {count} "
+        "words, a handful of rectangles and 2 pages in the current revision."
+    )
+    y = swatch_top - 52
+    doc.setFillColor(INK)
+    doc.setFont("Helvetica", 10.5)
+    for line in _wrapped_lines(paragraph, "Helvetica", 10.5, content_width):
+        doc.drawString(MARGIN, y, line)
+        y -= 15
+
+    # A quiet callout below the paragraph: identical in both revisions, it just
+    # fills the page so the visual view has a realistic amount of white space.
+    box_top = y - 34
+    box_height = 96
+    doc.setFillColor(BAND)
+    doc.rect(MARGIN, box_top - box_height, content_width, box_height, stroke=0, fill=1)
+    doc.setStrokeColor(RULE)
+    doc.setLineWidth(0.8)
+    doc.rect(MARGIN, box_top - box_height, content_width, box_height, stroke=1, fill=0)
+    doc.setFillColor(INK)
+    doc.setFont("Helvetica-Bold", 11)
+    doc.drawString(MARGIN + 14, box_top - 24, "What to look for")
+    doc.setFont("Helvetica", 10)
+    callout = [
+        "A solid colour block turns green and its label reads FINAL.",
+        "The first swatch is recoloured and the third one moves to the right.",
+        "Only page 1 changes; page 2 stays identical in both revisions.",
+    ]
+    callout_y = box_top - 44
+    for line in callout:
+        doc.drawString(MARGIN + 14, callout_y, line)
+        callout_y -= 15
+
+    doc.setFillColor(MUTED)
+    doc.setFont("Times-Italic", 10.5)
+    doc.drawString(
+        MARGIN,
+        box_top - box_height - 26,
+        "Switch the Diff workspace to Visual to compare this page as pixels.",
+    )
+
+    _footer(doc, "Page 1 of 2")
+    doc.showPage()
+
+    # -- Page 2: identical in both revisions --------------------------------
+    doc.setFillColor(INK)
+    doc.setFont("Helvetica-Bold", 18)
+    doc.drawString(MARGIN, PAGE_HEIGHT - 86, "Unchanged page")
+
+    paragraph = (
+        "The second page is identical in both revisions. It shows that the "
+        "visual view still reports an unchanged pair, and that page alignment "
+        "keeps the two pages together."
+    )
+    y = PAGE_HEIGHT - 124
+    doc.setFillColor(INK)
+    doc.setFont("Helvetica", 10.5)
+    for line in _wrapped_lines(paragraph, "Helvetica", 10.5, content_width):
+        doc.drawString(MARGIN, y, line)
+        y -= 15
+
+    _footer(doc, "Page 2 of 2")
+
+
+def build_diff_visual(old_path: str, new_path: str) -> None:
+    """Two-page revisions that differ only on page 1 (text, colour, position).
+
+    ``diff-visual-old.pdf`` is revision A and ``diff-visual-new.pdf`` revision
+    B: the status badge turns green and reads ``FINAL``, the red swatch becomes
+    purple, the blue swatch moves 28 pt right and one number in the body text
+    changes. Page 2 is identical, so the pair also exercises the unchanged-page
+    state. Both files are byte-identical across runs.
+    """
+    for path, title, revised in (
+        (old_path, "PDF Inspector - Diff Visual (Revision A)", False),
+        (new_path, "PDF Inspector - Diff Visual (Revision B)", True),
+    ):
+        doc = canvas.Canvas(path, pagesize=LETTER, invariant=1)
+        _metadata(doc, title)
+        _visual_page(doc, revised=revised)
+        doc.save()
+
+
+def _revision_page(
+    doc: canvas.Canvas,
+    *,
+    title: str,
+    subtitle: str,
+    bullets: list[str],
+    footer: str,
+    badge_text: str | None = None,
+    badge_color: HexColor | None = None,
+    bars: tuple[int, ...] = (),
+    rule_offset: float = 0.0,
+) -> None:
+    """Draw one text page of the alignment fixture.
+
+    Every page uses the same layout, and the footer carries no page number, so
+    the extracted text of a page is identical in both revisions. That keeps the
+    page fingerprints stable and makes the alignment (not the content) the only
+    thing revision B changes.
+    """
+    doc.setFillColor(INK)
+    doc.setFont("Helvetica-Bold", 22)
+    doc.drawString(MARGIN, PAGE_HEIGHT - 88, title)
+
+    doc.setFillColor(MUTED)
+    doc.setFont("Times-Roman", 12)
+    doc.drawString(MARGIN, PAGE_HEIGHT - 110, subtitle)
+
+    doc.setStrokeColor(ACCENT)
+    doc.setLineWidth(1.6)
+    doc.line(MARGIN, PAGE_HEIGHT - 124 + rule_offset, MARGIN + 150, PAGE_HEIGHT - 124 + rule_offset)
+
+    y = PAGE_HEIGHT - 162
+    if badge_text is not None and badge_color is not None:
+        doc.setFillColor(badge_color)
+        doc.rect(MARGIN, y - 8, 150, 30, stroke=0, fill=1)
+        doc.setFillColor(HexColor("#ffffff"))
+        doc.setFont("Helvetica-Bold", 11)
+        doc.drawString(MARGIN + 14, y + 2, badge_text)
+        y -= 46
+
+    if bars:
+        for index, height in enumerate(bars):
+            doc.setFillColor(VISUAL_SWATCHES[index % len(VISUAL_SWATCHES)][1])
+            doc.rect(MARGIN + index * 72, y - height, 42, height, stroke=0, fill=1)
+            doc.setFillColor(INK)
+            doc.setFont("Helvetica", 9)
+            doc.drawCentredString(MARGIN + index * 72 + 21, y - height - 14, f"Q{index + 1}")
+        y -= max(bars) + 38
+
+    doc.setFillColor(INK)
+    doc.setFont("Helvetica", 10.5)
+    for bullet in bullets:
+        doc.drawString(MARGIN, y, bullet)
+        y -= 17
+
+    _footer(doc, footer)
+
+
+def build_diff_reordered(old_path: str, new_path: str) -> None:
+    """Five-page fixtures whose alignment reports reordered and added pages.
+
+    Revision A is ``draft, cover, summary, charts, appendix``; revision B drops
+    the draft page from the front, then appends a release-notes page:
+
+    ``cover, summary, charts, appendix, release notes``
+
+    Every surviving page therefore keeps its content but lands on a new ordinal
+    position, so page alignment pairs it and sets ``match.reordered`` (four
+    reordered pairs), the draft page is removed and the release-notes page is
+    added. The cover badge changes colour, which gives the changed-page state
+    without touching the extracted text, so the fingerprint stays identical.
+    """
+    draft = dict(
+        title="Draft notice",
+        subtitle="Removed in revision B",
+        bullets=[
+            "Revision A starts with this draft page.",
+            "Revision B removes it from the front of the document.",
+            "The page stays one-sided in the result: removed, never paired.",
+        ],
+    )
+    cover = dict(
+        title="Revision cover",
+        subtitle="Deterministic page-alignment fixture",
+        badge_text="REVISION 1.0",
+        bullets=[
+            "Document: alignment-demo.pdf",
+            "Owner: docs team",
+            "Pages: cover, summary, charts, appendix and release notes",
+        ],
+    )
+    # Revision B moves every header rule down by 3 pt (a global spacing tweak).
+    # Text and object counts stay identical, so every page fingerprint still
+    # matches, while the object diff reports one moved line per page and the
+    # page list shows each reordered pair.
+    summary = dict(        title="Summary",
+        subtitle="Why revision B looks reordered",
+        bullets=[
+            "The draft page is gone, so every surviving page moves up one number.",
+            "Page alignment pairs pages by content and then reads the new number.",
+            "Reordered means oldIndex != newIndex, not that objects moved.",
+        ],
+    )
+    charts = dict(
+        title="Charts",
+        subtitle="A stable page keeps the alignment readable",
+        bars=(60, 96, 78, 120),
+        bullets=[
+            "The bars are plain rectangles with fixed sizes.",
+            "They are identical in both revisions, so only the page number moves.",
+        ],
+    )
+    appendix = dict(
+        title="Appendix",
+        subtitle="Paired, unchanged and reordered",
+        bullets=[
+            "This page is the last surviving page of revision A.",
+            "Revision B keeps it but appends a new page after it.",
+            "Open the Diff workspace to see the old -> new page labels.",
+        ],
+    )
+    release = dict(
+        title="Release notes",
+        subtitle="Added in revision B",
+        bullets=[
+            "This page only exists in revision B, so it is reported as added.",
+            "Added pages are one-sided: they have no old page number.",
+            "Appending it keeps every earlier page pair stable.",
+        ],
+    )
+
+    footer = "Alignment demo - PDF Inspector sample"
+
+    for path, title, pages, badge_color in (
+        (
+            old_path,
+            "PDF Inspector - Diff Reordered (Revision A)",
+            [draft, cover, summary, charts, appendix],
+            ACCENT,
+        ),
+        (
+            new_path,
+            "PDF Inspector - Diff Reordered (Revision B)",
+            [
+                {**page, "rule_offset": 3.0}
+                for page in (cover, summary, charts, appendix, release)
+            ],
+            HexColor("#0f766e"),
+        ),
+    ):
+        doc = canvas.Canvas(path, pagesize=LETTER, invariant=1)
+        _metadata(doc, title)
+        for page in pages:
+            _revision_page(
+                doc,
+                title=page["title"],
+                subtitle=page["subtitle"],
+                bullets=page["bullets"],
+                footer=footer,
+                badge_text=page.get("badge_text"),
+                badge_color=badge_color if page.get("badge_text") else None,
+                bars=page.get("bars", ()),
+                rule_offset=page.get("rule_offset", 0.0),
+            )
+            doc.showPage()
+        doc.save()
+
+
 def main() -> int:
     os.makedirs(OUT_DIR, exist_ok=True)
     basic = os.path.join(OUT_DIR, "basic.pdf")
     large = os.path.join(OUT_DIR, "large.pdf")
     annotations = os.path.join(OUT_DIR, "annotations.pdf")
     raw = os.path.join(OUT_DIR, "raw.pdf")
+    diff_visual_old = os.path.join(OUT_DIR, "diff-visual-old.pdf")
+    diff_visual_new = os.path.join(OUT_DIR, "diff-visual-new.pdf")
+    diff_reordered_old = os.path.join(OUT_DIR, "diff-reordered-old.pdf")
+    diff_reordered = os.path.join(OUT_DIR, "diff-reordered.pdf")
 
     build_basic(basic)
     build_large(large)
     build_annotations(annotations)
     build_raw(raw)
+    build_diff_visual(diff_visual_old, diff_visual_new)
+    build_diff_reordered(diff_reordered_old, diff_reordered)
 
     print(basic)
     print(large)
     print(annotations)
     print(raw)
+    print(diff_visual_old)
+    print(diff_visual_new)
+    print(diff_reordered_old)
+    print(diff_reordered)
     return 0
 
 
