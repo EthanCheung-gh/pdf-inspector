@@ -73,6 +73,13 @@
   pointer-events: none;
 }
 
+/* Region mode: the overlay both receives the drag and shows the region
+ * outlines, so it needs pointer events and the drawing cursor. */
+.overlayDrawing {
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
 .placeholder {
   display: flex;
   flex: 0 0 auto;

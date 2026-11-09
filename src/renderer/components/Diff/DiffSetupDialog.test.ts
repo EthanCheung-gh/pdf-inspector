@@ -116,6 +116,7 @@ describe('DiffSetupDialog compare', () => {
       ignoreFonts: true,
       ignoreColors: true,
       ignoreImages: true,
+      ignoreRegions: [],
     });
     expect(store().result).toBe(result);
     expect(store().setupOpen).toBe(false);

@@ -214,6 +214,98 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Drawn ignore regions: the list is the accessible counterpart of the dashed
+ * rectangles on the panes, so every mask can be inspected and removed here. */
+.regionPanel {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #2f363f;
+}
+
+.regionHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.regionTitle {
+  flex: 1;
+  min-width: 0;
+  color: #c3ccd6;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.regionCount {
+  flex: 0 0 auto;
+  min-width: 18px;
+  padding: 0 5px;
+  color: #dce8f7;
+  background: #23303d;
+  border: 1px solid #3d5773;
+  border-radius: 9px;
+  font-size: 10px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.regionHint {
+  margin: 0;
+  color: #8e99a6;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.regionList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 132px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.regionItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 4px;
+  background: #1e2329;
+  border: 1px dashed #3d5773;
+  border-radius: 3px;
+}
+
+.regionText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 10px;
+}
+
+.regionPages {
+  color: #cfe3f7;
+}
+
+.regionBox {
+  color: #8e99a6;
+  font-variant-numeric: tabular-nums;
+}
+
+.regionActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
 .pageList {
   flex: 1;
   min-height: 0;
@@ -487,6 +579,43 @@
   font-size: 10px;
 }
 
+/* --- center: the visual pane -------------------------------------------- */
+
+.visualArea {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pixelStats {
+  color: #aeb7c2;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sliderLabel {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  color: #8e99a6;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.slider {
+  width: 90px;
+  accent-color: #4b93e6;
+  cursor: pointer;
+}
+
+.slider:focus-visible {
+  outline: 2px solid #5b9cff;
+  outline-offset: 1px;
+}
+
 /* --- right: change details ---------------------------------------------- */
 
 .details {
@@ -631,5 +760,21 @@
 @media (max-width: 1400px) {
   .body {
     grid-template-columns: minmax(180px, 210px) minmax(0, 1fr) minmax(210px, 270px);
+  }
+
+  .names {
+    max-width: 240px;
+  }
+}
+
+/* The toolbar wraps at 1280px once the visual controls are showing; the file
+ * names are the first thing that can give up space. */
+@media (max-width: 1280px) {
+  .names {
+    max-width: 160px;
+  }
+
+  .slider {
+    width: 70px;
   }
 }

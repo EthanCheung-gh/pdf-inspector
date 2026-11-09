@@ -260,3 +260,142 @@ describe('diff store view state', () => {
     expect(selectDiffSelection(store())?.change.details).toEqual({ fontSize: { old: 10, new: 12 } });
   });
 });
+
+describe('diff store ignore regions', () => {
+  const REGION = { oldPage: 1, newPage: 1, bbox: { x0: 10, y0: 20, x1: 30, y1: 40 } };
+
+  it('starts without regions and outside region mode', () => {
+    expect(store().regionMode).toBe(false);
+    expect(store().options.ignoreRegions).toEqual([]);
+  });
+
+  it('toggles region mode', () => {
+    store().setRegionMode(true);
+    expect(store().regionMode).toBe(true);
+
+    store().setRegionMode(false);
+    expect(store().regionMode).toBe(false);
+  });
+
+  it('adds, removes and clears regions through the options', () => {
+    store().addIgnoreRegion(REGION);
+    store().addIgnoreRegion({ oldPage: null, newPage: 2, bbox: { x0: 0, y0: 0, x1: 5, y1: 5 } });
+
+    expect(store().options.ignoreRegions).toHaveLength(2);
+    expect(store().options.ignoreRegions[0]).toEqual(REGION);
+
+    store().removeIgnoreRegion(0);
+    expect(store().options.ignoreRegions).toEqual([
+      { oldPage: null, newPage: 2, bbox: { x0: 0, y0: 0, x1: 5, y1: 5 } },
+    ]);
+
+    store().clearIgnoreRegions();
+    expect(store().options.ignoreRegions).toEqual([]);
+  });
+
+  it('normalizes a reversed drag box before storing it', () => {
+    store().addIgnoreRegion({ oldPage: 1, newPage: 2, bbox: { x0: 30, y0: 40, x1: 10, y1: 20 } });
+
+    expect(store().options.ignoreRegions[0].bbox).toEqual({ x0: 10, y0: 20, x1: 30, y1: 40 });
+  });
+
+  it('ignores a region that cannot mask anything', () => {
+    store().addIgnoreRegion({ oldPage: null, newPage: null, bbox: REGION.bbox });
+    store().addIgnoreRegion({ oldPage: 1, newPage: 1, bbox: { x0: Number.NaN, y0: 0, x1: 1, y1: 1 } });
+
+    expect(store().options.ignoreRegions).toEqual([]);
+  });
+
+  it('removes the region at the requested index only', () => {
+    store().addIgnoreRegion(REGION);
+    store().addIgnoreRegion({ oldPage: 3, newPage: 3, bbox: REGION.bbox });
+
+    store().removeIgnoreRegion(1);
+
+    expect(store().options.ignoreRegions).toEqual([REGION]);
+  });
+
+  it('clears the regions when a source changes', () => {
+    store().setSource('old', '/docs/old.pdf', 'old.pdf');
+    store().setSource('new', '/docs/new.pdf', 'new.pdf');
+    store().addIgnoreRegion(REGION);
+
+    store().setSource('new', '/docs/other.pdf', 'other.pdf');
+
+    expect(store().options.ignoreRegions).toEqual([]);
+    // The rest of the options survive a source change.
+    expect(store().options.positionTolerance).toBe(1);
+  });
+
+  it('accepts regions through setOptions', () => {
+    store().setOptions({ ignoreRegions: [REGION] });
+
+    expect(store().options.ignoreRegions).toEqual([REGION]);
+  });
+
+  it('resets region mode and regions with the rest of the workspace', () => {
+    store().setRegionMode(true);
+    store().addIgnoreRegion(REGION);
+
+    store().reset();
+
+    expect(store().regionMode).toBe(false);
+    expect(store().options.ignoreRegions).toEqual([]);
+  });
+});
+
+describe('diff store visual state', () => {
+  it('defaults to a 55% blend', () => {
+    expect(store().viewMode).toBe('side-by-side');
+    expect(store().visualOpacity).toBe(0.55);
+    expect(store().visualStyle).toBe('blend');
+  });
+
+  it('switches between all three view modes', () => {
+    store().setViewMode('visual');
+    expect(store().viewMode).toBe('visual');
+
+    store().setViewMode('overlay');
+    expect(store().viewMode).toBe('overlay');
+
+    store().setViewMode('side-by-side');
+    expect(store().viewMode).toBe('side-by-side');
+  });
+
+  it('clamps the visual opacity into 0..1', () => {
+    store().setVisualOpacity(0.3);
+    expect(store().visualOpacity).toBe(0.3);
+
+    store().setVisualOpacity(-2);
+    expect(store().visualOpacity).toBe(0);
+
+    store().setVisualOpacity(3);
+    expect(store().visualOpacity).toBe(1);
+
+    store().setVisualOpacity(Number.NaN);
+    expect(store().visualOpacity).toBe(0.55);
+  });
+
+  it('changes the visual style', () => {
+    store().setVisualStyle('heatmap');
+    expect(store().visualStyle).toBe('heatmap');
+
+    store().setVisualStyle('boxes');
+    expect(store().visualStyle).toBe('boxes');
+
+    store().setVisualStyle('blend');
+    expect(store().visualStyle).toBe('blend');
+  });
+
+  it('resets the visual settings with the rest of the workspace', () => {
+    store().setViewMode('visual');
+    store().setVisualOpacity(0.2);
+    store().setVisualStyle('heatmap');
+
+    store().reset();
+
+    expect(store().viewMode).toBe('side-by-side');
+    expect(store().visualOpacity).toBe(0.55);
+    expect(store().visualStyle).toBe('blend');
+  });
+});

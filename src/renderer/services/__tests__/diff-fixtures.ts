@@ -26,6 +26,9 @@ export function makePage(overrides: Partial<DiffPage> = {}): DiffPage {
     status: 'changed',
     oldSize: { width: 612, height: 792 },
     newSize: { width: 612, height: 792 },
+    // A paired page always carries match metadata; one-sided pages must pass
+    // `match: null` explicitly (see makeSampleResult).
+    match: { score: 0.75, reordered: false },
     changes: [],
     ...overrides,
   };
@@ -46,6 +49,7 @@ export function makeResult(pages: DiffPage[]): DiffResult {
       ignoreFonts: false,
       ignoreColors: false,
       ignoreImages: false,
+      ignoreRegions: [],
     },
     old: { pages: pages.filter((page) => page.oldIndex !== null).length, sha256: 'a'.repeat(64) },
     new: { pages: pages.filter((page) => page.newIndex !== null).length, sha256: 'b'.repeat(64) },
@@ -53,6 +57,7 @@ export function makeResult(pages: DiffPage[]): DiffResult {
       pagesAdded: pages.filter((page) => page.status === 'added').length,
       pagesRemoved: pages.filter((page) => page.status === 'removed').length,
       pagesChanged: pages.filter((page) => page.status === 'changed').length,
+      pagesReordered: pages.filter((page) => page.match?.reordered === true).length,
       objectsAdded: count('added'),
       objectsRemoved: count('removed'),
       objectsMoved: count('moved'),
@@ -88,6 +93,7 @@ export function makeSampleResult(): DiffResult {
       newIndex: null,
       status: 'removed',
       newSize: null,
+      match: null,
       changes: [
         makeChange({
           kind: 'removed',
@@ -104,6 +110,7 @@ export function makeSampleResult(): DiffResult {
       newIndex: 2,
       status: 'added',
       oldSize: null,
+      match: null,
       changes: [
         makeChange({
           kind: 'added',

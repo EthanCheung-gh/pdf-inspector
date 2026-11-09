@@ -136,7 +136,7 @@ describe('collectPageBoxes', () => {
   });
 
   it('returns nothing for a side that has no page', () => {
-    const added = makePage({ oldIndex: null, oldSize: null, status: 'added' });
+    const added = makePage({ oldIndex: null, oldSize: null, status: 'added', match: null });
     expect(collectPageBoxes(added, 'old', null, 0)).toEqual([]);
   });
 

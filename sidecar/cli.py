@@ -35,7 +35,7 @@ EXIT_FAIL = 1
 EXIT_ERROR = 2
 
 FORMAT_CHOICES = ('summary', 'json', 'html')
-FAIL_ON_CHOICES = ('any', 'added', 'removed', 'modified', 'page-count', 'none')
+FAIL_ON_CHOICES = ('any', 'added', 'removed', 'modified', 'page-count', 'reordered', 'none')
 AUDIT_FAIL_ON_CHOICES = ('error', 'warning', 'none')
 TEXT_TOLERANCE_CHOICES = ('exact', 'normalized', 'case-insensitive')
 
@@ -81,10 +81,15 @@ def build_parser() -> argparse.ArgumentParser:
         help='compare two local PDF files',
         description=(
             'Compare two local PDF files object by object and report added, '
-            'removed, moved and modified objects plus page-level changes.'
+            'removed, moved and modified objects plus page-level changes and '
+            'the page alignment (match score, reordered page pairs).'
         ),
         epilog=(
             'exit codes: 0 = no failure, 1 = --fail-on matched, 2 = usage/read/diff error. '
+            '--fail-on reordered fails when a paired page moved to a different page number. '
+            '--ignore-regions PATH reads a JSON array of {oldPage, newPage, bbox} regions '
+            '(camelCase, MediaBox-relative PDF points); matching changes are omitted from '
+            'the summary, JSON and HTML output. '
             'Diagnostics are written to stderr; JSON on stdout is never polluted.'
         ),
     )
@@ -109,7 +114,8 @@ def build_parser() -> argparse.ArgumentParser:
             'which difference exits 1 (default: any). "added"/"removed" cover '
             'objects and pages, "modified" covers modified and moved objects, '
             '"page-count" covers page insert/remove, page-count and page geometry '
-            'changes, "none" never fails'
+            'changes, "reordered" covers paired pages that moved to a different '
+            'page number, "none" never fails'
         ),
     )
     diff_parser.add_argument(
@@ -149,6 +155,15 @@ def build_parser() -> argparse.ArgumentParser:
         '--ignore-images',
         action='store_true',
         help='ignore image objects (same as --ignore-types image)',
+    )
+    diff_parser.add_argument(
+        '--ignore-regions',
+        metavar='PATH',
+        help=(
+            'JSON file with an array of drawn ignore regions (camelCase '
+            'oldPage/newPage/bbox, MediaBox-relative PDF points); changes '
+            'intersecting a region are not reported'
+        ),
     )
     diff_parser.add_argument(
         '--quiet',
@@ -210,6 +225,33 @@ def _config_error(message: Any) -> None:
     sys.stderr.flush()
 
 
+def _load_ignore_regions(path_arg: str) -> list[Any]:
+    """Read the ``--ignore-regions`` JSON array (the UI contract's camelCase).
+
+    The file is the same shape the workspace would send over RPC once converted,
+    so a user can export/inspect the masks a run used. Parsing errors are CLI
+    errors (exit 2); semantic validation is left to ``DiffOptions``.
+    """
+    path = Path(str(path_arg))
+    try:
+        text = path.read_text(encoding='utf-8')
+    except OSError as exc:
+        raise CliError(f'cannot read ignore regions file {path_arg!r}: {exc}') from exc
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise CliError(
+            f'ignore regions file {path_arg!r} is not valid JSON: {exc}'
+        ) from exc
+
+    if not isinstance(data, list):
+        raise CliError(
+            f'ignore regions file {path_arg!r} must contain a JSON array of regions'
+        )
+    return data
+
+
 def _build_options(args: argparse.Namespace) -> DiffOptions:
     ignored: set[str] = set()
     for chunk in args.ignore_types or ():
@@ -217,6 +259,7 @@ def _build_options(args: argparse.Namespace) -> DiffOptions:
             part = part.strip().lower()
             if part:
                 ignored.add(part)
+    regions = _load_ignore_regions(args.ignore_regions) if args.ignore_regions else []
     return DiffOptions(
         position_tolerance=args.position_tolerance,
         text_tolerance=args.text_tolerance,
@@ -224,6 +267,7 @@ def _build_options(args: argparse.Namespace) -> DiffOptions:
         ignore_fonts=bool(args.ignore_fonts),
         ignore_colors=bool(args.ignore_colors),
         ignore_images=bool(args.ignore_images),
+        ignore_regions=regions,
     )
 
 
@@ -317,7 +361,8 @@ def failure_reason(result: Mapping[str, Any], fail_on: str) -> Optional[str]:
     ``added``/``removed`` count pages as well as objects; ``modified`` covers
     modified and moved objects (the contract has no separate ``moved`` mode);
     ``page-count`` covers page insert/remove, page-count and page geometry
-    changes.
+    changes; ``reordered`` covers paired pages reported at a different ordinal
+    position (``summary.pagesReordered``).
     """
     if fail_on == 'none':
         return None
@@ -337,6 +382,7 @@ def failure_reason(result: Mapping[str, Any], fail_on: str) -> Optional[str]:
     pages_added = count('pagesAdded')
     pages_removed = count('pagesRemoved')
     pages_changed = count('pagesChanged')
+    pages_reordered = count('pagesReordered')
     objects_added = count('objectsAdded')
     objects_removed = count('objectsRemoved')
     objects_moved = count('objectsMoved')
@@ -379,6 +425,12 @@ def failure_reason(result: Mapping[str, Any], fail_on: str) -> Optional[str]:
             return (
                 f'page count/geometry changed ({old_pages} -> {new_pages}) '
                 '(fail-on page-count)'
+            )
+    elif fail_on == 'reordered':
+        if pages_reordered:
+            return (
+                f'{pages_reordered} page pair(s) at a different page number '
+                '(fail-on reordered)'
             )
     return None
 

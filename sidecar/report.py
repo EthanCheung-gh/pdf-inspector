@@ -24,6 +24,7 @@ SUMMARY_ROWS = (
     ('pagesAdded', 'Pages added'),
     ('pagesRemoved', 'Pages removed'),
     ('pagesChanged', 'Pages changed'),
+    ('pagesReordered', 'Pages reordered'),
     ('objectsAdded', 'Objects added'),
     ('objectsRemoved', 'Objects removed'),
     ('objectsMoved', 'Objects moved'),
@@ -37,6 +38,9 @@ NO_CHANGES_TEXT = 'changes: none - documents match'
 
 # Cells rendered per table change before the remainder is summarised.
 _MAX_CELL_ROWS = 100
+
+# Ignore regions listed in the plain-text summary before the rest is counted.
+_MAX_REGION_ROWS = 20
 
 _CSS = """
 :root { color-scheme: light; }
@@ -117,6 +121,17 @@ def _fmt_int(value: Any) -> str:
         return _text(value)
 
 
+def _fmt_score(value: Any) -> str:
+    """Fixed-width 3-decimal match score, or ``-`` when there is none."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return '-'
+    if number != number or number in (float('inf'), float('-inf')):
+        return '-'
+    return f'{number:.3f}'
+
+
 def _fmt_sha(value: Any, length: int = 16) -> str:
     text = _text(value)
     if not text:
@@ -182,6 +197,30 @@ def _iter_pages(result: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
     return [page for page in pages if isinstance(page, Mapping)]
 
 
+def _iter_ignore_regions(result: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Ignore regions echoed under ``options.ignoreRegions`` (camelCase)."""
+    options = result.get('options') or {}
+    regions = options.get('ignoreRegions') or ()
+    if isinstance(regions, (str, bytes)) or not isinstance(regions, Sequence):
+        return []
+    return [region for region in regions if isinstance(region, Mapping)]
+
+
+def ignored_region_count(result: Mapping[str, Any]) -> int:
+    """Number of applied ignore regions (0 when the field is absent)."""
+    return len(_iter_ignore_regions(result))
+
+
+def region_page_label(region: Mapping[str, Any]) -> str:
+    """Human label for an ignore region, e.g. ``old page 1 / new page 2``."""
+    bits = []
+    if region.get('oldPage') is not None:
+        bits.append(f'old page {_fmt_int(region.get("oldPage"))}')
+    if region.get('newPage') is not None:
+        bits.append(f'new page {_fmt_int(region.get("newPage"))}')
+    return ' / '.join(bits) if bits else 'page ?'
+
+
 def _iter_page_changes(
     result: Mapping[str, Any],
 ) -> Iterable[tuple[Mapping[str, Any], Mapping[str, Any]]]:
@@ -216,6 +255,14 @@ def page_label(page: Mapping[str, Any]) -> str:
     if old_index is not None:
         return f'old page {old_index}'
     return 'page ?'
+
+
+def page_reordered(page: Mapping[str, Any]) -> bool:
+    """True when the paired page sits at a different ordinal position."""
+    match = page.get('match')
+    if not isinstance(match, Mapping):
+        return False
+    return bool(match.get('reordered'))
 
 
 def change_title(change: Mapping[str, Any]) -> str:
@@ -285,11 +332,18 @@ def format_summary(
         + f'{_fmt_int(new.get("pages"))} page(s), sha256 {_fmt_sha(new.get("sha256"))}'
     )
     lines.append(f'options: {_options_text(options)}')
+    regions = _iter_ignore_regions(result)
+    lines.append(f'ignored regions: {len(regions)}')
+    for region in regions[:_MAX_REGION_ROWS]:
+        lines.append(f'  - {region_page_label(region)}: {_bbox_text(region.get("bbox"))}')
+    if len(regions) > _MAX_REGION_ROWS:
+        lines.append(f'  ... {len(regions) - _MAX_REGION_ROWS} more region(s)')
     lines.append('')
 
     pages_added = int(summary.get('pagesAdded') or 0)
     pages_removed = int(summary.get('pagesRemoved') or 0)
     pages_changed = int(summary.get('pagesChanged') or 0)
+    pages_reordered = int(summary.get('pagesReordered') or 0)
     page_pairs = len(list(_iter_pages(result)))
     pages_unchanged = max(page_pairs - pages_added - pages_removed - pages_changed, 0)
     lines.append(
@@ -297,6 +351,7 @@ def format_summary(
         f'({pages_added} added, {pages_removed} removed, {pages_changed} changed, '
         f'{pages_unchanged} unchanged)'
     )
+    lines.append(f'pages reordered: {pages_reordered}')
     lines.append(
         'objects: '
         f'{_fmt_int(summary.get("objectsAdded"))} added, '
@@ -464,6 +519,10 @@ def _render_summary_table(result: Mapping[str, Any]) -> str:
         '<tr><th scope="row">Total object changes</th>'
         f'<td>{_esc(_fmt_int(_total_changes(result)))}</td></tr>'
     )
+    rows.append(
+        '<tr><th scope="row">Ignored regions</th>'
+        f'<td>{_esc(_fmt_int(ignored_region_count(result)))}</td></tr>'
+    )
     return ''.join(
         [
             '<table class="summary-table">',
@@ -506,6 +565,38 @@ def _render_options_table(result: Mapping[str, Any]) -> str:
     )
 
 
+def _render_ignore_region_table(result: Mapping[str, Any]) -> str:
+    """Applied ignore regions: page scope and MediaBox-relative box."""
+    regions = _iter_ignore_regions(result)
+    rows = [
+        '<tr>'
+        f'<td>{index}</td>'
+        f'<td>{_esc(_page_index_text(region.get("oldPage")))}</td>'
+        f'<td>{_esc(_page_index_text(region.get("newPage")))}</td>'
+        f'<td class="mono">{_esc(_bbox_text(region.get("bbox")))}</td>'
+        '</tr>'
+        for index, region in enumerate(regions, start=1)
+    ]
+    if not rows:
+        rows.append('<tr><td colspan="4" class="empty">No ignore regions.</td></tr>')
+    return ''.join(
+        [
+            '<div class="table-wrap">',
+            '<table class="regions">',
+            '<caption>Ignore regions (1-based pages; bounding box in MediaBox-relative '
+            'PDF points)</caption>',
+            '<thead><tr>'
+            '<th>#</th><th>Old page</th><th>New page</th><th>Bounding box</th>'
+            '</tr></thead>',
+            '<tbody>',
+            *rows,
+            '</tbody>',
+            '</table>',
+            '</div>',
+        ]
+    )
+
+
 def _render_change_rows(changes: Sequence[Mapping[str, Any]]) -> str:
     rows = []
     for index, change in enumerate(changes, start=1):
@@ -523,6 +614,56 @@ def _render_change_rows(changes: Sequence[Mapping[str, Any]]) -> str:
             '</tr>'
         )
     return ''.join(rows)
+
+
+def _page_index_text(value: Any) -> str:
+    return '-' if value is None else _fmt_int(value)
+
+
+def _render_page_table(pages: Sequence[Mapping[str, Any]]) -> str:
+    """Aligned old/new page numbers with the fingerprint match metadata."""
+    if not pages:
+        return ''
+    rows = []
+    for position, page in enumerate(pages, start=1):
+        status = _text(page.get('status')) or 'unchanged'
+        match = page.get('match') if isinstance(page.get('match'), Mapping) else None
+        score = _fmt_score(match.get('score')) if match else '-'
+        if match is None:
+            reordered = '<span class="muted">&mdash;</span>'
+        elif page_reordered(page):
+            reordered = '<span class="badge badge-moved">reordered</span>'
+        else:
+            reordered = 'no'
+        changes = [change for change in page.get('changes') or () if isinstance(change, Mapping)]
+        rows.append(
+            '<tr>'
+            f'<td>{position}</td>'
+            f'<td>{_esc(_page_index_text(page.get("oldIndex")))}</td>'
+            f'<td>{_esc(_page_index_text(page.get("newIndex")))}</td>'
+            f'<td>{_status_badge(status)}</td>'
+            f'<td class="mono">{_esc(score)}</td>'
+            f'<td>{reordered}</td>'
+            f'<td>{len(changes)}</td>'
+            '</tr>'
+        )
+    return ''.join(
+        [
+            '<div class="table-wrap">',
+            '<table class="pages">',
+            '<caption>Page alignment (1-based page numbers; match is the page '
+            'fingerprint similarity)</caption>',
+            '<thead><tr>'
+            '<th>#</th><th>Old page</th><th>New page</th><th>Status</th>'
+            '<th>Match score</th><th>Reordered</th><th>Changes</th>'
+            '</tr></thead>',
+            '<tbody>',
+            *rows,
+            '</tbody>',
+            '</table>',
+            '</div>',
+        ]
+    )
 
 
 def _render_page_section(page: Mapping[str, Any], position: int) -> str:
@@ -599,8 +740,13 @@ def render_html(result: Mapping[str, Any]) -> str:
         _render_summary_table(result),
         '<h2 id="options">Diff options</h2>',
         _render_options_table(result),
+        '<h2 id="ignored-regions">Ignored regions</h2>',
+        f'<p class="muted">{ignored_region_count(result)} region(s) masked; changes '
+        'intersecting them are omitted from this report.</p>',
+        _render_ignore_region_table(result),
         '<h2 id="pages">Pages</h2>',
         f'<p class="muted">{len(pages)} page section(s)</p>',
+        _render_page_table(pages),
     ]
     for position, page in enumerate(pages, start=1):
         lines.append(_render_page_section(page, position))
@@ -624,7 +770,10 @@ __all__ = [
     'SUMMARY_ROWS',
     'change_title',
     'format_summary',
+    'ignored_region_count',
     'page_geometry_changed',
     'page_label',
+    'page_reordered',
+    'region_page_label',
     'render_html',
 ]

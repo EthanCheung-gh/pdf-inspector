@@ -36,6 +36,9 @@ CHANGE_KEYS = {
     'details',
 }
 
+PAGE_KEYS = {'oldIndex', 'newIndex', 'status', 'oldSize', 'newSize', 'match', 'changes'}
+MATCH_KEYS = {'score', 'reordered'}
+
 
 # --- fixture builders -------------------------------------------------------
 
@@ -126,18 +129,31 @@ def _assert_summary_matches_pages(result):
     assert summary['pagesAdded'] == sum(page['status'] == 'added' for page in pages)
     assert summary['pagesRemoved'] == sum(page['status'] == 'removed' for page in pages)
     assert summary['pagesChanged'] == sum(page['status'] == 'changed' for page in pages)
+    assert summary['pagesReordered'] == sum(
+        bool((page['match'] or {}).get('reordered')) for page in pages
+    )
     for kind in ('added', 'removed', 'moved', 'modified'):
         assert summary[f'objects{kind.capitalize()}'] == sum(
             change['kind'] == kind for change in changes
         )
 
     for page in pages:
+        assert set(page) == PAGE_KEYS
+        match = page['match']
         if page['status'] == 'unchanged':
             assert page['changes'] == []
         if page['status'] == 'added':
             assert page['oldIndex'] is None and page['oldSize'] is None
         if page['status'] == 'removed':
             assert page['newIndex'] is None and page['newSize'] is None
+        if page['oldIndex'] is None or page['newIndex'] is None:
+            # One-sided pages are not paired, so they carry no match metadata.
+            assert match is None
+        else:
+            assert set(match) == MATCH_KEYS
+            assert isinstance(match['score'], float)
+            assert 0.0 <= match['score'] <= 1.0
+            assert match['reordered'] == (page['oldIndex'] != page['newIndex'])
 
 
 def _assert_change_shape(change):
@@ -183,6 +199,7 @@ def test_identical_documents_report_no_changes(tmp_path):
         'pagesAdded': 0,
         'pagesRemoved': 0,
         'pagesChanged': 0,
+        'pagesReordered': 0,
         'objectsAdded': 0,
         'objectsRemoved': 0,
         'objectsMoved': 0,
@@ -192,6 +209,7 @@ def test_identical_documents_report_no_changes(tmp_path):
     assert result['pages'][0]['oldIndex'] == 1
     assert result['pages'][0]['newIndex'] == 1
     assert result['pages'][0]['oldSize'] == {'width': 612.0, 'height': 792.0}
+    assert result['pages'][0]['match'] == {'score': 1.0, 'reordered': False}
     assert result['pages'][0]['changes'] == []
     _assert_summary_matches_pages(result)
 
@@ -209,6 +227,7 @@ def test_options_are_serialised_with_contract_keys(tmp_path):
         'ignoreFonts': False,
         'ignoreColors': False,
         'ignoreImages': False,
+        'ignoreRegions': [],
     }
 
 
@@ -518,6 +537,14 @@ def test_inserted_page_is_added_without_shifting_later_pairs(tmp_path):
         (1, 2, 'unchanged'),
         (2, 3, 'unchanged'),
     ]
+    # The inserted page is one-sided; the two surviving pages kept their content
+    # but moved to a new page number, so both pairs are reordered.
+    assert result['pages'][0]['match'] is None
+    assert [page['match'] for page in result['pages'][1:]] == [
+        {'score': 1.0, 'reordered': True},
+        {'score': 1.0, 'reordered': True},
+    ]
+    assert result['summary']['pagesReordered'] == 2
     _assert_summary_matches_pages(result)
 
 
@@ -534,6 +561,196 @@ def test_removed_page_is_reported_removed(tmp_path):
         (1, 1, 'unchanged'),
         (2, None, 'removed'),
     ]
+    assert result['pages'][0]['match'] == {'score': 1.0, 'reordered': False}
+    assert result['pages'][1]['match'] is None
+    assert result['summary']['pagesReordered'] == 0
+    _assert_summary_matches_pages(result)
+
+
+def test_moved_page_is_paired_and_marked_reordered(tmp_path):
+    old = _multi_page(
+        tmp_path / 'old.pdf', [_page_label('Page One'), _page_label('Page Two')]
+    )
+    new = _multi_page(
+        tmp_path / 'new.pdf', [_page_label('Page Two'), _page_label('Page One')]
+    )
+
+    result = diff_files(old, new)
+
+    paired = [
+        (page['oldIndex'], page['newIndex'], page['match'])
+        for page in result['pages']
+        if page['match'] is not None
+    ]
+    assert paired == [(1, 2, {'score': 1.0, 'reordered': True})]
+    assert result['summary']['pagesReordered'] == 1
+    # The unmatched pages are one-sided, never half-paired.
+    assert all(
+        page['match'] is None
+        for page in result['pages']
+        if page['oldIndex'] is None or page['newIndex'] is None
+    )
+    _assert_summary_matches_pages(result)
+
+
+def test_deleted_first_page_marks_the_shifting_pairs_reordered(tmp_path):
+    old = _multi_page(
+        tmp_path / 'old.pdf',
+        [_page_label('Page One'), _page_label('Page Two'), _page_label('Page Three')],
+    )
+    new = _multi_page(
+        tmp_path / 'new.pdf', [_page_label('Page Two'), _page_label('Page Three')]
+    )
+
+    result = diff_files(old, new)
+
+    assert [
+        (page['oldIndex'], page['newIndex'], page['status'], page['match'])
+        for page in result['pages']
+    ] == [
+        (1, None, 'removed', None),
+        (2, 1, 'unchanged', {'score': 1.0, 'reordered': True}),
+        (3, 2, 'unchanged', {'score': 1.0, 'reordered': True}),
+    ]
+    assert result['summary']['pagesReordered'] == 2
+    _assert_summary_matches_pages(result)
+
+
+def test_duplicate_pages_pair_deterministically(tmp_path):
+    old = _multi_page(
+        tmp_path / 'old.pdf',
+        [_page_label('Page One'), _page_label('Page Two'), _page_label('Page Two')],
+    )
+    new = _multi_page(
+        tmp_path / 'new.pdf', [_page_label('Page One'), _page_label('Page Two')]
+    )
+
+    first = diff_files(old, new)
+    second = diff_files(old, new)
+
+    assert [(page['oldIndex'], page['newIndex'], page['status']) for page in first['pages']] == [
+        (1, 1, 'unchanged'),
+        (2, 2, 'unchanged'),
+        (3, None, 'removed'),
+    ]
+    assert first['summary']['pagesReordered'] == 0
+    assert first['pages'] == second['pages']
+    _assert_summary_matches_pages(first)
+
+
+# --- page match scores ------------------------------------------------------
+
+
+def _page_data(**overrides):
+    """Minimal extracted-page dict, enough for :func:`page_fingerprint`."""
+    page = {
+        'width': 612.0,
+        'height': 792.0,
+        'rotation': 0,
+        'words': [{'text': 'Hello World'}, {'text': 'Second line'}],
+        'chars': [],
+        'rects': [],
+        'lines': [],
+        'curves': [],
+        'images': [],
+        'tables': [],
+    }
+    page.update(overrides)
+    return page
+
+
+def _fingerprint(**overrides):
+    return diff_module.page_fingerprint(_page_data(**overrides))
+
+
+def test_page_match_score_is_one_for_identical_fingerprints():
+    fingerprint = _fingerprint()
+
+    assert diff_module.page_match_score(fingerprint, fingerprint) == 1.0
+    assert diff_module.page_match_score(fingerprint, _fingerprint()) == 1.0
+
+
+def test_page_match_score_is_bounded_and_symmetric():
+    fingerprints = [
+        _fingerprint(),
+        _fingerprint(words=[{'text': 'Different text'}]),
+        _fingerprint(width=595.2756, height=841.8898),
+        _fingerprint(rotation=90),
+        _fingerprint(rects=[{'x0': 0, 'y0': 0, 'x1': 10, 'y1': 10}]),
+        _fingerprint(tables=[{'cells': [['a', 'b']]}]),
+        _fingerprint(words=[]),
+    ]
+
+    for left in fingerprints:
+        for right in fingerprints:
+            forward = diff_module.page_match_score(left, right)
+            backward = diff_module.page_match_score(right, left)
+            assert isinstance(forward, float)
+            assert 0.0 <= forward <= 1.0
+            assert forward == backward
+
+
+def test_page_match_score_degrades_with_each_fingerprint_component():
+    base = _fingerprint()
+    rotated = diff_module.page_match_score(base, _fingerprint(rotation=90))
+    resized = diff_module.page_match_score(
+        base, _fingerprint(width=300.0, height=300.0)
+    )
+
+    assert rotated < 1.0
+    assert resized < 1.0
+    # Size is the heaviest component, so halving the paper costs more than a
+    # rotation only.
+    assert resized < rotated
+    assert diff_module.page_match_score(base, _fingerprint(words=[{'text': 'Other'}])) < 1.0
+    assert diff_module.page_match_score(base, _fingerprint(rects=[{'x0': 0}])) < 1.0
+    assert (
+        diff_module.page_match_score(
+            base, _fingerprint(tables=[{'cells': [['changed', 'cells']]}])
+        )
+        < 1.0
+    )
+    # A missing side has no match metadata at all.
+    assert diff_module.page_match_score(None, base) == 0.0
+    assert diff_module.page_match_score(base, None) == 0.0
+
+
+def test_changed_page_match_score_is_high_but_not_perfect(tmp_path):
+    old = _text_pdf(tmp_path / 'old.pdf', 'Alpha')
+    new = _text_pdf(tmp_path / 'new.pdf', 'Beta')
+
+    match = diff_files(old, new)['pages'][0]['match']
+
+    assert set(match) == MATCH_KEYS
+    # Same paper, same object counts: only the text hash differs.
+    assert 0.5 < match['score'] < 1.0
+    assert match['reordered'] is False
+
+
+def test_json_page_keys_are_exact(tmp_path):
+    old = _multi_page(
+        tmp_path / 'old.pdf', [_page_label('Page One'), _page_label('Page Two')]
+    )
+    new = _multi_page(
+        tmp_path / 'new.pdf', [_page_label('Page Two'), _page_label('Page Three')]
+    )
+
+    result = json.loads(json.dumps(diff_files(old, new)))
+
+    assert set(result['summary']) == {
+        'pagesAdded',
+        'pagesRemoved',
+        'pagesChanged',
+        'pagesReordered',
+        'objectsAdded',
+        'objectsRemoved',
+        'objectsMoved',
+        'objectsModified',
+    }
+    for page in result['pages']:
+        assert set(page) == PAGE_KEYS
+        if page['match'] is not None:
+            assert set(page['match']) == MATCH_KEYS
     _assert_summary_matches_pages(result)
 
 
@@ -618,6 +835,213 @@ def test_invalid_options_are_rejected():
         DiffOptions(ignore_types={'pixel'})
     with pytest.raises(ValueError, match='position_tolerance'):
         DiffOptions(position_tolerance=-1)
+
+
+# --- ignore regions ---------------------------------------------------------
+
+
+def _box(x0: float, y0: float, x1: float, y1: float) -> dict:
+    return {'x0': x0, 'y0': y0, 'x1': x1, 'y1': y1}
+
+
+def _region(old_page, new_page, bbox: dict) -> dict:
+    return {'oldPage': old_page, 'newPage': new_page, 'bbox': bbox}
+
+
+TEXT_REGION = _box(90, 690, 200, 720)
+
+
+def test_ignore_region_masks_a_change_it_covers(tmp_path):
+    old = _text_pdf(tmp_path / 'old.pdf', 'Alpha')
+    new = _text_pdf(tmp_path / 'new.pdf', 'Beta')
+    options = DiffOptions(ignore_regions=[_region(1, 1, TEXT_REGION)])
+
+    result = diff_files(old, new, options)
+
+    assert result['pages'][0]['changes'] == []
+    assert result['pages'][0]['status'] == 'unchanged'
+    assert result['summary']['objectsModified'] == 0
+    # The region is echoed normalized so the mask that ran is reproducible.
+    assert result['options']['ignoreRegions'] == [
+        {'oldPage': 1, 'newPage': 1, 'bbox': _box(90.0, 690.0, 200.0, 720.0)}
+    ]
+    _assert_summary_matches_pages(result)
+
+
+def test_ignore_region_masks_only_the_changes_it_covers(tmp_path):
+    def page(text: str, x: float):
+        return lambda canvas: (_text(text, y=700)(canvas), _rect(x, 500)(canvas))
+
+    old = _single_page(tmp_path / 'old.pdf', page('Alpha', 100))
+    new = _single_page(tmp_path / 'new.pdf', page('Beta', 300))
+
+    unmasked = diff_files(old, new)
+    assert {change['type'] for change in unmasked['pages'][0]['changes']} == {'word', 'char', 'rect'}
+
+    masked = diff_files(old, new, DiffOptions(ignore_regions=[_region(1, 1, TEXT_REGION)]))
+
+    remaining = masked['pages'][0]['changes']
+    assert remaining
+    assert {change['type'] for change in remaining} == {'rect'}
+    assert any(change['kind'] == 'moved' for change in remaining)
+    _assert_summary_matches_pages(masked)
+
+
+def test_ignore_region_on_another_page_does_not_mask(tmp_path):
+    old = _multi_page(
+        tmp_path / 'old.pdf',
+        [_page_label('Alpha'), _page_label('Second')],
+    )
+    new = _multi_page(
+        tmp_path / 'new.pdf',
+        [_page_label('Beta'), _page_label('Second')],
+    )
+
+    result = diff_files(old, new, DiffOptions(ignore_regions=[_region(2, 2, TEXT_REGION)]))
+
+    # Page 1 changed, page 2 is the page the region names: page 1 keeps its
+    # changes even though the rectangle would cover them there too.
+    assert result['pages'][0]['status'] == 'changed'
+    assert result['pages'][0]['changes']
+    assert result['pages'][1]['changes'] == []
+    _assert_summary_matches_pages(result)
+
+
+def test_ignore_region_masks_a_one_sided_page_on_its_own_side(tmp_path):
+    old = _text_pdf(tmp_path / 'old.pdf', 'Same')
+    new = _multi_page(tmp_path / 'new.pdf', [_page_label('Same'), _page_label('Added')])
+
+    masked = diff_files(old, new, DiffOptions(ignore_regions=[_region(None, 2, TEXT_REGION)]))
+    assert [page['status'] for page in masked['pages']] == ['unchanged', 'added']
+    assert masked['pages'][1]['changes'] == []
+    _assert_summary_matches_pages(masked)
+
+    # A region that names the missing side cannot mask an added page.
+    wrong_side = diff_files(old, new, DiffOptions(ignore_regions=[_region(2, None, TEXT_REGION)]))
+    assert wrong_side['pages'][1]['changes']
+
+
+def test_remove_page_regions_use_the_old_side(tmp_path):
+    old = _multi_page(tmp_path / 'old.pdf', [_page_label('Same'), _page_label('Removed')])
+    new = _text_pdf(tmp_path / 'new.pdf', 'Same')
+
+    result = diff_files(old, new, DiffOptions(ignore_regions=[_region(2, None, TEXT_REGION)]))
+
+    assert [page['status'] for page in result['pages']] == ['unchanged', 'removed']
+    assert result['pages'][1]['changes'] == []
+    _assert_summary_matches_pages(result)
+
+
+def test_ignore_region_masks_a_page_geometry_change(tmp_path):
+    old = _single_page(tmp_path / 'old.pdf', lambda canvas: None, pagesize=letter)
+    new = _single_page(tmp_path / 'new.pdf', lambda canvas: None, pagesize=A4)
+
+    unmasked = diff_files(old, new)
+    assert any('pageGeometry' in change['details'] for change in unmasked['pages'][0]['changes'])
+
+    # The MediaBox of the old page is covered by the region, so the geometry
+    # change is masked too.
+    masked = diff_files(
+        old,
+        new,
+        DiffOptions(ignore_regions=[_region(1, 1, _box(0, 0, 612, 792))]),
+    )
+    assert masked['pages'][0]['changes'] == []
+    assert masked['pages'][0]['status'] == 'unchanged'
+    _assert_summary_matches_pages(masked)
+
+    # The page-level change uses the MediaBox as its box, so *any* region on the
+    # page intersects it (the documented rule) ...
+    corner = diff_files(
+        old,
+        new,
+        DiffOptions(ignore_regions=[_region(1, 1, _box(10, 10, 20, 20))]),
+    )
+    assert corner['pages'][0]['changes'] == []
+
+    # ... while a region naming another page does not.
+    other_page = diff_files(
+        old,
+        new,
+        DiffOptions(ignore_regions=[_region(2, 2, _box(0, 0, 612, 792))]),
+    )
+    assert any(
+        'pageGeometry' in change['details'] for change in other_page['pages'][0]['changes']
+    )
+
+
+def test_ignore_regions_accept_rpc_snake_case_keys(tmp_path):
+    old = _text_pdf(tmp_path / 'old.pdf', 'Alpha')
+    new = _text_pdf(tmp_path / 'new.pdf', 'Beta')
+    options = DiffOptions(
+        ignore_regions=[
+            {'old_page': 1.0, 'new_page': 1, 'bbox': _box(90, 690, 200, 720)},
+        ]
+    )
+
+    result = diff_files(old, new, options)
+
+    assert result['pages'][0]['changes'] == []
+    # Normalized (integer pages) and echoed with the contract's camelCase keys.
+    assert options.ignore_regions == [
+        {'oldPage': 1, 'newPage': 1, 'bbox': _box(90.0, 690.0, 200.0, 720.0)}
+    ]
+    assert result['options']['ignoreRegions'] == options.ignore_regions
+
+
+@pytest.mark.parametrize(
+    ('regions', 'message'),
+    [
+        ('not-a-list', 'must be a list'),
+        ([1], r'must be an object'),
+        ([_region(None, None, TEXT_REGION)], 'at least one page'),
+        ([_region(0, 1, TEXT_REGION)], 'oldPage'),
+        ([_region(1, -2, TEXT_REGION)], 'newPage'),
+        ([_region(1.5, 1, TEXT_REGION)], 'oldPage'),
+        ([_region(True, 1, TEXT_REGION)], 'oldPage'),
+        ([{'oldPage': 1, 'newPage': 1}], 'bbox'),
+        ([_region(1, 1, _box(0, 0, 0, float('inf')))], 'finite'),
+        ([_region(1, 1, _box(200, 0, 100, 10))], 'ordered'),
+        ([_region(1, 1, _box(0, 200, 100, 100))], 'ordered'),
+        ([{'oldPage': 1, 'newPage': 1, 'bbox': {'x0': 0, 'y0': 0, 'x1': 10}}], 'y1'),
+        ([{'oldPage': 1, 'newPage': 1, 'bbox': _box(0, 0, 10, 10), 'x': 1}], 'unknown key'),
+        (
+            [{'oldPage': 1, 'old_page': 1, 'newPage': 1, 'bbox': _box(0, 0, 10, 10)}],
+            'must not combine',
+        ),
+    ],
+)
+def test_invalid_ignore_regions_are_rejected(regions, message):
+    with pytest.raises(ValueError, match=message):
+        DiffOptions(ignore_regions=regions)
+
+
+def test_bbox_intersects_counts_touching_edges():
+    base = _box(10, 10, 20, 20)
+
+    assert diff_module.bbox_intersects(base, _box(15, 15, 25, 25))
+    assert diff_module.bbox_intersects(base, _box(20, 20, 30, 30))
+    assert diff_module.bbox_intersects(base, _box(0, 0, 10, 10))
+    assert diff_module.bbox_intersects(base, _box(0, 0, 100, 100))
+    assert not diff_module.bbox_intersects(base, _box(21, 21, 30, 30))
+    assert not diff_module.bbox_intersects(base, _box(0, 0, 9, 9))
+    assert not diff_module.bbox_intersects(base, None)
+    assert not diff_module.bbox_intersects(None, base)
+
+
+def test_no_regions_leave_the_result_unchanged(tmp_path):
+    old = _text_pdf(tmp_path / 'old.pdf', 'Alpha')
+    new = _text_pdf(tmp_path / 'new.pdf', 'Beta')
+
+    default = diff_files(old, new)
+    explicit_empty = diff_files(old, new, DiffOptions(ignore_regions=[]))
+
+    assert default['pages'] == explicit_empty['pages']
+    assert default['summary'] == explicit_empty['summary']
+    assert explicit_empty['options']['ignoreRegions'] == []
+    # An empty mask list does not change the rest of the options echo either.
+    assert set(default['options']) == set(explicit_empty['options'])
+
 
 
 # --- determinism, unicode, errors ------------------------------------------

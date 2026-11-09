@@ -36,6 +36,7 @@ const DIFF_RESULT: DiffResult = {
     ignoreFonts: false,
     ignoreColors: false,
     ignoreImages: false,
+    ignoreRegions: [],
   },
   old: { pages: 1, sha256: 'a'.repeat(64) },
   new: { pages: 1, sha256: 'b'.repeat(64) },
@@ -43,6 +44,7 @@ const DIFF_RESULT: DiffResult = {
     pagesAdded: 0,
     pagesRemoved: 0,
     pagesChanged: 1,
+    pagesReordered: 0,
     objectsAdded: 0,
     objectsRemoved: 0,
     objectsMoved: 0,
@@ -213,7 +215,12 @@ describe('POST /api/diff', () => {
     const response = await postDiff({
       oldToken,
       newToken,
-      options: { positionTolerance: 2, ignoreImages: true, textTolerance: 'exact' },
+      options: {
+        positionTolerance: 2,
+        ignoreImages: true,
+        textTolerance: 'exact',
+        ignoreRegions: [{ oldPage: 1, newPage: 1, bbox: { x0: 0, y0: 0, x1: 10, y1: 10 } }],
+      },
     });
 
     expect(response.status).toBe(200);
@@ -227,6 +234,14 @@ describe('POST /api/diff', () => {
           position_tolerance: 2,
           text_tolerance: 'exact',
           ignore_images: true,
+          // Drawn regions arrive camelCase and reach the sidecar snake_case.
+          ignore_regions: [
+            {
+              old_page: 1,
+              new_page: 1,
+              bbox: { x0: 0, y0: 0, x1: 10, y1: 10 },
+            },
+          ],
         },
       },
       DIFF_TIMEOUT_MS,

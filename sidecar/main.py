@@ -25,6 +25,7 @@ _DIFF_OPTION_FIELDS = (
     'ignore_fonts',
     'ignore_colors',
     'ignore_images',
+    'ignore_regions',
 )
 
 
@@ -50,6 +51,10 @@ def _parse_diff_options(raw: Any) -> DiffOptions:
     ignore_types = raw.get('ignore_types')
     if ignore_types is not None and not isinstance(ignore_types, (list, tuple, set, frozenset)):
         raise RpcError('"ignore_types" must be an array of object types')
+
+    ignore_regions = raw.get('ignore_regions')
+    if ignore_regions is not None and not isinstance(ignore_regions, (list, tuple)):
+        raise RpcError('"ignore_regions" must be an array of regions')
 
     try:
         return DiffOptions(**raw)

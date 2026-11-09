@@ -1,5 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { DiffChange, DiffResult, DiffSide } from '../../../shared/diff-types';
+import type {
+  DiffChange,
+  DiffIgnoreRegion,
+  DiffResult,
+  DiffSide,
+} from '../../../shared/diff-types';
 import { ipc } from '../../services/ipc-client';
 import {
   DIFF_CHANGE_KINDS,
@@ -21,8 +26,15 @@ import {
   suggestDiffJsonFilename,
   tableCellChanges,
 } from '../../services/diff-view';
+import {
+  formatPixelDiffStats,
+  VISUAL_DIFF_STYLES,
+  type PixelDiffStats,
+  type VisualDiffStyle,
+} from '../../services/visual-diff';
 import { selectDiffPage, useDiffStore } from '../../store/diff-store';
 import { DiffPdfPane } from './DiffPdfPane';
+import { DiffVisualPane } from './DiffVisualPane';
 import styles from './DiffWorkspace.module.css';
 
 /** Gap between the two side-by-side panes (see the module CSS). */
@@ -30,6 +42,35 @@ const PANE_GAP = 8;
 
 /** Zoom step of the workspace's −/+ buttons, matching the Inspect toolbar. */
 const ZOOM_STEP = 0.25;
+
+/** Toolbar labels for the visual styles. */
+const VISUAL_STYLE_LABELS: Record<VisualDiffStyle, string> = {
+  blend: 'Blend',
+  heatmap: 'Heatmap',
+  boxes: 'Boxes',
+};
+
+/**
+ * Side/page label of one ignore region: a paired region masks both pages, a
+ * one-sided region only the page that exists.
+ */
+export function describeIgnoreRegion(region: DiffIgnoreRegion): string {
+  const side =
+    region.oldPage !== null && region.newPage !== null
+      ? 'both'
+      : region.newPage !== null
+        ? 'new'
+        : 'old';
+  const pages =
+    region.oldPage !== null && region.newPage !== null
+      ? region.oldPage === region.newPage
+        ? `page ${region.oldPage}`
+        : `old ${region.oldPage} → new ${region.newPage}`
+      : region.newPage !== null
+        ? `page ${region.newPage}`
+        : `page ${region.oldPage}`;
+  return `${side} · ${pages}`;
+}
 
 const changePages = (change: DiffChange): string => {
   if (change.oldPage !== null && change.newPage !== null) {
@@ -185,6 +226,10 @@ export const DiffWorkspace: React.FC = () => {
   const filter = useDiffStore((s) => s.filter);
   const viewMode = useDiffStore((s) => s.viewMode);
   const zoom = useDiffStore((s) => s.zoom);
+  const visualOpacity = useDiffStore((s) => s.visualOpacity);
+  const visualStyle = useDiffStore((s) => s.visualStyle);
+  const regionMode = useDiffStore((s) => s.regionMode);
+  const ignoreRegions = useDiffStore((s) => s.options.ignoreRegions);
   const pageIndex = useDiffStore((s) => s.pageIndex);
   const selection = useDiffStore((s) => s.selection);
   const oldSource = useDiffStore((s) => s.oldSource);
@@ -196,6 +241,12 @@ export const DiffWorkspace: React.FC = () => {
   const resetFilter = useDiffStore((s) => s.resetFilter);
   const setViewMode = useDiffStore((s) => s.setViewMode);
   const setZoom = useDiffStore((s) => s.setZoom);
+  const setVisualOpacity = useDiffStore((s) => s.setVisualOpacity);
+  const setVisualStyle = useDiffStore((s) => s.setVisualStyle);
+  const setRegionMode = useDiffStore((s) => s.setRegionMode);
+  const addIgnoreRegion = useDiffStore((s) => s.addIgnoreRegion);
+  const removeIgnoreRegion = useDiffStore((s) => s.removeIgnoreRegion);
+  const clearIgnoreRegions = useDiffStore((s) => s.clearIgnoreRegions);
   const setPageIndex = useDiffStore((s) => s.setPageIndex);
   const stepPage = useDiffStore((s) => s.stepPage);
   const selectChangeAt = useDiffStore((s) => s.selectChangeAt);
@@ -205,6 +256,7 @@ export const DiffWorkspace: React.FC = () => {
 
   const [centerEl, setCenterEl] = useState<HTMLDivElement | null>(null);
   const [centerWidth, setCenterWidth] = useState(0);
+  const [pixelStats, setPixelStats] = useState<PixelDiffStats | null>(null);
   const fittedResultRef = useRef<DiffResult | null>(null);
 
   const pages = result?.pages ?? [];
@@ -228,6 +280,16 @@ export const DiffWorkspace: React.FC = () => {
     () => (page ? collectOverlayBoxes(page, selection, pageIndex) : []),
     [page, pageIndex, selection],
   );
+
+  // Pixel stats belong to one rendered page pair: a new page or result must not
+  // keep the previous numbers on screen while the visual pane re-renders.
+  useEffect(() => {
+    setPixelStats(null);
+  }, [pageIndex, result]);
+
+  const handleRenderStats = useCallback((stats: PixelDiffStats | null) => {
+    setPixelStats(stats);
+  }, []);
 
   // Measure the center column so "Fit" reflects the real pane width instead of
   // a window-width guess (panels and the summary column take space away).
@@ -293,6 +355,35 @@ export const DiffWorkspace: React.FC = () => {
     }
   }, []);
 
+  /**
+   * Re-run the comparison with the drawn regions.
+   *
+   * Explicit on purpose: drawing a rectangle only edits the region list, so a
+   * drag never fires a diff per mouse move. `diffPdfs` receives the current
+   * sources and options, exactly like the setup dialog does.
+   */
+  const handleApplyRegions = useCallback(async () => {
+    const state = useDiffStore.getState();
+    if (state.loading) return;
+    if (!state.oldSource || !state.newSource) {
+      state.setError('Choose both PDFs before applying ignore regions.');
+      return;
+    }
+
+    state.setError(null);
+    state.setLoading(true);
+    try {
+      const next = await ipc.diffPdfs(state.oldSource, state.newSource, state.options);
+      // `applyResult` clears the loading flag, the previous error and the
+      // stale selection/page focus.
+      useDiffStore.getState().applyResult(next);
+    } catch (err) {
+      const store = useDiffStore.getState();
+      store.setLoading(false);
+      store.setError(err instanceof Error ? err.message : 'Diff failed');
+    }
+  }, []);
+
   const totalPages = pages.length;
   const empty = result ? isDiffResultEmpty(pages) : false;
   // Overlay draws exactly one page, so it must be the side that owns it. An
@@ -347,6 +438,68 @@ export const DiffWorkspace: React.FC = () => {
             title="Old and new boxes on one page"
           >
             Overlay
+          </button>
+          <button
+            className={`${styles.button} ${viewMode === 'visual' ? styles.active : ''}`}
+            type="button"
+            aria-pressed={viewMode === 'visual'}
+            onClick={() => setViewMode('visual')}
+            title="Pixel comparison of both pages"
+          >
+            Visual
+          </button>
+        </div>
+
+        {viewMode === 'visual' && (
+          <>
+            <span className={styles.separator} />
+
+            <div className={styles.group} role="group" aria-label="Visual diff style">
+              {VISUAL_DIFF_STYLES.map((style) => (
+                <button
+                  key={style}
+                  className={`${styles.button} ${visualStyle === style ? styles.active : ''}`}
+                  type="button"
+                  aria-pressed={visualStyle === style}
+                  onClick={() => setVisualStyle(style)}
+                >
+                  {VISUAL_STYLE_LABELS[style]}
+                </button>
+              ))}
+            </div>
+
+            <div className={styles.group}>
+              <label className={styles.sliderLabel}>
+                Old page
+                <input
+                  className={styles.slider}
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={5}
+                  aria-label="Old page opacity"
+                  aria-valuetext={`${Math.round(visualOpacity * 100)}%`}
+                  value={Math.round(visualOpacity * 100)}
+                  onChange={(event) => setVisualOpacity(Number(event.target.value) / 100)}
+                />
+                <span className={styles.value}>{Math.round(visualOpacity * 100)}%</span>
+              </label>
+            </div>
+          </>
+        )}
+
+        <span className={styles.separator} />
+
+        <div className={styles.group}>
+          <button
+            className={`${styles.button} ${regionMode ? styles.active : ''}`}
+            type="button"
+            aria-pressed={regionMode}
+            onClick={() => setRegionMode(!regionMode)}
+            disabled={!page}
+            title="Draw a rectangle on a page to mask the changes inside it"
+          >
+            Ignore region
           </button>
         </div>
 
@@ -476,6 +629,73 @@ export const DiffWorkspace: React.FC = () => {
             </button>
           </div>
 
+          {result && (
+            <section className={styles.regionPanel} aria-label="Ignore regions" data-testid="diff-region-panel">
+              <div className={styles.regionHeader}>
+                <span className={styles.regionTitle}>Ignore regions</span>
+                <span className={styles.regionCount} data-testid="diff-region-count">
+                  {ignoreRegions.length}
+                </span>
+              </div>
+
+              {ignoreRegions.length === 0 ? (
+                <p className={styles.regionHint}>
+                  {regionMode
+                    ? 'Drag a rectangle on a page to ignore that area.'
+                    : 'Turn on “Ignore region”, then drag on a page to mask changes.'}
+                </p>
+              ) : (
+                <ul className={styles.regionList} data-testid="diff-region-list">
+                  {ignoreRegions.map((region, index) => (
+                    <li
+                      key={`${index}:${region.oldPage}:${region.newPage}:${region.bbox.x0}:${region.bbox.y0}`}
+                      className={styles.regionItem}
+                    >
+                      <span className={styles.regionText}>
+                        <span className={styles.regionPages}>{describeIgnoreRegion(region)}</span>
+                        <span className={styles.regionBox}>{formatDiffBBox(region.bbox)}</span>
+                      </span>
+                      <button
+                        className={styles.linkButton}
+                        type="button"
+                        onClick={() => removeIgnoreRegion(index)}
+                        aria-label={`Remove ignore region ${index + 1}`}
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div className={styles.regionActions}>
+                <button
+                  className={styles.button}
+                  type="button"
+                  onClick={() => void handleApplyRegions()}
+                  disabled={loading || ignoreRegions.length === 0 || !oldSource || !newSource}
+                  title="Re-run the diff with the drawn regions"
+                >
+                  {loading ? 'Applying…' : 'Apply & re-run'}
+                </button>
+                <button
+                  className={styles.linkButton}
+                  type="button"
+                  onClick={clearIgnoreRegions}
+                  disabled={ignoreRegions.length === 0}
+                >
+                  Clear regions
+                </button>
+              </div>
+
+              {regionMode && viewMode === 'visual' && (
+                <p className={styles.regionHint}>
+                  Switch to Side by side or Overlay to draw a region.
+                </p>
+              )}
+            </section>
+          )}
+
           {!result && !loading && (
             <p className={styles.hint}>No comparison yet. Choose two PDFs to start.</p>
           )}
@@ -600,9 +820,36 @@ export const DiffWorkspace: React.FC = () => {
                     No differences — both documents render the same pages.
                   </span>
                 )}
+                {viewMode === 'visual' && pixelStats && (
+                  <span
+                    className={styles.pixelStats}
+                    data-testid="diff-visual-stats"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    Pixel diff: {formatPixelDiffStats(pixelStats)}
+                  </span>
+                )}
               </div>
 
-              {viewMode === 'side-by-side' ? (
+              {viewMode === 'visual' ? (
+                <div className={styles.visualArea}>
+                  <DiffVisualPane
+                    oldSource={oldSource}
+                    newSource={newSource}
+                    oldPageNumber={page.oldIndex}
+                    newPageNumber={page.newIndex}
+                    oldSize={page.oldSize}
+                    newSize={page.newSize}
+                    boxes={overlayBoxes}
+                    zoom={zoom}
+                    opacity={visualOpacity}
+                    style={visualStyle}
+                    ignoreRegions={ignoreRegions}
+                    onRenderStats={handleRenderStats}
+                  />
+                </div>
+              ) : viewMode === 'side-by-side' ? (
                 <div className={styles.panes}>
                   <DiffPdfPane
                     side="old"
@@ -614,6 +861,10 @@ export const DiffWorkspace: React.FC = () => {
                     zoom={zoom}
                     emptyMessage="Choose an old PDF to compare."
                     missingMessage="This page does not exist in the old document."
+                    regionMode={regionMode}
+                    regions={ignoreRegions}
+                    pagePair={{ oldPage: page.oldIndex, newPage: page.newIndex }}
+                    onRegionComplete={addIgnoreRegion}
                   />
                   <DiffPdfPane
                     side="new"
@@ -625,6 +876,10 @@ export const DiffWorkspace: React.FC = () => {
                     zoom={zoom}
                     emptyMessage="Choose a new PDF to compare."
                     missingMessage="This page does not exist in the new document."
+                    regionMode={regionMode}
+                    regions={ignoreRegions}
+                    pagePair={{ oldPage: page.oldIndex, newPage: page.newIndex }}
+                    onRegionComplete={addIgnoreRegion}
                   />
                 </div>
               ) : (
@@ -644,6 +899,10 @@ export const DiffWorkspace: React.FC = () => {
                       zoom={zoom}
                       emptyMessage="Choose two PDFs to compare."
                       missingMessage="This page has no renderable side."
+                      regionMode={regionMode}
+                      regions={ignoreRegions}
+                      pagePair={{ oldPage: page.oldIndex, newPage: page.newIndex }}
+                      onRegionComplete={addIgnoreRegion}
                     />
                   </div>
                 </div>

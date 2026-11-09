@@ -10,6 +10,16 @@ fingerprints, and each object type is matched independently with a
 deterministic greedy minimum-cost matcher (stable sorting, no randomness, no
 timestamps).  File handles are always released, and unreadable PDFs raise
 :class:`DiffError` with a human readable message.
+
+Every paired page also carries a ``match`` object: a deterministic 0..1
+fingerprint similarity score (:func:`page_match_score`) plus whether the page
+ended up at a different ordinal position.  One-sided pages carry
+``match: null`` and the object-level change list is unaffected.
+
+``DiffOptions.ignore_regions`` adds drawn, page-scoped masks: a change whose box
+on a side intersects a region naming that side's page is filtered out after
+object matching (see :func:`change_is_ignored`).  Regions never change how
+objects are paired, so removing one restores exactly the masked changes.
 """
 
 from __future__ import annotations
@@ -60,6 +70,19 @@ _PAIR_LIMIT = 10_000
 
 _KIND_ORDER = {'removed': 0, 'added': 1, 'modified': 2, 'moved': 3}
 
+# Relative weight of each page-fingerprint component in ``page_match_score``.
+# The weights sum to 1.0, so two identical fingerprints score exactly 1.0.
+_PAGE_MATCH_WEIGHTS = (
+    ('size', 0.35),
+    ('rotation', 0.10),
+    ('text', 0.30),
+    ('objects', 0.15),
+    ('table', 0.10),
+)
+
+# Decimals kept in a reported page match score (JSON stays stable).
+_MATCH_SCORE_DECIMALS = 3
+
 _PACKAGE_JSON = Path(__file__).resolve().parent.parent / 'package.json'
 
 
@@ -76,7 +99,8 @@ class DiffOptions:
 
     ``ignore_fonts`` covers font name and font size; ``ignore_colors`` covers
     stroke/char colour fields; ``ignore_images`` is equivalent to adding
-    ``"image"`` to ``ignore_types``.
+    ``"image"`` to ``ignore_types``; ``ignore_regions`` are page-scoped
+    rectangles (MediaBox-relative PDF points) that mask intersecting changes.
     """
 
     position_tolerance: float = 1.0
@@ -85,6 +109,7 @@ class DiffOptions:
     ignore_fonts: bool = False
     ignore_colors: bool = False
     ignore_images: bool = False
+    ignore_regions: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         try:
@@ -111,6 +136,204 @@ class DiffOptions:
                 f'(valid: {", ".join(DIFF_TYPES)})'
             )
         self.ignore_types = ignored
+        self.ignore_regions = normalize_ignore_regions(self.ignore_regions)
+
+
+# --- ignore regions ---------------------------------------------------------
+
+# A region is accepted with the CLI/JSON contract's camelCase keys and with the
+# RPC's snake_case keys, so one normaliser serves both surfaces.
+_REGION_KEY_PAIRS = (('oldPage', 'old_page'), ('newPage', 'new_page'))
+_REGION_KEYS = frozenset(
+    ['bbox'] + [name for pair in _REGION_KEY_PAIRS for name in pair]
+)
+_BBOX_KEYS = ('x0', 'y0', 'x1', 'y1')
+
+
+def _region_page(value: Any, name: str, index: int) -> Optional[int]:
+    """A 1-based page number or ``None``; anything else is rejected."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(
+            f'ignore_regions[{index}].{name} must be a positive page number or null, '
+            f'got {value!r}'
+        )
+    number = float(value)
+    if not math.isfinite(number) or number < 1 or number != int(number):
+        raise ValueError(
+            f'ignore_regions[{index}].{name} must be a positive page number or null, '
+            f'got {value!r}'
+        )
+    return int(number)
+
+
+def _region_bbox(value: Any, index: int) -> dict[str, float]:
+    if not isinstance(value, Mapping):
+        raise ValueError(
+            f'ignore_regions[{index}].bbox must be an object with x0/y0/x1/y1'
+        )
+    unknown = sorted(set(value) - set(_BBOX_KEYS))
+    if unknown:
+        raise ValueError(
+            f'ignore_regions[{index}].bbox has unknown key(s): {", ".join(unknown)}'
+        )
+
+    coordinates: dict[str, float] = {}
+    for key in _BBOX_KEYS:
+        if key not in value:
+            raise ValueError(f'ignore_regions[{index}].bbox.{key} is required')
+        raw = value[key]
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            raise ValueError(
+                f'ignore_regions[{index}].bbox.{key} must be a finite number, got {raw!r}'
+            )
+        number = float(raw)
+        if not math.isfinite(number):
+            raise ValueError(f'ignore_regions[{index}].bbox.{key} must be finite')
+        coordinates[key] = number
+
+    if coordinates['x0'] > coordinates['x1'] or coordinates['y0'] > coordinates['y1']:
+        raise ValueError(
+            f'ignore_regions[{index}].bbox must be ordered '
+            '(x0 <= x1 and y0 <= y1)'
+        )
+    return coordinates
+
+
+def _region_field(region: Mapping[str, Any], camel: str, snake: str, index: int) -> Any:
+    has_camel = camel in region
+    has_snake = snake in region
+    if has_camel and has_snake:
+        raise ValueError(
+            f'ignore_regions[{index}] must not combine {camel} and {snake}'
+        )
+    if has_camel:
+        return region[camel]
+    if has_snake:
+        return region[snake]
+    return None
+
+
+def normalize_ignore_regions(regions: Any) -> list[dict[str, Any]]:
+    """Validate ignore regions and return them in the contract's camelCase shape.
+
+    Regions name a page pair (``oldPage``/``newPage``, 1-based or ``None``) and a
+    MediaBox-relative ``bbox``. Reversed boxes, non-finite coordinates, page
+    numbers below 1 and regions that name no page raise :class:`ValueError`: the
+    engine never silently drops a mask the caller asked for.
+    """
+    if regions is None:
+        return []
+    if isinstance(regions, (str, bytes, bytearray, Mapping)) or not isinstance(
+        regions, Iterable
+    ):
+        raise ValueError('ignore_regions must be a list of regions')
+
+    normalized: list[dict[str, Any]] = []
+    for index, region in enumerate(regions):
+        if not isinstance(region, Mapping):
+            raise ValueError(f'ignore_regions[{index}] must be an object')
+        unknown = sorted(set(region) - _REGION_KEYS)
+        if unknown:
+            raise ValueError(
+                f'ignore_regions[{index}] has unknown key(s): {", ".join(unknown)}'
+            )
+
+        pages = {
+            camel: _region_page(_region_field(region, camel, snake, index), camel, index)
+            for camel, snake in _REGION_KEY_PAIRS
+        }
+        if pages['oldPage'] is None and pages['newPage'] is None:
+            raise ValueError(
+                f'ignore_regions[{index}] must name at least one page '
+                '(oldPage or newPage)'
+            )
+
+        normalized.append(
+            {
+                'oldPage': pages['oldPage'],
+                'newPage': pages['newPage'],
+                'bbox': _region_bbox(region.get('bbox'), index),
+            }
+        )
+    return normalized
+
+
+def _box_coordinates(box: Any) -> Optional[tuple[float, float, float, float]]:
+    if not isinstance(box, Mapping):
+        return None
+    try:
+        return (
+            float(box['x0']),
+            float(box['y0']),
+            float(box['x1']),
+            float(box['y1']),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def bbox_intersects(left: Any, right: Any) -> bool:
+    """True when two MediaBox-relative boxes overlap; touching edges count.
+
+    A missing/invalid box never intersects, so an added object (no ``oldBBox``)
+    is only masked by a region on its new side.
+    """
+    left_coords = _box_coordinates(left)
+    right_coords = _box_coordinates(right)
+    if left_coords is None or right_coords is None:
+        return False
+    left_x0, left_y0, left_x1, left_y1 = left_coords
+    right_x0, right_y0, right_x1, right_y1 = right_coords
+    return (
+        left_x0 <= right_x1
+        and right_x0 <= left_x1
+        and left_y0 <= right_y1
+        and right_y0 <= left_y1
+    )
+
+
+def change_is_ignored(change: Mapping[str, Any], options: DiffOptions) -> bool:
+    """True when a region masks this change on either side.
+
+    Regions are matched by page *and* box: a region on old page 2 never hides a
+    change on old page 3, even when the boxes overlap. One-sided objects carry
+    ``None`` for the missing side, so only the existing side's region applies.
+    """
+    if not options.ignore_regions:
+        return False
+    for region in options.ignore_regions:
+        bbox = region['bbox']
+        if (
+            region['oldPage'] is not None
+            and change.get('oldPage') == region['oldPage']
+            and bbox_intersects(change.get('oldBBox'), bbox)
+        ):
+            return True
+        if (
+            region['newPage'] is not None
+            and change.get('newPage') == region['newPage']
+            and bbox_intersects(change.get('newBBox'), bbox)
+        ):
+            return True
+    return False
+
+
+def _without_ignored_changes(
+    changes: Iterable[dict[str, Any]],
+    options: DiffOptions,
+) -> list[dict[str, Any]]:
+    """Drop masked changes after matching, so a removed region restores them.
+
+    Matching deliberately runs on the unmasked object sets: filtering afterwards
+    keeps the object pairing (and therefore the remaining changes) identical
+    whether or not a region is drawn.
+    """
+    if not options.ignore_regions:
+        return list(changes)
+    return [change for change in changes if not change_is_ignored(change, options)]
+
 
 
 # --- small numeric / text helpers -------------------------------------------
@@ -258,6 +481,86 @@ def page_fingerprint(page: Mapping[str, Any]) -> tuple:
     table_hash = hashlib.sha256('\x1d'.join(table_chunks).encode('utf-8')).hexdigest()
 
     return (width, height, rotation, text_hash, counts, table_hash)
+
+
+def _proportion_similarity(left: float, right: float) -> float:
+    """``1.0`` when both numbers are equal, decaying as the larger one grows."""
+    left = abs(_number(left))
+    right = abs(_number(right))
+    if left == right:
+        return 1.0
+    larger = max(left, right)
+    if larger <= 0:
+        return 1.0
+    return min(left, right) / larger
+
+
+def _fingerprint_parts(
+    fingerprint: Any,
+) -> Optional[tuple[float, float, int, Any, dict[str, int], Any]]:
+    """Split a :func:`page_fingerprint` tuple, or ``None`` for an unknown shape."""
+    try:
+        width, height, rotation, text_hash, counts, table_hash = fingerprint
+        count_map = {str(type_): int(count) for type_, count in counts}
+    except (TypeError, ValueError):
+        return None
+    return (
+        _number(width),
+        _number(height),
+        int(_number(rotation)),
+        text_hash,
+        count_map,
+        table_hash,
+    )
+
+
+def page_match_score(old_fp: Any, new_fp: Any) -> float:
+    """Deterministic ``0..1`` similarity between two page fingerprints.
+
+    A fingerprint deliberately keeps hashes and counts instead of page text, so
+    the score measures how much of the page identity survived:
+
+    - page width/height similarity contributes proportionally;
+    - rotation, the whitespace-normalised word-text hash and the table-cell
+      hash are exact-match components;
+    - per-type object counts contribute the mean of their proportions, so
+      adding one rectangle to a dense page barely moves the score.
+
+    Identical fingerprints score exactly ``1.0``; anything else is the weighted
+    sum below, clamped to ``0..1`` and rounded to 3 decimals so JSON output
+    stays stable.  ``None`` input (a one-sided page) scores ``0.0``.
+    """
+    if old_fp is None or new_fp is None:
+        return 0.0
+    if old_fp == new_fp:
+        return 1.0
+
+    old_parts = _fingerprint_parts(old_fp)
+    new_parts = _fingerprint_parts(new_fp)
+    if old_parts is None or new_parts is None:
+        return 0.0
+
+    old_width, old_height, old_rotation, old_text, old_counts, old_table = old_parts
+    new_width, new_height, new_rotation, new_text, new_counts, new_table = new_parts
+
+    components = {
+        'size': (
+            _proportion_similarity(old_width, new_width)
+            + _proportion_similarity(old_height, new_height)
+        )
+        / 2.0,
+        'rotation': 1.0 if old_rotation == new_rotation else 0.0,
+        'text': 1.0 if old_text == new_text else 0.0,
+        'objects': sum(
+            _proportion_similarity(old_counts.get(type_, 0), new_counts.get(type_, 0))
+            for type_ in DIFF_TYPES
+        )
+        / len(DIFF_TYPES),
+        'table': 1.0 if old_table == new_table else 0.0,
+    }
+
+    score = sum(weight * components[name] for name, weight in _PAGE_MATCH_WEIGHTS)
+    return round(min(max(score, 0.0), 1.0), _MATCH_SCORE_DECIMALS)
 
 
 def pair_pages(
@@ -946,7 +1249,10 @@ def diff_pages(
                     type_, old_objects, new_objects, opts, old_index, new_index
                 )
             )
-    return _sort_changes(changes)
+    # Region masking runs on the matched changes, immediately before sorting:
+    # the object pairing never sees the regions, so removing a region restores
+    # exactly the changes it hid.
+    return _sort_changes(_without_ignored_changes(changes, opts))
 
 
 def _one_sided_changes(
@@ -983,7 +1289,9 @@ def _one_sided_changes(
                         text_old=_object_text(obj),
                     )
                 )
-    return _sort_changes(changes)
+    # A one-sided page only has one side's changes, so only that side's regions
+    # can mask them (the other page number is null on every change).
+    return _sort_changes(_without_ignored_changes(changes, options))
 
 
 # --- file level API ---------------------------------------------------------
@@ -1000,7 +1308,11 @@ def tool_version() -> str:
 
 
 def options_to_dict(options: DiffOptions) -> dict[str, Any]:
-    """Serialise options with the contract's camelCase keys."""
+    """Serialise options with the contract's camelCase keys.
+
+    ``ignoreRegions`` is echoed normalized (ordered boxes, integer page
+    numbers), so a JSON consumer can reproduce the mask that was applied.
+    """
     ignored = set(options.ignore_types)
     return {
         'positionTolerance': float(options.position_tolerance),
@@ -1009,6 +1321,14 @@ def options_to_dict(options: DiffOptions) -> dict[str, Any]:
         'ignoreFonts': bool(options.ignore_fonts),
         'ignoreColors': bool(options.ignore_colors),
         'ignoreImages': bool(options.ignore_images),
+        'ignoreRegions': [
+            {
+                'oldPage': region['oldPage'],
+                'newPage': region['newPage'],
+                'bbox': dict(region['bbox']),
+            }
+            for region in options.ignore_regions
+        ],
     }
 
 
@@ -1136,6 +1456,7 @@ def diff_files(
                             'width': _number(page.get('width')),
                             'height': _number(page.get('height')),
                         },
+                        'match': None,
                         'changes': changes,
                     }
                 )
@@ -1153,6 +1474,7 @@ def diff_files(
                             'height': _number(page.get('height')),
                         },
                         'newSize': None,
+                        'match': None,
                         'changes': changes,
                     }
                 )
@@ -1174,6 +1496,13 @@ def diff_files(
                         'width': _number(new_page.get('width')),
                         'height': _number(new_page.get('height')),
                     },
+                    'match': {
+                        'score': page_match_score(
+                            old_fingerprints[old_index - 1],
+                            new_fingerprints[new_index - 1],
+                        ),
+                        'reordered': old_index != new_index,
+                    },
                     'changes': changes,
                 }
             )
@@ -1183,6 +1512,9 @@ def diff_files(
             'pagesAdded': sum(1 for page in pages if page['status'] == 'added'),
             'pagesRemoved': sum(1 for page in pages if page['status'] == 'removed'),
             'pagesChanged': sum(1 for page in pages if page['status'] == 'changed'),
+            'pagesReordered': sum(
+                1 for page in pages if (page['match'] or {}).get('reordered')
+            ),
             'objectsAdded': sum(1 for change in all_changes if change['kind'] == 'added'),
             'objectsRemoved': sum(1 for change in all_changes if change['kind'] == 'removed'),
             'objectsMoved': sum(1 for change in all_changes if change['kind'] == 'moved'),
@@ -1209,11 +1541,15 @@ __all__ = [
     'DIFF_TYPES',
     'SCHEMA_VERSION',
     'TOOL_NAME',
+    'bbox_intersects',
+    'change_is_ignored',
     'diff_files',
     'diff_pages',
+    'normalize_ignore_regions',
     'normalize_text',
     'options_to_dict',
     'page_fingerprint',
+    'page_match_score',
     'pair_pages',
     'tool_version',
 ]

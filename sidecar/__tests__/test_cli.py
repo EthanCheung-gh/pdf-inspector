@@ -33,11 +33,12 @@ CHANGE_KEYS = {
     'textNew',
     'details',
 }
-PAGE_KEYS = {'oldIndex', 'newIndex', 'status', 'oldSize', 'newSize', 'changes'}
+PAGE_KEYS = {'oldIndex', 'newIndex', 'status', 'oldSize', 'newSize', 'match', 'changes'}
 SUMMARY_KEYS = {
     'pagesAdded',
     'pagesRemoved',
     'pagesChanged',
+    'pagesReordered',
     'objectsAdded',
     'objectsRemoved',
     'objectsMoved',
@@ -114,6 +115,12 @@ def docs(tmp_path_factory):
             _page(_draw_text('Page One')),
             _page(_draw_text('Page Two')),
         ),
+        # the same two pages in the opposite order: paired, but reordered
+        'swapped_pages': build(
+            'swapped_pages.pdf',
+            _page(_draw_text('Page Two')),
+            _page(_draw_text('Page One')),
+        ),
         'one_page': build('one_page.pdf', _page(_draw_text('Page One'))),
         # page geometry change (page count unchanged)
         'letter': build('letter.pdf', _page(_draw_text('Resized')), pagesize=letter),
@@ -131,6 +138,7 @@ PAIRS = {
     'missing': ('missing_a', 'missing_b'),
     'page_removed': ('two_pages', 'one_page'),
     'page_added': ('one_page', 'two_pages'),
+    'reordered': ('two_pages', 'swapped_pages'),
     'geometry': ('letter', 'a4'),
 }
 
@@ -167,6 +175,7 @@ def test_json_output_matches_contract(docs):
     assert re.fullmatch(r'\d+\.\d+\.\d+', data['tool']['version'])
     assert set(data['summary']) == SUMMARY_KEYS
     assert data['summary']['objectsModified'] >= 1
+    assert data['summary']['pagesReordered'] == 0
     assert data['old']['pages'] == 1 and data['new']['pages'] == 1
     assert len(data['old']['sha256']) == 64 and len(data['new']['sha256']) == 64
     assert set(data['options']) == {
@@ -176,14 +185,30 @@ def test_json_output_matches_contract(docs):
         'ignoreFonts',
         'ignoreColors',
         'ignoreImages',
+        'ignoreRegions',
     }
 
     for page in data['pages']:
         assert set(page) == PAGE_KEYS
         assert page['status'] in ('added', 'removed', 'changed', 'unchanged')
+        if page['oldIndex'] is None or page['newIndex'] is None:
+            assert page['match'] is None
+        else:
+            assert set(page['match']) == {'score', 'reordered'}
         for change in page['changes']:
             assert set(change) == CHANGE_KEYS
             assert change['kind'] in ('added', 'removed', 'moved', 'modified')
+
+
+def test_json_reports_aligned_page_pairs_for_reordered_docs(docs):
+    data = _json_result(docs, 'reordered')
+
+    assert data['summary']['pagesReordered'] == 1
+    assert [
+        (page['oldIndex'], page['newIndex'], page['match'])
+        for page in data['pages']
+        if page['match'] is not None
+    ] == [(1, 2, {'score': 1.0, 'reordered': True})]
 
 
 def test_json_output_is_pure_json_on_stdout(docs):
@@ -217,6 +242,7 @@ def test_json_options_flags_are_forwarded(docs):
         'ignoreFonts': True,
         'ignoreColors': True,
         'ignoreImages': True,
+        'ignoreRegions': [],
     }
     assert all(
         change['type'] not in ('char', 'image')
@@ -347,6 +373,13 @@ def test_html_format_on_stdout_has_no_summary_mixed_in(docs):
         ('geometry', 'page-count', 1),
         ('geometry', 'modified', 1),
         ('geometry', 'added', 0),
+        ('reordered', 'reordered', 1),
+        ('reordered', 'none', 0),
+        ('same', 'reordered', 0),
+        ('changed', 'reordered', 0),
+        ('extra', 'reordered', 0),
+        ('page_removed', 'reordered', 0),
+        ('page_added', 'reordered', 0),
     ],
 )
 def test_fail_on_modes(docs, pair, fail_on, expected):
@@ -390,6 +423,52 @@ def test_failure_reason_helper_covers_page_only_changes():
     assert cli.failure_reason(result, 'modified') is None
     assert cli.failure_reason(result, 'page-count') is not None
     assert cli.failure_reason(result, 'any') is not None
+    assert cli.failure_reason(result, 'reordered') is None
+
+
+def test_failure_reason_covers_reordered_pages():
+    result = {
+        'old': {'pages': 2},
+        'new': {'pages': 2},
+        'summary': {
+            'pagesAdded': 0,
+            'pagesRemoved': 0,
+            'pagesChanged': 0,
+            'pagesReordered': 2,
+            'objectsAdded': 0,
+            'objectsRemoved': 0,
+            'objectsMoved': 0,
+            'objectsModified': 0,
+        },
+        'pages': [
+            {
+                'oldIndex': 2,
+                'newIndex': 1,
+                'status': 'unchanged',
+                'oldSize': {'width': 612.0, 'height': 792.0},
+                'newSize': {'width': 612.0, 'height': 792.0},
+                'match': {'score': 1.0, 'reordered': True},
+                'changes': [],
+            }
+        ],
+    }
+
+    reason = cli.failure_reason(result, 'reordered')
+
+    assert reason == '2 page pair(s) at a different page number (fail-on reordered)'
+    assert '\n' not in reason
+    # Reordering alone keeps every other threshold quiet.
+    assert cli.failure_reason(result, 'none') is None
+    assert cli.failure_reason(result, 'modified') is None
+
+
+def test_fail_on_reordered_reports_one_line_reason(docs):
+    result = run_pair(docs, 'reordered', '--fail-on', 'reordered', '--quiet')
+
+    assert result.returncode == 1
+    assert result.stdout == ''
+    assert 'fail-on reordered' in result.stderr
+    assert result.stderr.strip().count('\n') == 0
 
 
 # --- usage / read errors ----------------------------------------------------
@@ -435,6 +514,167 @@ def test_unknown_ignore_type_is_reported_clearly(docs):
     assert 'Unknown ignore type' in result.stderr
     assert result.stdout == ''
     assert 'Traceback' not in result.stderr
+
+
+# --- ignore regions ---------------------------------------------------------
+
+
+def _region_file(tmp_path: Path, regions: object, name: str = 'regions.json') -> Path:
+    path = tmp_path / name
+    path.write_text(json.dumps(regions), encoding='utf-8')
+    return path
+
+
+TEXT_REGION = {
+    'oldPage': 1,
+    'newPage': 1,
+    'bbox': {'x0': 90, 'y0': 690, 'x1': 200, 'y1': 720},
+}
+
+
+def test_ignore_regions_file_masks_changes(docs, tmp_path):
+    path = _region_file(tmp_path, [TEXT_REGION])
+
+    data = _json_result(docs, 'changed', '--ignore-regions', str(path))
+
+    assert data['options']['ignoreRegions'] == [TEXT_REGION]
+    assert data['pages'][0]['changes'] == []
+    assert data['pages'][0]['status'] == 'unchanged'
+    assert data['summary']['objectsModified'] == 0
+
+
+def test_ignore_regions_change_the_fail_on_outcome(docs, tmp_path):
+    path = _region_file(tmp_path, [TEXT_REGION])
+
+    result = run_pair(docs, 'changed', '--format', 'json', '--ignore-regions', str(path))
+
+    # `--fail-on any` keeps its meaning: masking the only change leaves nothing
+    # to fail on.
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)['summary']['objectsModified'] == 0
+
+    without_regions = run_pair(docs, 'changed', '--format', 'json')
+    assert without_regions.returncode == 1
+
+
+def test_ignore_region_file_accepts_an_empty_array(docs, tmp_path):
+    path = _region_file(tmp_path, [])
+
+    data = _json_result(docs, 'changed', '--ignore-regions', str(path))
+
+    assert data['options']['ignoreRegions'] == []
+    assert data['summary']['objectsModified'] >= 1
+
+
+def test_missing_ignore_regions_file_is_a_cli_error(docs, tmp_path):
+    result = run_pair(docs, 'changed', '--ignore-regions', str(tmp_path / 'nope.json'))
+
+    assert result.returncode == 2
+    assert 'cannot read ignore regions file' in result.stderr
+    assert result.stdout == ''
+    assert 'Traceback' not in result.stderr
+
+
+def test_ignore_regions_file_must_be_a_json_array(docs, tmp_path):
+    path = _region_file(tmp_path, {'oldPage': 1})
+
+    result = run_pair(docs, 'changed', '--ignore-regions', str(path))
+
+    assert result.returncode == 2
+    assert 'must contain a JSON array' in result.stderr
+    assert result.stdout == ''
+
+
+def test_ignore_regions_file_must_be_valid_json(docs, tmp_path):
+    path = tmp_path / 'broken.json'
+    path.write_text('[{"oldPage": 1,', encoding='utf-8')
+
+    result = run_pair(docs, 'changed', '--ignore-regions', str(path))
+
+    assert result.returncode == 2
+    assert 'not valid JSON' in result.stderr
+
+
+def test_invalid_ignore_region_is_reported_clearly(docs, tmp_path):
+    path = _region_file(
+        tmp_path,
+        [
+            {
+                'oldPage': 1,
+                'newPage': 1,
+                'bbox': {'x0': 200, 'y0': 0, 'x1': 100, 'y1': 10},
+            }
+        ],
+    )
+
+    result = run_pair(docs, 'changed', '--ignore-regions', str(path))
+
+    assert result.returncode == 2
+    assert 'ignore_regions[0]' in result.stderr
+    assert 'ordered' in result.stderr
+    assert 'Traceback' not in result.stderr
+
+
+def test_fail_on_reordered_is_preserved(docs):
+    result = run_pair(docs, 'reordered', '--fail-on', 'reordered')
+
+    assert result.returncode == 1
+    assert 'fail-on reordered' in result.stderr
+    assert run_pair(docs, 'same', '--fail-on', 'reordered').returncode == 0
+
+
+def test_help_documents_reordered_and_ignore_regions():
+    result = run_cli('diff', '--help')
+
+    assert result.returncode == 0
+    assert '--fail-on' in result.stdout
+    assert 'reordered' in result.stdout
+    assert '--ignore-regions' in result.stdout
+    assert 'JSON array' in result.stdout
+    assert '--fail-on reordered' in result.stdout
+
+
+def test_html_report_reports_reordered_page_alignment(docs):
+    result = run_pair(docs, 'reordered', '--format', 'html', '--fail-on', 'none')
+
+    assert result.returncode == 0, result.stderr
+    assert '<table class="pages">' in result.stdout
+    assert 'Page alignment' in result.stdout
+    assert 'Pages reordered' in result.stdout
+    assert 'reordered</span>' in result.stdout
+
+
+def test_html_report_summarises_ignored_regions(docs, tmp_path):
+    path = _region_file(tmp_path, [TEXT_REGION])
+
+    masked = run_pair(
+        docs, 'changed', '--format', 'html', '--ignore-regions', str(path), '--fail-on', 'none'
+    )
+    assert masked.returncode == 0, masked.stderr
+    assert '<table class="regions">' in masked.stdout
+    assert '1 region(s) masked' in masked.stdout
+    assert '(90, 690) - (200, 720)' in masked.stdout
+    assert 'No object changes.' in masked.stdout
+    assert '<code>Alpha</code>' not in masked.stdout
+
+    unmasked = run_pair(docs, 'changed', '--format', 'html', '--fail-on', 'none')
+    assert unmasked.returncode == 0, unmasked.stderr
+    assert '0 region(s) masked' in unmasked.stdout
+    assert 'No ignore regions.' in unmasked.stdout
+    assert '<code>Alpha</code>' in unmasked.stdout
+
+
+def test_summary_reports_ignored_regions(docs, tmp_path):
+    path = _region_file(tmp_path, [TEXT_REGION])
+
+    result = run_pair(docs, 'changed', '--ignore-regions', str(path), '--fail-on', 'none')
+
+    assert result.returncode == 0, result.stderr
+    assert 'ignored regions: 1' in result.stdout
+    assert '  - old page 1 / new page 1: (90, 690) - (200, 720)' in result.stdout
+    assert 'changes: none - documents match' in result.stdout
+    assert 'ignored regions: 0' in run_pair(docs, 'changed', '--fail-on', 'none').stdout
+
 
 
 def test_missing_file_is_a_one_line_error(docs):

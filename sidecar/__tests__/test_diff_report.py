@@ -18,7 +18,9 @@ from report import (  # noqa: E402
     NO_CHANGES_TEXT,
     change_title,
     format_summary,
+    ignored_region_count,
     page_geometry_changed,
+    region_page_label,
     render_html,
 )
 
@@ -65,12 +67,14 @@ def _diff(tmp_path, old_pages, new_pages, old_page_size=letter, new_page_size=le
     return diff_files(old, new)
 
 
-def _minimal_result(changes, *, status='changed', old_pages=1, new_pages=1):
+def _minimal_result(changes, *, status='changed', old_pages=1, new_pages=1, reordered=False):
     """Contract-shaped DiffResult with hand-written changes for escaping tests."""
+    paired = status not in ('added', 'removed')
     summary = {
         'pagesAdded': 1 if status == 'added' else 0,
         'pagesRemoved': 1 if status == 'removed' else 0,
         'pagesChanged': 1 if status == 'changed' else 0,
+        'pagesReordered': 1 if (reordered and paired) else 0,
         'objectsAdded': sum(change['kind'] == 'added' for change in changes),
         'objectsRemoved': sum(change['kind'] == 'removed' for change in changes),
         'objectsMoved': sum(change['kind'] == 'moved' for change in changes),
@@ -86,17 +90,19 @@ def _minimal_result(changes, *, status='changed', old_pages=1, new_pages=1):
             'ignoreFonts': False,
             'ignoreColors': False,
             'ignoreImages': False,
+            'ignoreRegions': [],
         },
         'old': {'pages': old_pages, 'sha256': 'a' * 64},
         'new': {'pages': new_pages, 'sha256': 'b' * 64},
         'summary': summary,
         'pages': [
             {
-                'oldIndex': 1,
-                'newIndex': 1,
+                'oldIndex': None if status == 'added' else 1,
+                'newIndex': None if status == 'removed' else (2 if reordered else 1),
                 'status': status,
-                'oldSize': {'width': 612.0, 'height': 792.0},
-                'newSize': {'width': 612.0, 'height': 792.0},
+                'oldSize': None if status == 'added' else {'width': 612.0, 'height': 792.0},
+                'newSize': None if status == 'removed' else {'width': 612.0, 'height': 792.0},
+                'match': None if not paired else {'score': 0.75, 'reordered': reordered},
                 'changes': changes,
             }
         ],
@@ -197,6 +203,7 @@ def test_render_html_contains_summary_options_and_change_tables(tmp_path):
         'Pages added',
         'Pages removed',
         'Pages changed',
+        'Pages reordered',
         'Objects added',
         'Objects removed',
         'Objects moved',
@@ -277,6 +284,55 @@ def test_render_html_page_geometry_is_readable(tmp_path):
     assert rotated['pages'][0]['status'] == 'unchanged'
 
 
+def test_render_html_page_table_shows_alignment_and_match(tmp_path):
+    result = _diff(
+        tmp_path,
+        [_page(_draw_text('Page One')), _page(_draw_text('Page Two'))],
+        [_page(_draw_text('Page Two')), _page(_draw_text('Page One'))],
+    )
+
+    report = render_html(result)
+
+    assert '<table class="pages">' in report
+    assert 'Page alignment' in report
+    assert '<th>Old page</th>' in report and '<th>New page</th>' in report
+    assert 'Match score' in report
+    assert 'Reordered' in report
+    assert '<span class="badge badge-moved">reordered</span>' in report
+    # The paired page keeps its fingerprint score of 1.0 and is flagged.
+    assert '1.000' in report
+    assert 'Pages reordered' in report
+
+
+def test_render_html_page_table_marks_one_sided_pages():
+    report = render_html(_minimal_result([], status='added'))
+
+    assert '<table class="pages">' in report
+    # One-sided pages have no match: the score column shows a dash and the
+    # reorder column stays empty instead of pretending they were paired.
+    assert '<td class="mono">-</td>' in report
+    assert 'reordered</span>' not in report
+
+
+def test_format_summary_reports_reordered_pages(tmp_path):
+    result = _diff(
+        tmp_path,
+        [_page(_draw_text('Page One')), _page(_draw_text('Page Two'))],
+        [_page(_draw_text('Page Two')), _page(_draw_text('Page One'))],
+    )
+
+    summary = format_summary(result)
+
+    assert 'pages reordered: 1' in summary
+    assert 'pages reordered: 0' in format_summary(
+        _diff(
+            tmp_path / 'same',
+            [_page(_draw_text('Page One'))],
+            [_page(_draw_text('Page One'))],
+        )
+    )
+
+
 def test_render_html_unchanged_page_shows_empty_state(tmp_path):
     result = _diff(
         tmp_path,
@@ -290,6 +346,95 @@ def test_render_html_unchanged_page_shows_empty_state(tmp_path):
     assert 'No object changes.' in report
     assert 'Pages changed' in report
     assert 'Total object changes' in report
+
+
+# --- ignore regions ---------------------------------------------------------
+
+IGNORE_REGION = {
+    'oldPage': 1,
+    'newPage': 2,
+    'bbox': {'x0': 90.0, 'y0': 690.0, 'x1': 200.0, 'y1': 720.0},
+}
+
+
+def _with_regions(result, *regions):
+    result['options']['ignoreRegions'] = list(regions)
+    return result
+
+
+def test_render_html_reports_ignored_regions():
+    result = _with_regions(_minimal_result([_change()], reordered=True), IGNORE_REGION)
+
+    report = render_html(result)
+
+    assert 'Ignored regions' in report
+    assert '<table class="regions">' in report
+    assert '1 region(s) masked' in report
+    # Summary row, page scope and MediaBox-relative box are all rendered.
+    assert '<th scope="row">Ignored regions</th>' in report
+    assert '(90, 690) - (200, 720)' in report
+    assert '<th>Old page</th><th>New page</th><th>Bounding box</th>' in report
+
+
+def test_render_html_without_ignore_regions_says_so():
+    report = render_html(_minimal_result([_change()]))
+
+    assert '0 region(s) masked' in report
+    assert 'No ignore regions.' in report
+    assert '<th scope="row">Ignored regions</th><td>0</td>' in report
+
+
+def test_render_html_ignore_regions_stay_deterministic():
+    result = _with_regions(
+        _minimal_result([_change()], reordered=True),
+        IGNORE_REGION,
+        {'oldPage': None, 'newPage': 3, 'bbox': {'x0': 0, 'y0': 0, 'x1': 1, 'y1': 1}},
+    )
+
+    first = render_html(result)
+    second = render_html(copy.deepcopy(result))
+
+    assert first == second
+    assert '2 region(s) masked' in first
+    assert '<td>3</td>' in first
+
+
+def test_format_summary_reports_ignored_regions():
+    result = _with_regions(
+        _minimal_result([_change()]),
+        IGNORE_REGION,
+        {'oldPage': 3, 'newPage': None, 'bbox': {'x0': 0.0, 'y0': 0.0, 'x1': 10.0, 'y1': 10.0}},
+    )
+
+    summary = format_summary(result)
+
+    assert 'ignored regions: 2' in summary
+    assert '  - old page 1 / new page 2: (90, 690) - (200, 720)' in summary
+    assert '  - old page 3: (0, 0) - (10, 10)' in summary
+    assert 'ignored regions: 0' in format_summary(_minimal_result([_change()]))
+
+
+def test_format_summary_bounds_the_ignore_region_list():
+    result = _minimal_result([_change()])
+    result['options']['ignoreRegions'] = [
+        dict(IGNORE_REGION, oldPage=index, newPage=index) for index in range(1, 24)
+    ]
+
+    summary = format_summary(result)
+
+    assert 'ignored regions: 23' in summary
+    assert summary.count('  - old page ') == 20
+    assert '  ... 3 more region(s)' in summary
+
+
+def test_ignored_region_helpers_tolerate_partial_results():
+    assert ignored_region_count({}) == 0
+    assert ignored_region_count({'options': {'ignoreRegions': 'nope'}}) == 0
+    assert ignored_region_count({'options': {'ignoreRegions': [IGNORE_REGION, 'skip me']}}) == 1
+    assert region_page_label(IGNORE_REGION) == 'old page 1 / new page 2'
+    assert region_page_label({'oldPage': None, 'newPage': 4}) == 'new page 4'
+    assert region_page_label({'oldPage': 4, 'newPage': None}) == 'old page 4'
+    assert region_page_label({}) == 'page ?'
 
 
 # --- determinism ------------------------------------------------------------

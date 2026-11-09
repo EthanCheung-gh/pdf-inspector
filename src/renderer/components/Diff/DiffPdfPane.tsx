@@ -1,18 +1,32 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy, PDFPageProxy, PageViewport } from 'pdfjs-dist';
 import {
   isFileSource,
+  type DiffBBox,
+  type DiffIgnoreRegion,
   type DiffPageSize,
   type DiffSide,
   type DiffSource,
 } from '../../../shared/diff-types';
 import { pathToFileUrl } from '../../../shared/path-utils';
-import { diffBoxRects, type DiffBoxSpec } from '../../services/diff-view';
+import { diffBoxRects, projectDiffBBox, type DiffBoxSpec } from '../../services/diff-view';
 import { createMediaViewport } from '../../services/page-viewport';
 import { ensurePdfWorker } from '../../services/pdf-worker';
 import { isRenderCancelled } from '../../services/pdf-render';
 import styles from './DiffPdfPane.module.css';
+
+/** Dashed outline colour of an ignore region (matches the visual pane). */
+const REGION_OUTLINE_COLOUR = '#7fd1ff';
+
+/** A drag shorter than this (CSS px) is a click, not a region. */
+export const MIN_REGION_DRAG_PX = 2;
+
+/** Drag rectangle in CSS pixels relative to the page's top-left corner. */
+export interface PanePoint {
+  x: number;
+  y: number;
+}
 
 export interface DiffPdfPaneProps {
   /** Which side of the diff this pane shows ('overlay' draws both sides). */
@@ -27,6 +41,68 @@ export interface DiffPdfPaneProps {
   zoom: number;
   emptyMessage: string;
   missingMessage: string;
+  /** True while a drag draws an ignore region on this page. */
+  regionMode?: boolean;
+  /** Ignore regions of the current comparison; matching ones are outlined. */
+  regions?: readonly DiffIgnoreRegion[];
+  /**
+   * Page pair of the diff page this pane shows. A region drawn here targets the
+   * pair: both sides when paired, only the available side for a one-sided page.
+   */
+  pagePair?: { oldPage: number | null; newPage: number | null };
+  /** Called once per completed drag, with a MediaBox-relative PDF box. */
+  onRegionComplete?: (region: DiffIgnoreRegion) => void;
+}
+
+/**
+ * Convert a raw drag (CSS pixels inside the rendered page) into a
+ * MediaBox-relative PDF box.
+ *
+ * The page is painted at `layout.width x layout.height` CSS px while the
+ * contract measures PDF points from the MediaBox origin, so x scales by
+ * width/pageWidth and y is flipped (`y = pageHeight - canvasY * scale`). Returns
+ * `null` for a drag too small to be intentional or unusable geometry.
+ */
+export function dragBBoxToPdf(
+  start: PanePoint,
+  end: PanePoint,
+  pageSize: DiffPageSize,
+  layout: { width: number; height: number },
+): DiffBBox | null {
+  if (
+    !pageSize ||
+    !Number.isFinite(pageSize.width) ||
+    !Number.isFinite(pageSize.height) ||
+    pageSize.width <= 0 ||
+    pageSize.height <= 0 ||
+    !Number.isFinite(layout.width) ||
+    !Number.isFinite(layout.height) ||
+    layout.width <= 0 ||
+    layout.height <= 0
+  ) {
+    return null;
+  }
+
+  const widthPx = Math.abs(end.x - start.x);
+  const heightPx = Math.abs(end.y - start.y);
+  if (widthPx < MIN_REGION_DRAG_PX || heightPx < MIN_REGION_DRAG_PX) return null;
+
+  const scaleX = pageSize.width / layout.width;
+  const scaleY = pageSize.height / layout.height;
+  const round = (value: number): number => Math.round(value * 100) / 100;
+
+  const left = Math.min(start.x, end.x);
+  const right = Math.max(start.x, end.x);
+  // Canvas y grows downwards; drag start/end are already clamped to the page.
+  const top = Math.min(start.y, end.y);
+  const bottom = Math.max(start.y, end.y);
+
+  return {
+    x0: round(left * scaleX),
+    x1: round(right * scaleX),
+    y0: round(pageSize.height - bottom * scaleY),
+    y1: round(pageSize.height - top * scaleY),
+  };
 }
 
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -91,6 +167,10 @@ export const DiffPdfPane: React.FC<DiffPdfPaneProps> = ({
   zoom,
   emptyMessage,
   missingMessage,
+  regionMode = false,
+  regions,
+  pagePair,
+  onRegionComplete,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
@@ -101,6 +181,9 @@ export const DiffPdfPane: React.FC<DiffPdfPaneProps> = ({
   const [viewport, setViewport] = useState<PageViewport | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [rotation, setRotation] = useState(0);
+  const [draft, setDraft] = useState<{ start: PanePoint; end: PanePoint } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const dragStartRef = useRef<PanePoint | null>(null);
 
   // Load this pane's PDF document only.
   useEffect(() => {
@@ -210,6 +293,32 @@ export const DiffPdfPane: React.FC<DiffPdfPaneProps> = ({
   const layoutWidth = viewport?.width ?? (pageSize ? pageSize.width * zoom : 0);
   const layoutHeight = viewport?.height ?? (pageSize ? pageSize.height * zoom : 0);
   const isRotated = rotation % 360 !== 0;
+  const hasPage = pageNumber !== null;
+
+  // Only an unrotated, fully measured page can be dragged on: region boxes use
+  // the same axis-aligned MediaBox mapping as the diff boxes.
+  const canDraw =
+    Boolean(regionMode) &&
+    Boolean(onRegionComplete) &&
+    Boolean(pageSize) &&
+    hasPage &&
+    Boolean(viewport) &&
+    !isRotated &&
+    layoutWidth > 0 &&
+    layoutHeight > 0;
+
+  // Regions of the current comparison that belong to this pane's page. In
+  // overlay mode the page is the pair's owning document, so either side matches.
+  const paneRegions = useMemo(() => {
+    if (!regions || regions.length === 0 || pageNumber === null) return [];
+    return regions.filter((region) =>
+      side === 'old'
+        ? region.oldPage === pageNumber
+        : side === 'new'
+          ? region.newPage === pageNumber
+          : region.oldPage === pageNumber || region.newPage === pageNumber,
+    );
+  }, [pageNumber, regions, side]);
 
   // A new page starts at its top-left; the previous page's scroll offset would
   // otherwise open the next page clipped.
@@ -220,8 +329,92 @@ export const DiffPdfPane: React.FC<DiffPdfPaneProps> = ({
     scroll.scrollLeft = 0;
   }, [pageNumber, source]);
 
+  // A drag belongs to the page it started on: switching page or source (or
+  // leaving region mode) must not commit a rectangle onto another page.
+  useEffect(() => {
+    dragStartRef.current = null;
+    setDraft(null);
+    setDragging(false);
+  }, [pageNumber, regionMode, source]);
+
+  // Escape abandons the drag in progress; the regions already drawn stay.
+  useEffect(() => {
+    if (!dragging) return;
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return;
+      dragStartRef.current = null;
+      setDraft(null);
+      setDragging(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [dragging]);
+
+  /** Pointer position in CSS px inside the rendered page, clamped to it. */
+  const pointFromEvent = (event: React.MouseEvent<HTMLCanvasElement>): PanePoint | null => {
+    const canvas = overlayRef.current;
+    if (!canvas || layoutWidth <= 0 || layoutHeight <= 0) return null;
+    const bounds = canvas.getBoundingClientRect();
+    // jsdom (and a hidden pane) report a 0x0 rect: fall back to the layout.
+    const width = bounds.width > 0 ? bounds.width : layoutWidth;
+    const height = bounds.height > 0 ? bounds.height : layoutHeight;
+    return {
+      x: Math.min(width, Math.max(0, event.clientX - bounds.left)),
+      y: Math.min(height, Math.max(0, event.clientY - bounds.top)),
+    };
+  };
+
+  const handleMouseDown = (event: React.MouseEvent<HTMLCanvasElement>): void => {
+    if (!canDraw) return;
+    const point = pointFromEvent(event);
+    if (!point) return;
+    event.preventDefault();
+    dragStartRef.current = point;
+    setDraft({ start: point, end: point });
+    setDragging(true);
+  };
+
+  const handleMouseMove = (event: React.MouseEvent<HTMLCanvasElement>): void => {
+    const start = dragStartRef.current;
+    if (!start) return;
+    const point = pointFromEvent(event);
+    if (point) setDraft({ start, end: point });
+  };
+
+  const handleMouseUp = (event: React.MouseEvent<HTMLCanvasElement>): void => {
+    const start = dragStartRef.current;
+    dragStartRef.current = null;
+    setDragging(false);
+    setDraft(null);
+    if (!start || !canDraw || !pageSize) return;
+
+    const end = pointFromEvent(event);
+    if (!end) return;
+    const bbox = dragBBoxToPdf(start, end, pageSize, {
+      width: layoutWidth,
+      height: layoutHeight,
+    });
+    if (!bbox) return;
+
+    // A paired page masks both sides; a one-sided page only has one side, and
+    // the region must not invent a page number for the missing one.
+    const pair = pagePair ?? {
+      oldPage: side === 'new' ? null : pageNumber,
+      newPage: side === 'new' ? pageNumber : null,
+    };
+    onRegionComplete?.({ oldPage: pair.oldPage, newPage: pair.newPage, bbox });
+  };
+
+  const handleMouseLeave = (): void => {
+    if (!dragStartRef.current) return;
+    dragStartRef.current = null;
+    setDraft(null);
+    setDragging(false);
+  };
+
   // Diff boxes assume the unrotated MediaBox mapping; drawing them on a rotated
   // page would misplace every box, so they are skipped and explained instead.
+  // The same projection draws the ignore-region outlines and the live drag.
   //
   // `status` is a dependency because the overlay canvas only exists once the
   // document is ready: the effect must run again when that canvas mounts even
@@ -258,9 +451,52 @@ export const DiffPdfPane: React.FC<DiffPdfPaneProps> = ({
       context.strokeRect(rect.x, rect.y, rect.width, rect.height);
     }
     context.globalAlpha = 1;
-  }, [boxes, isRotated, layoutHeight, layoutWidth, status, viewport]);
 
-  const hasPage = pageNumber !== null;
+    const dash = (on: boolean): void => {
+      if (typeof context.setLineDash === 'function') {
+        context.setLineDash(on ? [6, 4] : []);
+      }
+    };
+
+    if (pageSize) {
+      context.strokeStyle = REGION_OUTLINE_COLOUR;
+      context.lineWidth = 1.5;
+      dash(true);
+      for (const region of paneRegions) {
+        const rect = projectDiffBBox(region.bbox, pageSize, layoutWidth, layoutHeight);
+        if (rect) context.strokeRect(rect.x, rect.y, rect.width, rect.height);
+      }
+      dash(false);
+    }
+
+    if (draft) {
+      const left = Math.min(draft.start.x, draft.end.x);
+      const top = Math.min(draft.start.y, draft.end.y);
+      const draftWidth = Math.abs(draft.end.x - draft.start.x);
+      const draftHeight = Math.abs(draft.end.y - draft.start.y);
+      context.globalAlpha = 0.16;
+      context.fillStyle = REGION_OUTLINE_COLOUR;
+      context.fillRect(left, top, draftWidth, draftHeight);
+      context.globalAlpha = 1;
+      context.strokeStyle = REGION_OUTLINE_COLOUR;
+      context.lineWidth = 1.5;
+      dash(true);
+      context.strokeRect(left, top, draftWidth, draftHeight);
+      dash(false);
+    }
+    context.globalAlpha = 1;
+  }, [
+    boxes,
+    draft,
+    isRotated,
+    layoutHeight,
+    layoutWidth,
+    pageSize,
+    paneRegions,
+    status,
+    viewport,
+  ]);
+
   const placeholderWidth = pageSize ? pageSize.width * zoom : 0;
   const placeholderHeight = pageSize ? pageSize.height * zoom : 0;
 
@@ -308,10 +544,22 @@ export const DiffPdfPane: React.FC<DiffPdfPaneProps> = ({
             }}
           >
             <canvas ref={canvasRef} className={styles.canvas} />
-            <canvas ref={overlayRef} className={styles.overlay} aria-hidden="true" />
+            <canvas
+              ref={overlayRef}
+              className={`${styles.overlay} ${canDraw ? styles.overlayDrawing : ''}`}
+              data-testid={`diff-pane-overlay-${side}`}
+              data-drawable={canDraw ? 'true' : 'false'}
+              aria-hidden="true"
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseLeave}
+            />
             {isRotated && (
               <div className={styles.notice} role="status">
-                Rotated page: diff boxes unavailable
+                {regionMode
+                  ? 'Rotated page: regions unavailable'
+                  : 'Rotated page: diff boxes unavailable'}
               </div>
             )}
             {renderError && (

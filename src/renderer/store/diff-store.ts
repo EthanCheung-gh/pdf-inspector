@@ -10,6 +10,7 @@
 import { create } from 'zustand';
 import type {
   DiffChange,
+  DiffIgnoreRegion,
   DiffOptions,
   DiffPage,
   DiffResult,
@@ -17,6 +18,7 @@ import type {
   DiffSource,
   PickDiffPdfResult,
 } from '../../shared/diff-types';
+import { normalizeIgnoreRegion } from '../../shared/diff-types';
 import {
   clampDiffZoom,
   firstInterestingPageIndex,
@@ -24,6 +26,11 @@ import {
   type DiffFilter,
   DEFAULT_DIFF_FILTER,
 } from '../services/diff-view';
+import {
+  clampVisualOpacity,
+  DEFAULT_VISUAL_OPACITY,
+  type VisualDiffStyle,
+} from '../services/visual-diff';
 
 /** Engine defaults, mirrored so the dialog can show concrete values. */
 export const DEFAULT_DIFF_OPTIONS: DiffOptions = {
@@ -33,9 +40,17 @@ export const DEFAULT_DIFF_OPTIONS: DiffOptions = {
   ignoreFonts: false,
   ignoreColors: false,
   ignoreImages: false,
+  ignoreRegions: [],
 };
 
-export type DiffViewMode = 'side-by-side' | 'overlay';
+/** A copy of the defaults with its own arrays (see `reset`). */
+const freshOptions = (): DiffOptions => ({
+  ...DEFAULT_DIFF_OPTIONS,
+  ignoreTypes: [],
+  ignoreRegions: [],
+});
+
+export type DiffViewMode = 'side-by-side' | 'overlay' | 'visual';
 
 export interface DiffState {
   /** True while the Diff workspace replaces the Inspect panes. */
@@ -60,6 +75,15 @@ export interface DiffState {
   viewMode: DiffViewMode;
   zoom: number;
   filter: DiffFilter;
+  /** Alpha of the old page in `visual` mode, 0..1. */
+  visualOpacity: number;
+  /** How `visual` mode composes the two pages. */
+  visualStyle: VisualDiffStyle;
+  /**
+   * True while the panes accept a drag that draws an ignore region. Purely a
+   * UI mode: it is never persisted and never travels over the RPC.
+   */
+  regionMode: boolean;
 
   openSetup: () => void;
   closeSetup: () => void;
@@ -84,6 +108,15 @@ export interface DiffState {
   setZoom: (zoom: number) => void;
   setFilter: (patch: Partial<DiffFilter>) => void;
   resetFilter: () => void;
+  setVisualOpacity: (opacity: number) => void;
+  setVisualStyle: (style: VisualDiffStyle) => void;
+
+  /** Toggle the draw-a-region mode; leaving it keeps the drawn regions. */
+  setRegionMode: (enabled: boolean) => void;
+  /** Add one drawn region; an unusable rectangle is ignored, not stored. */
+  addIgnoreRegion: (region: DiffIgnoreRegion) => void;
+  removeIgnoreRegion: (index: number) => void;
+  clearIgnoreRegions: () => void;
 
   enterWorkspace: () => void;
   exitWorkspace: () => void;
@@ -104,7 +137,7 @@ const initialDiffState = {
   newSource: null,
   oldName: null,
   newName: null,
-  options: { ...DEFAULT_DIFF_OPTIONS, ignoreTypes: [] },
+  options: freshOptions(),
   result: null,
   loading: false,
   error: null,
@@ -113,6 +146,9 @@ const initialDiffState = {
   viewMode: 'side-by-side' as DiffViewMode,
   zoom: 1,
   filter: { ...DEFAULT_DIFF_FILTER },
+  visualOpacity: DEFAULT_VISUAL_OPACITY,
+  visualStyle: 'blend' as VisualDiffStyle,
+  regionMode: false,
 };
 
 const clampTolerance = (value: number): number => {
@@ -131,12 +167,16 @@ export const useDiffStore = create<DiffState>((set, get) => ({
     get().setSource(side, picked.source, picked.name);
   },
 
+  // A new file means a new comparison: regions drawn for the previous document
+  // pair would silently mask unrelated changes in the new one, so they go away
+  // with the source that owned them.
   setSource: (side, source, name) =>
-    set(
-      side === 'old'
+    set((state) => ({
+      ...(side === 'old'
         ? { oldSource: source, oldName: source ? name : null }
-        : { newSource: source, newName: source ? name : null },
-    ),
+        : { newSource: source, newName: source ? name : null }),
+      options: { ...state.options, ignoreRegions: [] },
+    })),
 
   setOptions: (patch) => set((state) => ({ options: { ...state.options, ...patch } })),
 
@@ -195,13 +235,43 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   setZoom: (zoom) => set({ zoom: clampDiffZoom(zoom) }),
   setFilter: (patch) => set((state) => ({ filter: { ...state.filter, ...patch } })),
   resetFilter: () => set({ filter: { ...DEFAULT_DIFF_FILTER } }),
+  setVisualOpacity: (opacity) => set({ visualOpacity: clampVisualOpacity(opacity) }),
+  setVisualStyle: (style) => set({ visualStyle: style }),
+
+  setRegionMode: (enabled) => set({ regionMode: enabled }),
+
+  // Drawn regions live in `options`, because that is exactly what the engine
+  // consumes: adding one changes the next diff request, nothing else.
+  addIgnoreRegion: (region) => {
+    const normalized = normalizeIgnoreRegion(region);
+    if (!normalized) return;
+    set((state) => ({
+      options: {
+        ...state.options,
+        ignoreRegions: [...state.options.ignoreRegions, normalized],
+      },
+    }));
+  },
+
+  removeIgnoreRegion: (index) =>
+    set((state) => ({
+      options: {
+        ...state.options,
+        ignoreRegions: state.options.ignoreRegions.filter(
+          (_, regionIndex) => regionIndex !== index,
+        ),
+      },
+    })),
+
+  clearIgnoreRegions: () =>
+    set((state) => ({ options: { ...state.options, ignoreRegions: [] } })),
 
   // Entering keeps the result so the same comparison can be reopened without
   // re-running it; leaving only flips the mode, never the Inspect document.
   enterWorkspace: () => set({ active: true, setupOpen: false }),
   exitWorkspace: () => set({ active: false }),
 
-  reset: () => set({ ...initialDiffState, options: { ...DEFAULT_DIFF_OPTIONS, ignoreTypes: [] } }),
+  reset: () => set({ ...initialDiffState, options: freshOptions() }),
 }));
 
 /** The page currently shown by both panes, or null before a diff exists. */
