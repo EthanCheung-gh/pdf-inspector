@@ -7,6 +7,10 @@ Creates these files in ``web-samples/``:
   small raster image. Small enough to open instantly.
 * ``large.pdf`` - 120 text pages using several fonts and sizes, so font
   analysis exercises batching/progress in the renderer.
+* ``huge.pdf`` - 1000 minimal text pages with one unique search marker per
+  page, for the large-document page list, Go-to-page jump and batched search
+  index progress. Deliberately simple: it is a scale fixture, not a font or
+  layout fixture.
 * ``annotations.pdf`` - two pages with links, a text annotation, a highlight,
   a text field, a required checkbox and a combo choice field, for the
   read-only ``Annots`` tab and Inspector detail view.
@@ -74,6 +78,10 @@ ANNOTATION_NOTE = (
     "in the Annots tab to read the full contents in the Inspector."
 )
 ANNOTATION_HIGHLIGHT = "Highlighted: annotations are read-only in PDF Inspector."
+
+# Page count of the large-document scale fixture; exported so docs and tests can
+# refer to one number without parsing the PDF.
+HUGE_PAGE_COUNT = 1000
 
 
 def _sample_image() -> ImageReader | None:
@@ -685,6 +693,49 @@ def build_large(path: str) -> None:
     doc.save()
 
 
+def build_huge(path: str) -> None:
+    """1000 minimal pages for page-list and search-index scale tests.
+
+    Each page carries one unique ``huge marker NNNN`` string so a search returns
+    exactly one match and can prove which page the batched index reached. The
+    layout is deliberately tiny (a heading, one marker line and a footer): this
+    fixture tests pagination/search scale, not font analysis or object density,
+    and staying small keeps the deterministic file around a megabyte.
+    """
+    doc = canvas.Canvas(path, pagesize=LETTER, invariant=1)
+    _metadata(doc, "PDF Inspector - Huge Sample")
+
+    for page in range(1, HUGE_PAGE_COUNT + 1):
+        doc.setFillColor(INK)
+        doc.setFont("Helvetica-Bold", 18)
+        doc.drawString(MARGIN, PAGE_HEIGHT - 84, f"Huge sample - page {page}")
+
+        doc.setStrokeColor(ACCENT)
+        doc.setLineWidth(1.2)
+        doc.line(MARGIN, PAGE_HEIGHT - 98, PAGE_WIDTH - MARGIN, PAGE_HEIGHT - 98)
+
+        doc.setFillColor(INK)
+        doc.setFont("Helvetica", 11)
+        doc.drawString(
+            MARGIN,
+            PAGE_HEIGHT - 130,
+            f"Search marker: huge marker {page:04d}",
+        )
+
+        doc.setFillColor(MUTED)
+        doc.setFont("Times-Roman", 10.5)
+        doc.drawString(
+            MARGIN,
+            PAGE_HEIGHT - 152,
+            "Use Go to page, the page list or Ctrl+F to exercise a 1000-page document.",
+        )
+
+        _footer(doc, f"Page {page} of {HUGE_PAGE_COUNT}")
+        doc.showPage()
+
+    doc.save()
+
+
 def _visual_page(doc: canvas.Canvas, *, revised: bool) -> None:
     """Page 1 of the visual fixture; revision B edits text, colour and position."""
     content_width = PAGE_WIDTH - 2 * MARGIN
@@ -986,6 +1037,7 @@ def main() -> int:
     os.makedirs(OUT_DIR, exist_ok=True)
     basic = os.path.join(OUT_DIR, "basic.pdf")
     large = os.path.join(OUT_DIR, "large.pdf")
+    huge = os.path.join(OUT_DIR, "huge.pdf")
     annotations = os.path.join(OUT_DIR, "annotations.pdf")
     raw = os.path.join(OUT_DIR, "raw.pdf")
     diff_visual_old = os.path.join(OUT_DIR, "diff-visual-old.pdf")
@@ -995,6 +1047,7 @@ def main() -> int:
 
     build_basic(basic)
     build_large(large)
+    build_huge(huge)
     build_annotations(annotations)
     build_raw(raw)
     build_diff_visual(diff_visual_old, diff_visual_new)
@@ -1002,6 +1055,7 @@ def main() -> int:
 
     print(basic)
     print(large)
+    print(huge)
     print(annotations)
     print(raw)
     print(diff_visual_old)

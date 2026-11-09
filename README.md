@@ -24,8 +24,11 @@
 | ![注释、链接与表单：Annots 列表、画布框选与 Inspector 只读表单详情](docs/images/annotations.png) | **注释、链接与表单**<br>`Annots` 标签页列出当前页的链接、表单字段、标记与注释；画布同步绘制只读框，选中后在 Inspector 查看字段值、选项与链接目标。 |
 | ![Raw 对象树：Catalog → Pages → Page → Resources 逐层展开，右侧显示图片 XObject 的流元数据](docs/images/raw-object-tree.png) | **原始对象树**<br>工具栏 `Raw` 打开只读工作区；左侧从 trailer 根开始按引用懒加载，展开 `Pages`、页面与 `Resources` 后选中对象，右侧显示字典、数组与流元数据。 |
 | ![内容流：第 1 页解码后的操作符与操作数，包含 BT、Tf、Tj、Do](docs/images/raw-content-stream.png) | **内容流**<br>`Content stream` 标签页按页解码内容流，逐条列出 offset、操作符与操作数；`BT` / `Tf` / `Tj` / `Do` 等操作符只读取、不执行。 |
+| ![1000 页页面列表与 Go to page：工具栏显示 1000 / 1000，左侧列表末尾为 Page 1000](docs/images/large-doc-pages.png) | **大文档页面列表与跳页**<br>打开 1000 页示例，左侧页面树使用 CSS 窗口化；Go to page 把输入夹到 `1..pageCount`，只展开当前页对象。 |
+| ![大文档搜索：SearchBox 显示 Indexing 100/1000…，页面与页面列表仍可用](docs/images/large-doc-search.png) | **分批搜索索引**<br>搜索按 10 页一批建立文本索引，SearchBox 显示 `Indexing done/total…`；关闭搜索或切换文档会取消构建。 |
+| ![桌面文档标签栏：两个通过 URL 打开的文档标签，切换到 basic.pdf 后工具栏显示 1 / 4](docs/images/large-doc-tabs.png) | **桌面文档标签**<br>桌面端可同时保留多个文档标签，切换时恢复页码、缩放、叠加层与面板标签；Web 端仍为单文档。 |
 
-*截图来自 Web 构建；桌面端使用同一套 React UI，界面与功能一致。*
+*截图来自 Web 构建与真实 Electron 桌面构建；页面列表/搜索为 1440×900，桌面标签为 Electron + xvfb 实测（CDP 1440×900 视口）。详见 [docs/large-docs.md](docs/large-docs.md)。*
 
 ## 功能特性
 
@@ -57,6 +60,18 @@
 - 导出当前页或整份文档，格式为 JSON 或 CSV；导出时可勾选要包含的元素类型（char / word / line / curve / rect / table / image）。桌面端使用原生保存对话框，Web 端触发浏览器下载。
 - CSV 按对象类型分段，便于在表格工具中继续分析。
 - JSON 导出新增可选字段：`metadata.fontInfo`（字体嵌入详情）、每页的 `page.boxes` / `page.rotation`、表格的 `table.cellBoxes` / `table.cellSpans`，以及图片的 `content_hash`（可读取时的 SHA-256）；CSV 各段的列定义保持不变。
+
+### 大文档与多文档
+
+- **双通道 sidecar**：交互通道负责 `open` / `extract_page` / `extract_metadata` / `get_image_data`，后台通道负责 `analyze_fonts` / `audit_*` / `raw_*` / `diff_documents`；路由表由 `laneForMethod()` 统一，桌面端与 Web 端共用。翻页不会被正在运行的字体、审计、Raw 或 Diff 请求挡住。
+- **后台通道懒启动**：只有第一次请求字体/审计/Raw/Diff 时才创建第二个 Python 进程；两个通道打开同一份文档，切换文档时后台通道异步重新打开，失败只影响后台功能。因此正常查看始终只有一个进程，最多两个。
+- **搜索分批与进度**：搜索按 10 页一批建立当前文档的文本索引，SearchBox 显示 `Indexing 40/1000…`；清空查询、关闭搜索、切换文档或离开 Inspect 会取消构建，过期构建不会写回结果。索引只保存文本，不保留 PDF.js 页面对象。
+- **页面列表窗口化与跳页**：1000 页的 `Objects` 列表使用 CSS `content-visibility` 窗口化，只绘制视口附近的行；只有当前页展开对象组。顶部 Go to page 输入 `1..pageCount`，越界会夹取，非法输入被忽略，并复用与 Prev/Next 相同的受保护导航。
+- **对象上限**：当前页 Words 最多显示 50 条，其他对象组最多 200 条，超出显示 `Showing first N of M …`；选中对象仍映射回完整对象。
+- **桌面文档标签**：打开多个本地文件或 URL 文档后，工作区顶部出现标签栏；相同路径/URL 再次打开会聚焦已有标签。切换标签会保存旧标签的页码、缩放、叠加层、左右面板标签与查询字符串，重新打开目标文档后恢复；字体、审计、Raw 结果不进入快照，切回后重新运行。关闭活动标签激活邻居，关闭最后一个回到空状态。
+- **URL 标签**：URL 文档下载到临时副本，临时文件归“当前文档”所有；切换到其他文档会删除上一个副本，因此重新激活 URL 标签会重新下载，但保留同一个 `sourceUrl` 和标签身份。
+- **Web 仍是单文档（H4 延期）**：Web 的 `DocumentRegistry` 只有当前文档一个槽位，`/api/open` 与 `/api/open-url` 会替换它，`/api/rpc` 只作用于该文档，Web 适配器也故意不提供 `openPdfPath`，因此浏览器不显示标签栏。H4 需要把注册表改成有界 `id -> document`、增加按 id 激活/关闭接口、为每个文档独立管理临时文件并串行化 sidecar 重新打开；这会改动打开/清理/当前文档契约，在 H1–H3 刚稳定时不强行实施。**当前不声称 Web 支持多标签**，后续设计条件见 [docs/large-docs.md](docs/large-docs.md#web-模式与-h4-评估延期)。
+- **清理与限制**：桌面标签只保存快照，不保留 N 份 PDF.js 文档或分析缓存；后台通道在本阶段不做空闲自动退出；异常退出后临时文件清理是尽力而为。完整路由表、快照语义、H4 评估与验证记录见 [docs/large-docs.md](docs/large-docs.md)。
 
 ### 过滤与叠加层
 
@@ -152,6 +167,7 @@
 
 - **桌面端**：Electron 主进程负责窗口、原生菜单/对话框与 Python 侧车生命周期。
 - **Web 端**：React UI 在浏览器中运行，由无 Electron 依赖的 Node HTTP 后端提供同样的文档与侧车能力。
+- **多文档差异**：桌面端支持文档标签页（视图快照 + 重新打开）；Web 端仍是单文档，多标签所需的 H4 服务端注册表已显式延期。
 
 ### 键盘快捷键
 
@@ -216,7 +232,7 @@ npm run web:start  # 直接启动已构建的 dist-web-server/server.mjs
 python scripts/generate-web-samples.py
 ```
 
-随后在 Web 界面打开 `/samples/basic.pdf`（小型示例，含表格与图片）、`/samples/large.pdf`（多页文档，便于观察字体分批分析）、`/samples/annotations.pdf`（两页示例，含外部/内部链接、文本注释、高亮与表单字段，用于 `Annots` 标签页）或 `/samples/raw.pdf`（两页示例，含命名字体资源、图片 XObject 与 `BT`/`Tf`/`Tj`/`Do` 操作符，用于 `Raw` 工作区）。
+随后在 Web 界面打开 `/samples/basic.pdf`（小型示例，含表格与图片）、`/samples/large.pdf`（多页文档，便于观察字体分批分析）、`/samples/huge.pdf`（1000 页纯文本示例，用于页面列表、Go to page 与搜索索引进度）、`/samples/annotations.pdf`（两页示例，含外部/内部链接、文本注释、高亮与表单字段，用于 `Annots` 标签页）或 `/samples/raw.pdf`（两页示例，含命名字体资源、图片 XObject 与 `BT`/`Tf`/`Tj`/`Do` 操作符，用于 `Raw` 工作区）。
 
 Diff 的示例文件成对生成，可在对比对话框中分别选择 Old/New：
 
@@ -241,6 +257,7 @@ Diff 的示例文件成对生成，可在对比对话框中分别选择 Old/New�
 10. **文档体检**：点击工具栏 `Audit` 对当前文档执行整档审计，查看严重级别汇总，按严重级别/类别筛选，选中发现查看证据与建议；需要时点击 `Open page` 跳转到对应页面，或用 `Export JSON` 保存完整报告。
 11. **检查注释与表单**：切换到左侧 `Annots` 标签页查看当前页的注释、链接与表单字段，按 Kind/Subtype 过滤；点击列表行或画布上的注释框，在 Inspector 的 `Inspect` 中查看只读详情。外部链接需点击 `Open link` 才会打开，内部链接使用 `Go to page N` 跳转；表单字段不能编辑或提交。
 12. **查看原始对象与内容流**：点击工具栏 `Raw` 打开只读工作区，在左侧对象树展开 `Catalog` → `Pages` → 页面 → `Resources`，点击引用在右侧查看对象值；切换到 `Content stream` 按页查看解码后的操作符与操作数。`Back to Inspect` 返回原文档，页码与缩放保持不变。
+13. **处理大文档与多文档**：打开 `/samples/huge.pdf` 后，用左侧 Go to page 输入页码（越界会夹取），页面列表只展开当前页；`Ctrl/Cmd+F` 搜索时 SearchBox 显示 `Indexing N/1000…`，可关闭搜索取消。桌面端可再打开其他文件或用 Open URL 打开远程文档，通过顶部标签切换；Web 端仍是单文档，不显示标签栏。
 
 ## CLI 与 CI
 
@@ -400,6 +417,8 @@ Web 模式
 
 Python 侧车通过 stdin/stdout 上的行分隔 JSON-RPC 通信，提供 `open`、`extract_page`、`extract_metadata`、`analyze_fonts`、`get_image_data`、`raw_document`、`raw_object`、`raw_page_content`、`audit_document`、`audit_pages`、`shutdown` 等方法，并用 LRU 缓存复用已解析页面。
 
+桌面端与 Web 后端都用 `SidecarPool` 把请求路由到交互/后台两个通道：交互通道负责打开与当前页提取，后台通道懒启动并负责字体、审计、Raw 与 Diff。两个通道打开同一份文档，切换文档时重新打开，不保留 N 份解析结果。详见 [docs/large-docs.md](docs/large-docs.md)。
+
 ## 技术栈
 
 | 层 | 技术 |
@@ -443,6 +462,7 @@ pdf-inspector/
 │   ├── audit.md           # 文档体检：检查项、AuditReport schema、CLI 与 action
 │   ├── annotations.md     # 注释、链接与表单：数据来源、只读策略与限制
 │   ├── raw.md             # 原始对象树与内容流：序列化语义、上限与安全边界
+│   ├── large-docs.md      # 大文档：双通道、搜索分批、页面列表、桌面标签与 H4 延期
 │   ├── diff.md            # Diff 2.0：页面对齐、视觉模式、忽略区域与阈值
 │   ├── ci.md              # Diff CLI 与 GitHub Action
 │   ├── packaging.md       # 打包说明
@@ -523,6 +543,11 @@ npm run dist:linux       # Linux
 - 原始对象视图只返回有界数据：嵌套、条目、字符串、操作符与内容流数量都有上限，超限标记 `truncated` 并在界面提示；二进制流只显示长度、过滤器与 Subtype 等元数据，不提供字节预览。
 - 原始对象视图不是完整 PDF 解析器：不遍历整个对象图，不解析 XFA 或结构树，也没有对象搜索/查询语言；大文档需要按引用逐层展开。
 - Raw 不使用左侧第六个标签页：它通过工具栏打开独立工作区，并与 Diff、Audit 互斥；与 Inspect 的切换不会改变文档状态，但 Raw 自身不保存展开状态，重新打开从 trailer 根开始。
-- Web 模式同一时间只维护一份“当前文档”，且没有多用户隔离或认证。
+- Web 模式同一时间只维护一份“当前文档”，且没有多用户隔离或认证。Web 多文档（H4）已显式延期：服务端注册表、按 id 激活/关闭接口与逐文档临时文件清理尚未实现，浏览器不显示文档标签栏；详见 [docs/large-docs.md](docs/large-docs.md#web-模式与-h4-评估延期)。
+- 桌面文档标签只保存视图快照：页码、缩放、叠加层、左右面板标签与查询字符串会恢复；字体、审计、Raw 结果与搜索索引不跨标签保留，切回后需重新运行。URL 标签重新激活会重新下载，标签状态不写入 localStorage。
+- 后台 sidecar 通道懒启动但本阶段不做空闲自动退出；使用过字体/审计/Raw/Diff 后会保留第二个 Python 进程直到退出或重启。
+- 搜索索引只保存每页文本，没有按字节的上限；1000 页可接受，极大文档仍需依靠取消、关闭搜索或切换文档释放。
+- 页面列表使用 CSS `content-visibility` 窗口化，DOM 中仍保留每页一个行节点；若未来出现数千页的滚动卡顿，再评估真正的虚拟列表。
+- 搜索框展开时，工具栏优先保证输入框、计数、上/下与关闭按钮完整可见；窗口宽度 ≤1280px 时隐藏文件名（不是控件，标题仍可在打开对话框与状态栏查看），>1280px 时文件名继续显示。1280/1440/1600 打开搜索均无横向溢出。
 - 临时文件清理为尽力而为，异常退出后可能需要手动清理系统临时目录。
 - Web 模式需先构建 `dist-web` 与 `dist-web-server`；未构建时服务会提示构建后刷新。
