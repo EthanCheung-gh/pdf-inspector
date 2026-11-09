@@ -1,11 +1,25 @@
 .searchBox {
   display: flex;
+  /*
+   * Shrinkable: the toolbar is a single 1280px row with far more controls than
+   * fit once search opens, so the search group has to give space back instead
+   * of pushing the count/prev/next/close buttons past the right edge. The
+   * input absorbs the shrink (see .input) down to a still-usable width while
+   * every button stays visible.
+   */
+  flex: 0 1 auto;
   align-items: center;
   gap: 4px;
+  min-width: 0;
 }
 
 .input {
+  flex: 1 1 160px;
   width: 160px;
+  max-width: 160px;
+  /* Below this the field stops being typeable, so the toolbar hides the
+   * filename instead of eating into it further. */
+  min-width: 48px;
   padding: 4px 8px;
   color: #d7dce2;
   background: #2a3139;
@@ -19,16 +33,32 @@
   border-color: #5b9cff;
 }
 
+/*
+ * One slot for both the match counter ("2/7") and the index progress
+ * ("Indexing 40/120…"). The reserved width is what keeps the toolbar from
+ * jumping when indexing finishes; longer progress text is ellipsized rather
+ * than allowed to overflow the 200px-wide panels next to it. 11.5px keeps the
+ * count readable while costing the crowded toolbar a few pixels less than the
+ * old 12px/88px slot.
+ */
 .count {
-  min-width: 36px;
+  flex: 0 0 auto;
+  min-width: 80px;
+  max-width: 112px;
+  overflow: hidden;
   text-align: center;
-  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
   color: #aeb7c2;
   font-variant-numeric: tabular-nums;
 }
 
 .button {
-  padding: 5px 9px;
+  flex: 0 0 auto;
+  /* Compact but still a comfortable click target; three of these plus the
+   * input and the count have to share one toolbar row. */
+  padding: 4px 8px;
   color: #d7dce2;
   background: #2a3139;
   border: 1px solid #414954;
@@ -40,6 +70,11 @@
 
 .button:hover:not(:disabled) {
   background: #353e49;
+}
+
+.button:focus-visible {
+  outline: 2px solid #5b9cff;
+  outline-offset: 1px;
 }
 
 .button:disabled {

@@ -12,6 +12,30 @@ export function buildPageText(textItems: string[]): string {
   return textItems.join('\n');
 }
 
+/**
+ * Pages per index batch. Small enough that the UI can repaint and honour a
+ * cancel request between batches on a 1000-page document.
+ */
+export const SEARCH_INDEX_BATCH_SIZE = 10;
+
+/**
+ * Split `total` pages into inclusive 1-based batches, e.g. 25 pages with a
+ * batch size of 10 yields [[1,10],[11,20],[21,25]]. The last batch is short
+ * rather than padded, so progress never reports pages that do not exist.
+ */
+export function pageBatches(
+  total: number,
+  batchSize: number = SEARCH_INDEX_BATCH_SIZE,
+): Array<[number, number]> {
+  if (!Number.isFinite(total) || total < 1) return [];
+  const size = Math.max(1, Math.floor(batchSize));
+  const batches: Array<[number, number]> = [];
+  for (let start = 1; start <= total; start += size) {
+    batches.push([start, Math.min(start + size - 1, total)]);
+  }
+  return batches;
+}
+
 /** Case-insensitive, non-overlapping search across all pages. */
 export function findMatches(pageTexts: string[], query: string): SearchMatch[] {
   const q = query.trim().toLowerCase();

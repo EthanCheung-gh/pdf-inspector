@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageData, PdfMetadata, PdfRect, PdfWord } from '../../types/pdf-objects';
@@ -71,6 +73,22 @@ const wordOnPage = (page: number, text: string): PdfWord => ({
 
 const pageButton = (page: number): HTMLElement =>
   screen.getByRole('button', { name: new RegExp(`Page ${page}$`) });
+
+const pageJumpInput = (): HTMLInputElement =>
+  screen.getByLabelText('Go to page') as HTMLInputElement;
+
+const submitPageJump = (value: string): void => {
+  fireEvent.change(pageJumpInput(), { target: { value } });
+  fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+};
+
+const rectAt = (index: number): PdfRect => ({
+  ...sameRect,
+  x0: index,
+  y0: index + 1,
+  x1: index + 5,
+  y1: index + 6,
+});
 
 describe('StructureTree', () => {
   afterEach(cleanup);
@@ -218,5 +236,124 @@ describe('StructureTree', () => {
     expect(pageButton(2).getAttribute('aria-expanded')).toBe('true');
     expect(pageButton(2).textContent).toContain('▾');
     expect(screen.queryByRole('button', { name: 'page-one-word' })).toBeNull();
+  });
+
+  it('jumps to a typed page through the guarded navigation hook', async () => {
+    usePdfStore.setState({ pageCount: 10, currentPage: 1 });
+
+    render(React.createElement(StructureTree));
+
+    expect(screen.getByRole('form', { name: 'Page jump' })).toBeTruthy();
+    submitPageJump('5');
+
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith(5));
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(pageJumpInput().value).toBe('');
+    expect(pageButton(5).getAttribute('aria-current')).toBe('page');
+  });
+
+  it('clamps out-of-range page jumps to 1..pageCount', async () => {
+    usePdfStore.setState({ pageCount: 10, currentPage: 4 });
+
+    render(React.createElement(StructureTree));
+
+    submitPageJump('9999');
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith(10));
+
+    navigate.mockClear();
+    submitPageJump('0');
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith(1));
+  });
+
+  it('ignores empty and non-numeric page jumps', () => {
+    usePdfStore.setState({ pageCount: 10, currentPage: 1 });
+
+    render(React.createElement(StructureTree));
+
+    submitPageJump('');
+    submitPageJump('   ');
+    submitPageJump('abc');
+    submitPageJump('-2');
+    submitPageJump('3a');
+
+    expect(navigate).not.toHaveBeenCalled();
+    // The unusable text stays so it can be corrected.
+    expect(pageJumpInput().value).toBe('3a');
+  });
+
+  it('does not re-extract the page when the jump targets the current page', () => {
+    usePdfStore.setState({ pageCount: 10, currentPage: 3 });
+
+    render(React.createElement(StructureTree));
+
+    submitPageJump('3');
+
+    expect(navigate).not.toHaveBeenCalled();
+    expect(pageJumpInput().value).toBe('');
+  });
+
+  it('caps non-word object groups and explains the truncation', () => {
+    const rects = Array.from({ length: 250 }, (_, index) => rectAt(index));
+    usePdfStore.setState({ pageData: pageData({ rects }), allObjects: rects });
+
+    render(React.createElement(StructureTree));
+
+    expect(screen.getByText('Showing first 200 of 250 rects')).toBeTruthy();
+    expect(screen.getByText('250')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: /^rect \(/ })).toHaveLength(200);
+  });
+
+  it('keeps the selected object mapped inside a capped group', () => {
+    const rects = Array.from({ length: 220 }, (_, index) => rectAt(index));
+    usePdfStore.setState({ pageData: pageData({ rects }), allObjects: rects });
+
+    render(React.createElement(StructureTree));
+
+    const buttons = screen.getAllByRole('button', { name: /^rect \(/ });
+    fireEvent.click(buttons[3]);
+
+    expect(usePdfStore.getState().selectedObject).toEqual(rects[3]);
+  });
+
+  it('renders 1000 page rows but leaves only the active page expanded', () => {
+    const words = [wordOnPage(500, 'page-five-hundred-word')];
+    usePdfStore.setState({
+      pageCount: 1000,
+      currentPage: 500,
+      pageData: pageData({ words }),
+      allObjects: words,
+    });
+
+    const { container } = render(React.createElement(StructureTree));
+
+    // Query the DOM directly: computing accessible names for 1000 buttons via
+    // getByRole is far more expensive than the render this test is about.
+    const pageRows = Array.from(
+      container.querySelectorAll<HTMLElement>('nav button'),
+    ).filter((button) => /Page \d+$/.test(button.textContent ?? ''));
+    expect(pageRows).toHaveLength(1000);
+
+    const row = (page: number): HTMLElement => pageRows[page - 1];
+    expect(row(1).textContent).toContain('Page 1');
+    expect(row(500).getAttribute('aria-expanded')).toBe('true');
+    expect(row(499).getAttribute('aria-expanded')).toBe('false');
+    expect(row(501).getAttribute('aria-expanded')).toBe('false');
+    expect(container.textContent).toContain('page-five-hundred-word');
+
+    // Every page row carries the same row class, and that class is the one CSS
+    // windowing is defined on: `content-visibility: auto` keeps offscreen rows
+    // from being laid out/painted, `contain-intrinsic-size` keeps the scrollbar
+    // honest for the rows that are skipped.
+    const rowClass = row(500).parentElement?.className ?? '';
+    expect(rowClass).not.toBe('');
+    expect(row(1).parentElement?.className).toBe(rowClass);
+
+    const css = readFileSync(
+      join(process.cwd(), 'src/renderer/components/StructureTree/StructureTree.module.css'),
+      'utf8',
+    );
+    const pageRule = css.match(/\.page\s*\{[^}]*\}/)?.[0] ?? '';
+    expect(pageRule).toContain('content-visibility: auto');
+    expect(pageRule).toContain('contain-intrinsic-size');
   });
 });

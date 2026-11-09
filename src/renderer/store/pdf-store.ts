@@ -69,6 +69,12 @@ export interface PdfState {
   searchMatches: SearchMatch[];
   currentMatchIndex: number;
   searchOpen: boolean;
+  /**
+   * Progress of the batched PDF.js text index build, or null when no build is
+   * running. Large documents index ten pages per batch, so the toolbar can show
+   * `Indexing 40/120…` instead of a silent wait.
+   */
+  searchIndexProgress: { done: number; total: number } | null;
 
   // Export progress
   exportProgress: { done: number; total: number } | null;
@@ -102,6 +108,7 @@ export interface PdfState {
   setSearchMatches: (matches: SearchMatch[]) => void;
   setCurrentMatchIndex: (index: number) => void;
   setSearchOpen: (open: boolean) => void;
+  setSearchIndexProgress: (progress: { done: number; total: number } | null) => void;
   clearSearch: () => void;
   setExportProgress: (progress: { done: number; total: number } | null) => void;
   fontStats: FontStat[] | null;
@@ -152,6 +159,7 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   searchMatches: [],
   currentMatchIndex: -1,
   searchOpen: false,
+  searchIndexProgress: null,
   exportProgress: null,
   fontStats: null,
   fontProgress: null,
@@ -183,6 +191,7 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       searchMatches: [],
       currentMatchIndex: -1,
       searchOpen: false,
+      searchIndexProgress: null,
       exportProgress: null,
       fontStats: null,
       fontProgress: null,
@@ -275,8 +284,17 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   setSearchMatches: (matches) => set({ searchMatches: matches }),
   setCurrentMatchIndex: (index) => set({ currentMatchIndex: index }),
   setSearchOpen: (open) => set({ searchOpen: open }),
+  setSearchIndexProgress: (progress) => set({ searchIndexProgress: progress }),
+  // Closing search also drops the progress row: the hook cancels the build, so
+  // a stale `Indexing…` label can never outlive the search box.
   clearSearch: () =>
-    set({ searchQuery: '', searchMatches: [], currentMatchIndex: -1, searchOpen: false }),
+    set({
+      searchQuery: '',
+      searchMatches: [],
+      currentMatchIndex: -1,
+      searchOpen: false,
+      searchIndexProgress: null,
+    }),
   setExportProgress: (progress) => set({ exportProgress: progress }),
   setFontStats: (stats) => set({ fontStats: stats }),
   setFontProgress: (progress) => set({ fontProgress: progress }),
@@ -303,4 +321,5 @@ export const usePdfStore = create<PdfState>((set, get) => ({
 
   setSubset: (subset) => set({ subset }),
   clearSubset: () => set({ subset: null }),
+
 }));

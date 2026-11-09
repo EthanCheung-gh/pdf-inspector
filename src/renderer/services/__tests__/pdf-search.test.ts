@@ -1,5 +1,42 @@
 import { describe, expect, it } from 'vitest';
-import { buildPageText, findMatches, mapMatchToDivOffsets } from '../pdf-search';
+import {
+  SEARCH_INDEX_BATCH_SIZE,
+  buildPageText,
+  findMatches,
+  mapMatchToDivOffsets,
+  pageBatches,
+} from '../pdf-search';
+
+describe('pageBatches', () => {
+  it('splits pages into inclusive 10-page batches with a short final batch', () => {
+    expect(pageBatches(25)).toEqual([[1, 10], [11, 20], [21, 25]]);
+  });
+
+  it('defaults to the exported batch size', () => {
+    const [first] = pageBatches(500);
+    expect(first[1] - first[0] + 1).toBe(SEARCH_INDEX_BATCH_SIZE);
+    expect(pageBatches(500)).toHaveLength(50);
+  });
+
+  it('covers every page exactly once', () => {
+    const covered = pageBatches(1003).flatMap(([start, end]) =>
+      Array.from({ length: end - start + 1 }, (_, index) => start + index),
+    );
+    expect(covered).toHaveLength(1003);
+    expect(covered[0]).toBe(1);
+    expect(covered[covered.length - 1]).toBe(1003);
+  });
+
+  it('returns a single batch when the document fits', () => {
+    expect(pageBatches(7)).toEqual([[1, 7]]);
+  });
+
+  it('returns no batches for an empty or invalid page count', () => {
+    expect(pageBatches(0)).toEqual([]);
+    expect(pageBatches(-3)).toEqual([]);
+    expect(pageBatches(Number.NaN)).toEqual([]);
+  });
+});
 
 describe('buildPageText', () => {
   it('joins items with newline so items never merge', () => {

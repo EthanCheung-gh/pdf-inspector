@@ -79,7 +79,12 @@
 }
 
 .filename {
-  flex: 1 1 200px;
+  /*
+   * Grow into leftover space, but give width back faster than the search box
+   * when the row is tight (shrink 4 vs the search input's 1): the name is
+   * informational and ellipsized, while the search field has to stay typeable.
+   */
+  flex: 1 4 200px;
   max-width: 360px;
   min-width: 0;
   overflow: hidden;
@@ -95,6 +100,22 @@
  */
 @media (max-width: 1180px) {
   .filename {
+    display: none;
+  }
+}
+
+/*
+ * With the search box open the toolbar needs roughly the space the filename
+ * occupies next to it: the filename is shrinkable but the fixed-width buttons
+ * around it are not, so below 1280px both cannot fit and the search controls
+ * used to be pushed past the right edge. Dropping the name (never a control)
+ * for as long as search is open keeps input, counter, prev/next and close on
+ * screen. At 1440px and wider both fit, so nothing is hidden there, and while
+ * Diff/Audit/Raw hide the search box the toolbar does not carry `.searchOpen`
+ * at all.
+ */
+@media (max-width: 1280px) {
+  .toolbar.searchOpen .filename {
     display: none;
   }
 }

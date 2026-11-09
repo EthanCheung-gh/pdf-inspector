@@ -48,6 +48,7 @@ export const Toolbar: React.FC = () => {
   const openDiffSetup = useDiffStore((state) => state.openSetup);
   const auditActive = useAuditStore((state) => state.active);
   const rawActive = useRawStore((state) => state.active);
+  const searchOpen = usePdfStore((state) => state.searchOpen);
   const { navigate } = usePageNavigation();
 
   // A pane is visible only when it is expanded *and* focus mode is off. The
@@ -70,6 +71,7 @@ export const Toolbar: React.FC = () => {
         return;
       }
 
+
       // An audit describes one document. Swapping the document must drop the
       // old report, filters and selection instead of leaving them attached to a
       // file that is no longer open.
@@ -89,6 +91,7 @@ export const Toolbar: React.FC = () => {
       // Invalidate any in-flight local `openPdf` dialog: the URL document is
       // the newest request and must not be clobbered when that one settles.
       openRequestIdRef.current += 1;
+
       // Same as `handleOpen`: a URL document is a different document, so the
       // previous audit cannot survive it.
       useAuditStore.getState().reset();
@@ -150,6 +153,12 @@ export const Toolbar: React.FC = () => {
   const workspaceActive = diffActive || auditActive || rawActive;
   const displayTitle = diffActive ? diffTitle : sourceUrl ?? filePath ?? undefined;
   const filename = diffActive ? diffTitle : documentName ?? 'No file open';
+  // The open search box is the widest optional control group. The toolbar
+  // advertises it (`.searchOpen`) so CSS can give search the room it needs at
+  // narrow widths instead of letting the right-hand controls get clipped. It is
+  // deliberately false while Diff/Audit/Raw own the header: those workspaces
+  // hide the search box, so the filename must keep its space there.
+  const searchActive = searchOpen && !workspaceActive;
 
   const handleAudit = useCallback(() => {
     if (!filePath) return;
@@ -170,7 +179,7 @@ export const Toolbar: React.FC = () => {
   }, [documentName, filePath]);
 
   return (
-    <header className={styles.toolbar}>
+    <header className={`${styles.toolbar} ${searchActive ? styles.searchOpen : ''}`}>
       <button className={styles.button} type="button" onClick={handleOpen} disabled={isLoading}>
         Open
       </button>
