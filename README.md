@@ -9,6 +9,7 @@
 |  |  |
 | :---: | :---: |
 | ![工作区总览：Objects / Outline / Fonts / Layers 标签与可调整面板](docs/images/overview.png) | ![对象检查](docs/images/inspector.png) |
+| ![Islands 主题：工具栏、左右面板、画布与状态栏作为圆角浮动卡片，中间留出间隙](docs/images/theme-islands.png) | **Dark / Islands 主题**<br>工具栏右侧的 `Theme` 按钮在默认 `Dark` 与 VS Code 风格 `Islands` 之间切换；Islands 把主要面板变成带 1px 边框、圆角与柔和阴影的浮动卡片，Diff / Audit / Raw 工作区同样适用。 |
 | ![字体分析：嵌入状态徽标与 Standard 14 汇总](docs/images/fonts.png) | ![URL 打开](docs/images/url-dialog.png) |
 | ![图层面板](docs/images/layers.png) | **Layers**<br>七类对象开关、计数、All/None、Solo 与透明度。 |
 | ![按元素类型导出](docs/images/export-dialog.png) | **按元素类型导出**<br>选择当前页/整档、JSON/CSV 与要包含的元素类型；未勾选的类型不会写入文件。 |
@@ -28,7 +29,7 @@
 | ![大文档搜索：SearchBox 显示 Indexing 100/1000…，页面与页面列表仍可用](docs/images/large-doc-search.png) | **分批搜索索引**<br>搜索按 10 页一批建立文本索引，SearchBox 显示 `Indexing done/total…`；关闭搜索或切换文档会取消构建。 |
 | ![桌面文档标签栏：两个通过 URL 打开的文档标签，切换到 basic.pdf 后工具栏显示 1 / 4](docs/images/large-doc-tabs.png) | **桌面文档标签**<br>桌面端可同时保留多个文档标签，切换时恢复页码、缩放、叠加层与面板标签；Web 端仍为单文档。 |
 
-*截图来自 Web 构建与真实 Electron 桌面构建；页面列表/搜索为 1440×900，桌面标签为 Electron + xvfb 实测（CDP 1440×900 视口）。详见 [docs/large-docs.md](docs/large-docs.md)。*
+*截图来自 Web 构建与真实 Electron 桌面构建；页面列表/搜索、主题与 Diff/Audit/Raw 为 1440×900，桌面标签为 Electron + xvfb 实测（CDP 1440×900 视口）。详见 [docs/large-docs.md](docs/large-docs.md)。*
 
 ## 功能特性
 
@@ -53,6 +54,14 @@
 - `F` 或工具栏 Focus 进入专注模式，隐藏左右面板、只保留画布；再次按 `F` 或点击 Focus 退出。
 - Inspector 面板分为 `Inspect / Filter / Results / Page` 四个标签页：查看对象属性、组合筛选条件、管理筛选或框选结果、查看页面几何。
 - 面板宽度、折叠状态、Focus 模式、当前标签页与叠加层透明度会保存在 localStorage，下次启动自动恢复。
+
+### 主题与外观
+
+- 工具栏右侧的 `Theme: Dark` / `Theme: Islands` 按钮切换界面主题，按钮文字始终显示当前主题，并通过 `aria-pressed` 暴露 Islands 的激活状态。
+- `Dark` 是默认主题，保持原有的紧凑、无缝面板外观；`Islands` 使用近黑色渐变画布，把工具栏、文档标签栏、左右面板、画布、Inspector、Diff / Audit / Raw 工作区与状态栏都变成带 1px 边框、圆角与柔和阴影的浮动卡片，面板之间保留间隙。
+- Islands 只改变外观：面板宽度、分隔条拖拽、Focus 模式与 1280 / 1440 / 1600 下的布局尺寸保持不变，不会产生横向溢出。
+- 主题持久化在 localStorage 的 `pdf-inspector:theme:v1`，启动时在第一帧渲染前写入 `document.documentElement.dataset.theme`；存储不可用（隐私模式、jsdom 等）时回退到 `Dark`，不影响使用。
+- 结构色集中在 `src/renderer/theme.css` 的 CSS 变量中；PDF 页面白底、PDF 对象类型色、注释类型色与页面框颜色不随主题变化。
 
 ### 搜索与导出
 
