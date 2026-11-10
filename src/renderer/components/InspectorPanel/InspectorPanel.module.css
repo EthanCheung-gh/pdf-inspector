@@ -4,9 +4,9 @@
   flex-direction: column;
   width: 100%;
   min-width: 0;
-  color: #cbd3dc;
-  background: #1e2329;
-  border-left: 1px solid #353b43;
+  color: var(--pi-text-secondary);
+  background: var(--pi-bg-panel);
+  border-left: 1px solid var(--pi-border);
   font-size: 12px;
   overflow: hidden;
 }
@@ -18,7 +18,7 @@
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  border-bottom: 1px solid #353b43;
+  border-bottom: 1px solid var(--pi-border);
 }
 
 .tabs {
@@ -44,7 +44,7 @@
   min-width: 0;
   padding: 10px 0;
   overflow: hidden;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   background: transparent;
   border: 0;
   font: inherit;
@@ -65,18 +65,18 @@
 }
 
 .tab:hover {
-  color: #cbd3dc;
-  background: #2d353f;
+  color: var(--pi-text-secondary);
+  background: var(--pi-bg-hover);
 }
 
 .tab:focus-visible {
-  outline: 2px solid #7fb2e8;
+  outline: 2px solid var(--pi-focus);
   outline-offset: -2px;
 }
 
 .tab.activeTab {
-  color: #fff;
-  background: #274e76;
+  color: var(--pi-text-inverse);
+  background: var(--pi-accent-active);
 }
 
 /* Border-box makes the 12px minimum the pill's real footprint, so a two- or
@@ -108,10 +108,10 @@
   height: 24px;
   margin-right: 4px;
   padding: 0;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 3px;
+  border-radius: var(--pi-radius-sm);
   font: inherit;
   font-size: 14px;
   line-height: 1;
@@ -119,13 +119,13 @@
 }
 
 .collapseButton:hover {
-  color: #e1e6eb;
-  background: #2a313a;
-  border-color: #353b43;
+  color: var(--pi-text-strong);
+  background: var(--pi-bg-control);
+  border-color: var(--pi-border);
 }
 
 .collapseButton:focus-visible {
-  outline: 2px solid #7fb2e8;
+  outline: 2px solid var(--pi-focus);
   outline-offset: 1px;
 }
 
@@ -159,7 +159,7 @@
   flex: 1;
   place-items: center;
   padding: 24px;
-  color: #77818c;
+  color: var(--pi-text-faint);
   line-height: 1.5;
   text-align: center;
 }
@@ -170,7 +170,7 @@
 
 .sectionTitle {
   margin: 0 0 6px;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -178,8 +178,8 @@
 }
 
 .sectionContent {
-  border: 1px solid #353b43;
-  border-radius: 4px;
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-md);
   overflow: hidden;
 }
 
@@ -190,7 +190,7 @@
   align-items: center;
   min-height: 28px;
   padding: 5px 8px;
-  border-bottom: 1px solid #303740;
+  border-bottom: 1px solid var(--pi-border-muted);
 }
 
 .row:last-child {
@@ -198,21 +198,21 @@
 }
 
 .label {
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
 }
 
 .value {
   min-width: 0;
   overflow-wrap: anywhere;
-  color: #e1e6eb;
+  color: var(--pi-text-strong);
   font-variant-numeric: tabular-nums;
 }
 
 .badge {
   display: inline-flex;
   padding: 2px 6px;
-  border-radius: 3px;
-  color: #fff;
+  border-radius: var(--pi-radius-sm);
+  color: var(--pi-text-inverse);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -251,8 +251,8 @@
 .colorSwatch {
   width: 14px;
   height: 14px;
-  border: 1px solid #75808c;
-  border-radius: 2px;
+  border: 1px solid var(--pi-border-swatch);
+  border-radius: var(--pi-radius-xs);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 20%);
 }
 
@@ -261,14 +261,14 @@
   flex-wrap: wrap;
   gap: 4px 10px;
   padding: 6px 8px;
-  border-bottom: 1px solid #303740;
+  border-bottom: 1px solid var(--pi-border-muted);
 }
 
 .checkLabel {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: #e1e6eb;
+  color: var(--pi-text-strong);
   cursor: pointer;
 }
 
@@ -276,10 +276,10 @@
 .numberInput {
   min-width: 0;
   padding: 3px 6px;
-  color: #e1e6eb;
-  background: #161a1f;
-  border: 1px solid #353b43;
-  border-radius: 3px;
+  color: var(--pi-text-strong);
+  background: var(--pi-bg-app);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm);
   font-size: 11px;
 }
 
@@ -301,7 +301,7 @@
   gap: 8px;
   align-items: center;
   padding: 6px 8px;
-  border-bottom: 1px solid #303740;
+  border-bottom: 1px solid var(--pi-border-muted);
 }
 
 .buttonRow:last-child {
@@ -310,38 +310,38 @@
 
 .button {
   padding: 3px 10px;
-  color: #e1e6eb;
-  background: #2a313a;
-  border: 1px solid #353b43;
-  border-radius: 3px;
+  color: var(--pi-text-strong);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm);
   font-size: 11px;
   cursor: pointer;
 }
 
 .button:hover {
-  background: #333c47;
+  background: var(--pi-bg-control-hover);
 }
 
 .button:disabled {
-  color: #77818c;
-  background: #232930;
-  border-color: #2e353d;
+  color: var(--pi-text-faint);
+  background: var(--pi-bg-disabled-alt);
+  border-color: var(--pi-border-subtle);
   cursor: not-allowed;
 }
 
 /* Compact object-type picker for the Results export. */
 .exportTypes {
   padding: 6px 8px;
-  border-bottom: 1px solid #303740;
+  border-bottom: 1px solid var(--pi-border-muted);
 }
 
 .titleButton {
   margin-left: 8px;
   padding: 1px 8px;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   background: none;
-  border: 1px solid #353b43;
-  border-radius: 3px;
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm);
   font-size: 10px;
   letter-spacing: normal;
   text-transform: none;
@@ -349,14 +349,14 @@
 }
 
 .titleButton:hover {
-  color: #e1e6eb;
-  background: #2a313a;
+  color: var(--pi-text-strong);
+  background: var(--pi-bg-control);
 }
 
 .resultList {
   max-height: 220px;
   overflow-y: auto;
-  border-bottom: 1px solid #303740;
+  border-bottom: 1px solid var(--pi-border-muted);
 }
 
 .resultItem {
@@ -364,10 +364,10 @@
   width: 100%;
   padding: 4px 8px;
   overflow: hidden;
-  color: #e1e6eb;
+  color: var(--pi-text-strong);
   background: none;
   border: 0;
-  border-bottom: 1px solid #262c34;
+  border-bottom: 1px solid var(--pi-border-faint);
   font-size: 11px;
   text-align: left;
   text-overflow: ellipsis;
@@ -376,7 +376,7 @@
 }
 
 .resultItem:hover {
-  background: #262c34;
+  background: var(--pi-bg-raised);
 }
 
 .resultItem:last-child {
@@ -385,7 +385,7 @@
 
 .resultsEmpty {
   padding: 8px;
-  color: #77818c;
+  color: var(--pi-text-faint);
 }
 
 .json {
@@ -393,11 +393,24 @@
   margin: 0;
   overflow: auto;
   padding: 9px;
-  color: #b8d8ff;
-  background: #161a1f;
+  color: var(--pi-info-bright);
+  background: var(--pi-bg-app);
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 11px;
   line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* --- Islands theme ------------------------------------------------------- */
+
+:global(html[data-theme='islands']) .panel {
+  background: var(--pi-island-panel-bg);
+  border: var(--pi-island-border-width) solid var(--pi-island-border-color);
+  border-radius: var(--pi-island-radius);
+  box-shadow: var(--pi-island-shadow);
+}
+
+:global(html[data-theme='islands']) .header {
+  border-bottom-color: var(--pi-border-subtle);
 }

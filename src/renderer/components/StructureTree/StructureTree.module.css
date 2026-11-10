@@ -4,9 +4,9 @@
   flex-direction: column;
   width: 220px;
   min-width: 180px;
-  color: #cbd3dc;
-  background: #1e2329;
-  border-right: 1px solid #353b43;
+  color: var(--pi-text-secondary);
+  background: var(--pi-bg-panel);
+  border-right: 1px solid var(--pi-border);
   font-size: 12px;
   overflow: hidden;
 }
@@ -14,8 +14,8 @@
 .title {
   margin: 0;
   padding: 13px 14px 11px;
-  color: #8e99a6;
-  border-bottom: 1px solid #353b43;
+  color: var(--pi-text-subtle);
+  border-bottom: 1px solid var(--pi-border);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.1em;
@@ -39,12 +39,12 @@
   gap: 4px;
   min-width: 0;
   padding: 7px 10px 8px;
-  border-bottom: 1px solid #353b43;
+  border-bottom: 1px solid var(--pi-border);
 }
 
 .jumpLabel {
   overflow: hidden;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -65,30 +65,30 @@
    * the 200px panel. */
   min-width: 0;
   padding: 3px 6px;
-  color: #d7dce2;
-  background: #2a3139;
-  border: 1px solid #414954;
-  border-radius: 3px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-sm);
   font: inherit;
   font-size: 12px;
 }
 
 .jumpInput::placeholder {
-  color: #6f7b87;
+  color: var(--pi-text-dim);
 }
 
 .jumpInput:focus {
   outline: none;
-  border-color: #5b9cff;
+  border-color: var(--pi-accent);
 }
 
 .jumpButton {
   flex: 0 0 auto;
   padding: 3px 8px;
-  color: #d7dce2;
-  background: #2a3139;
-  border: 1px solid #414954;
-  border-radius: 3px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-sm);
   cursor: pointer;
   font: inherit;
   font-size: 11px;
@@ -96,11 +96,11 @@
 }
 
 .jumpButton:hover {
-  background: #353e49;
+  background: var(--pi-bg-control-hover);
 }
 
 .jumpButton:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: 1px;
 }
 
@@ -117,7 +117,7 @@
   flex: 1;
   place-items: center;
   padding: 24px;
-  color: #77818c;
+  color: var(--pi-text-faint);
   line-height: 1.5;
   text-align: center;
 }
@@ -149,19 +149,19 @@
   align-items: center;
   gap: 7px;
   padding: 7px 12px;
-  color: #cbd3dc;
+  color: var(--pi-text-secondary);
   background: transparent;
   font-weight: 600;
 }
 
 .pageButton:hover,
 .objectButton:hover {
-  background: #2d353f;
+  background: var(--pi-bg-hover);
 }
 
 .activePage {
-  color: #fff;
-  background: #274e76;
+  color: var(--pi-text-inverse);
+  background: var(--pi-accent-active);
 }
 
 .pageIcon,
@@ -169,12 +169,12 @@
   display: inline-grid;
   flex: 0 0 13px;
   place-items: center;
-  color: #82b9ed;
+  color: var(--pi-info-link);
   font-size: 11px;
 }
 
 .groups {
-  border-left: 1px solid #39414b;
+  border-left: 1px solid var(--pi-border);
   margin-left: 18px;
 }
 
@@ -188,14 +188,14 @@
   gap: 6px;
   min-width: 0;
   padding: 4px 12px 4px 10px;
-  color: #9faab5;
+  color: var(--pi-text-soft);
   font-size: 11px;
   text-transform: uppercase;
 }
 
 .count {
   margin-left: auto;
-  color: #6f7b87;
+  color: var(--pi-text-dim);
   font-variant-numeric: tabular-nums;
 }
 
@@ -203,19 +203,19 @@
   display: block;
   overflow: hidden;
   padding: 4px 10px 4px 29px;
-  color: #b9c2cc;
+  color: var(--pi-text-tab);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .selectedObject {
-  color: #fff;
-  background: #2d6db5;
+  color: var(--pi-text-inverse);
+  background: var(--pi-accent-strong);
 }
 
 .truncationHint {
   padding: 4px 10px 4px 29px;
-  color: #6f7b87;
+  color: var(--pi-text-dim);
   font-size: 10px;
   font-style: italic;
   overflow-wrap: anywhere;
@@ -223,6 +223,6 @@
 
 .pageButton:focus-visible,
 .objectButton:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: -2px;
 }

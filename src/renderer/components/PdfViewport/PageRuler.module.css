@@ -7,7 +7,7 @@
   position: absolute;
   inset: 0;
   z-index: 4;
-  color: #aeb7c2;
+  color: var(--pi-text-muted);
   font-size: 8px;
   font-variant-numeric: tabular-nums;
   line-height: 1;
@@ -23,9 +23,9 @@
   justify-content: center;
   width: 22px;
   height: 18px;
-  color: #8e99a6;
-  background: rgb(30 35 41 / 94%);
-  border: 1px solid #353b43;
+  color: var(--pi-text-subtle);
+  background: var(--pi-bg-panel-translucent);
+  border: 1px solid var(--pi-border);
   border-radius: 2px 0 0;
   font-size: 8px;
   font-weight: 700;
@@ -39,8 +39,8 @@
   left: 0;
   height: 18px;
   overflow: hidden;
-  background: rgb(30 35 41 / 94%);
-  border: 1px solid #353b43;
+  background: var(--pi-bg-panel-translucent);
+  border: 1px solid var(--pi-border);
   border-bottom: 0;
   border-radius: 0 2px 0 0;
 }
@@ -51,8 +51,8 @@
   left: -22px;
   width: 22px;
   overflow: hidden;
-  background: rgb(30 35 41 / 94%);
-  border: 1px solid #353b43;
+  background: var(--pi-bg-panel-translucent);
+  border: 1px solid var(--pi-border);
   border-right: 0;
   border-radius: 0 0 0 2px;
 }
@@ -60,7 +60,7 @@
 .tick {
   position: absolute;
   display: block;
-  background: #6f7b88;
+  background: var(--pi-text-dim);
 }
 
 .topTick {
@@ -79,7 +79,7 @@
 
 .topTick.major {
   height: 7px;
-  background: #9aa6b3;
+  background: var(--pi-text-soft);
 }
 
 .leftTick.minor {
@@ -88,14 +88,14 @@
 
 .leftTick.major {
   width: 7px;
-  background: #9aa6b3;
+  background: var(--pi-text-soft);
 }
 
 .topLabel {
   position: absolute;
   top: 7px;
   left: 2px;
-  color: #aeb7c2;
+  color: var(--pi-text-muted);
   font-size: 8px;
   line-height: 1;
   white-space: nowrap;
@@ -105,7 +105,7 @@
   position: absolute;
   top: -4px;
   left: 8px;
-  color: #aeb7c2;
+  color: var(--pi-text-muted);
   font-size: 8px;
   line-height: 8px;
   white-space: nowrap;

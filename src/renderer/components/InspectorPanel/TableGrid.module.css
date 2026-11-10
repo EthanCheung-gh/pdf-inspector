@@ -3,13 +3,13 @@
    (readable at the 280px minimum panel width). */
 
 .wrapper {
-  border-top: 1px solid #303740;
+  border-top: 1px solid var(--pi-border-muted);
 }
 
 .gridScroll {
   max-height: 220px;
   overflow: auto;
-  background: #161a1f;
+  background: var(--pi-bg-app);
 }
 
 /* Columns never collapse below 58px; wider tables scroll horizontally instead
@@ -29,11 +29,11 @@
   min-height: 24px;
   padding: 3px 5px;
   overflow: hidden;
-  color: #e1e6eb;
+  color: var(--pi-text-strong);
   background: transparent;
   border: 0;
-  border-right: 1px solid #2b323b;
-  border-bottom: 1px solid #2b323b;
+  border-right: 1px solid var(--pi-border-subtle);
+  border-bottom: 1px solid var(--pi-border-subtle);
   font: inherit;
   font-size: 10px;
   line-height: 1.3;
@@ -49,13 +49,13 @@
 }
 
 .cellButton:focus-visible {
-  outline: 2px solid #7fb2e8;
+  outline: 2px solid var(--pi-focus);
   outline-offset: -2px;
 }
 
 .cellHovered {
   background: #223142;
-  box-shadow: inset 0 0 0 1px #7fb2e8;
+  box-shadow: inset 0 0 0 1px var(--pi-focus);
 }
 
 .cellSelected {
@@ -67,13 +67,13 @@
 .covered {
   align-items: center;
   justify-content: center;
-  color: #6b7280;
+  color: var(--pi-text-dim);
   background: repeating-linear-gradient(
     45deg,
-    #1b2026,
-    #1b2026 4px,
-    #232a32 4px,
-    #232a32 8px
+    var(--pi-bg-sunken),
+    var(--pi-bg-sunken) 4px,
+    var(--pi-bg-checker) 4px,
+    var(--pi-bg-checker) 8px
   );
   cursor: default;
 }
@@ -103,23 +103,23 @@
   grid-template-columns: 58px minmax(0, 1fr);
   gap: 2px 8px;
   padding: 6px 8px;
-  border-top: 1px solid #303740;
+  border-top: 1px solid var(--pi-border-muted);
   font-size: 10px;
 }
 
 .detailLabel {
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
 }
 
 .detailValue {
   min-width: 0;
   overflow-wrap: anywhere;
-  color: #e1e6eb;
+  color: var(--pi-text-strong);
   font-variant-numeric: tabular-nums;
 }
 
 .hint {
   padding: 6px 8px;
-  color: #77818c;
+  color: var(--pi-text-faint);
   font-size: 10px;
 }

@@ -22,8 +22,8 @@
   flex: 0 0 auto;
   margin: 0;
   padding: 5px 8px;
-  color: #8e99a6;
-  border-bottom: 1px solid #262d34;
+  color: var(--pi-text-subtle);
+  border-bottom: 1px solid var(--pi-border-faint);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10px;
   overflow-wrap: anywhere;
@@ -51,7 +51,7 @@
   margin: 0;
   padding: 0 0 0 12px;
   list-style: none;
-  border-left: 1px solid #262d34;
+  border-left: 1px solid var(--pi-border-faint);
 }
 
 .row {
@@ -60,16 +60,16 @@
   gap: 5px;
   min-width: 0;
   padding: 1px 6px 1px 2px;
-  border-radius: 3px;
+  border-radius: var(--pi-radius-sm);
 }
 
 .row:hover {
-  background: #212730;
+  background: var(--pi-bg-subtle);
 }
 
 .selectedRow {
-  background: #26333f;
-  box-shadow: inset 2px 0 0 #4b93e6;
+  background: var(--pi-bg-selected);
+  box-shadow: inset 2px 0 0 var(--pi-accent-border);
 }
 
 .toggle,
@@ -77,7 +77,7 @@
   flex: 0 0 14px;
   width: 14px;
   padding: 0;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   background: none;
   border: none;
   font: inherit;
@@ -91,11 +91,11 @@
 }
 
 .toggle:hover {
-  color: #d7dce2;
+  color: var(--pi-text);
 }
 
 .toggle:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: 1px;
 }
 
@@ -103,7 +103,7 @@
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
-  color: #9fc4ea;
+  color: var(--pi-info);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -111,10 +111,10 @@
 .refButton {
   flex: 0 0 auto;
   padding: 0 4px;
-  color: #e6e9ee;
-  background: #22282f;
-  border: 1px solid #414954;
-  border-radius: 3px;
+  color: var(--pi-text-strong);
+  background: var(--pi-bg-panel-alt);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-sm);
   cursor: pointer;
   font: inherit;
   font-size: 10px;
@@ -122,18 +122,18 @@
 }
 
 .refButton:hover {
-  background: #2c343d;
+  background: var(--pi-bg-raised);
 }
 
 .refButton:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: 1px;
 }
 
 .refSelected {
-  color: #fff;
-  background: #2d6db5;
-  border-color: #4b93e6;
+  color: var(--pi-text-inverse);
+  background: var(--pi-accent-strong);
+  border-color: var(--pi-accent-border);
 }
 
 .value,
@@ -141,7 +141,7 @@
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
-  color: #d7dce2;
+  color: var(--pi-text);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -152,18 +152,18 @@
 }
 
 .value[data-kind='number'] {
-  color: #f0c48a;
+  color: var(--pi-warning-text);
 }
 
 .value[data-kind='name'] {
-  color: #9ed9ae;
+  color: var(--pi-success);
 }
 
 .summary,
 .summary[data-kind='dict'],
 .summary[data-kind='array'],
 .summary[data-kind='stream'] {
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 10px;
 }
 
@@ -172,7 +172,7 @@
 .messageRow {
   margin: 0;
   padding: 2px 8px 2px 20px;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 10px;
   overflow-wrap: anywhere;
 }
@@ -185,34 +185,34 @@
 }
 
 .errorText {
-  color: #f08a8a;
+  color: var(--pi-danger);
   overflow-wrap: anywhere;
 }
 
 .retryButton {
   padding: 1px 6px;
-  color: #d7dce2;
-  background: #2a3139;
-  border: 1px solid #414954;
-  border-radius: 3px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-sm);
   cursor: pointer;
   font: inherit;
   font-size: 10px;
 }
 
 .retryButton:hover {
-  background: #353e49;
+  background: var(--pi-bg-control-hover);
 }
 
 .retryButton:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: 1px;
 }
 
 .message {
   margin: 0;
   padding: 8px;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 11px;
   overflow-wrap: anywhere;
 }

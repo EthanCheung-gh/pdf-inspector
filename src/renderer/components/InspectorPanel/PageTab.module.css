@@ -11,15 +11,15 @@
   display: inline-flex;
   gap: 0;
   overflow: hidden;
-  border: 1px solid #353b43;
-  border-radius: 3px;
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm);
 }
 
 .unitButton {
   min-width: 34px;
   padding: 2px 8px;
-  color: #8e99a6;
-  background: #161a1f;
+  color: var(--pi-text-subtle);
+  background: var(--pi-bg-app);
   border: 0;
   font: inherit;
   font-size: 11px;
@@ -27,22 +27,22 @@
 }
 
 .unitButton + .unitButton {
-  border-left: 1px solid #353b43;
+  border-left: 1px solid var(--pi-border);
 }
 
 .unitButton:hover {
-  color: #e1e6eb;
-  background: #2a313a;
+  color: var(--pi-text-strong);
+  background: var(--pi-bg-control);
 }
 
 .unitButton:focus-visible {
-  outline: 2px solid #7fb2e8;
+  outline: 2px solid var(--pi-focus);
   outline-offset: -2px;
 }
 
 .unitButtonActive {
-  color: #fff;
-  background: #274e76;
+  color: var(--pi-text-inverse);
+  background: var(--pi-accent-active);
 }
 
 /* Rotated pages have no object overlay (see PdfPage); this explains the gap
@@ -52,8 +52,8 @@
   padding: 5px 8px;
   color: #e8c98a;
   background: #2a2417;
-  border-left: 2px solid #c79a3c;
-  border-radius: 2px;
+  border-left: 2px solid var(--pi-warning-border);
+  border-radius: var(--pi-radius-xs);
   font-size: 11px;
   line-height: 1.35;
 }
@@ -65,7 +65,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 5px 8px;
-  border-bottom: 1px solid #303740;
+  border-bottom: 1px solid var(--pi-border-muted);
 }
 
 .boxRow:last-child {
@@ -77,7 +77,7 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 5px;
-  color: #e1e6eb;
+  color: var(--pi-text-strong);
   cursor: pointer;
 }
 
@@ -85,13 +85,13 @@
   width: 10px;
   height: 10px;
   border: 1px solid rgb(255 255 255 / 35%);
-  border-radius: 2px;
+  border-radius: var(--pi-radius-xs);
 }
 
 .boxValue {
   flex: 1 1 100%;
   min-width: 0;
-  color: #b8c2cd;
+  color: var(--pi-text-tab);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;

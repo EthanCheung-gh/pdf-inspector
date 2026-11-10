@@ -5,9 +5,9 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: #161a1f;
-  border: 1px solid #2f363f;
-  border-radius: 4px;
+  background: var(--pi-bg-app);
+  border: 1px solid var(--pi-border-muted);
+  border-radius: var(--pi-radius-md);
 }
 
 .header {
@@ -17,18 +17,18 @@
   gap: 6px;
   min-width: 0;
   padding: 3px 8px;
-  background: #1e2329;
-  border-bottom: 1px solid #2f363f;
+  background: var(--pi-bg-panel);
+  border-bottom: 1px solid var(--pi-border-muted);
   font-size: 11px;
 }
 
 .badge {
   flex: 0 0 auto;
   padding: 1px 6px;
-  color: #dce8f7;
-  background: #23303d;
-  border: 1px solid #3d5773;
-  border-radius: 3px;
+  color: var(--pi-accent-text);
+  background: var(--pi-accent-soft);
+  border: 1px solid var(--pi-accent-soft-border);
+  border-radius: var(--pi-radius-sm);
   font-weight: 600;
   letter-spacing: 0.02em;
 }
@@ -36,7 +36,7 @@
 .pageInfo {
   min-width: 0;
   overflow: hidden;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   text-overflow: ellipsis;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -49,7 +49,7 @@
 
 .busy {
   flex: 0 0 auto;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
@@ -96,7 +96,7 @@
 .state {
   margin: 0;
   padding: 12px;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 12px;
   text-align: center;
 }
@@ -105,7 +105,7 @@
   align-self: stretch;
   margin: 0;
   padding: 8px;
-  color: #f08a8a;
+  color: var(--pi-danger);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
@@ -114,10 +114,10 @@
   align-self: stretch;
   margin: 0;
   padding: 4px 8px;
-  color: #e0b36a;
+  color: var(--pi-warning);
   background: rgba(224, 179, 106, 0.08);
   border: 1px solid rgba(224, 179, 106, 0.35);
-  border-radius: 3px;
+  border-radius: var(--pi-radius-sm);
   font-size: 11px;
 }
 
@@ -127,10 +127,10 @@
   bottom: 6px;
   max-width: calc(100% - 12px);
   padding: 2px 6px;
-  color: #f08a8a;
-  background: rgba(22, 26, 31, 0.92);
+  color: var(--pi-danger);
+  background: var(--pi-bg-app-translucent);
   border: 1px solid rgba(240, 138, 138, 0.4);
-  border-radius: 3px;
+  border-radius: var(--pi-radius-sm);
   font-size: 11px;
   overflow-wrap: anywhere;
 }

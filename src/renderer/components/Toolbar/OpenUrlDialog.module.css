@@ -12,9 +12,9 @@
   width: 420px;
   max-width: calc(100vw - 32px);
   padding: 18px;
-  color: #d7dce2;
-  background: #1e2329;
-  border: 1px solid #414954;
+  color: var(--pi-text);
+  background: var(--pi-bg-panel);
+  border: 1px solid var(--pi-border-strong);
   border-radius: 6px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   font-size: 13px;
@@ -24,7 +24,7 @@
   margin: 0 0 12px;
   font-size: 14px;
   font-weight: 600;
-  color: #eef2f6;
+  color: var(--pi-text-heading);
 }
 
 .form {
@@ -34,7 +34,7 @@
 }
 
 .label {
-  color: #aeb7c2;
+  color: var(--pi-text-muted);
   font-size: 12px;
 }
 
@@ -42,27 +42,27 @@
   width: 100%;
   box-sizing: border-box;
   padding: 6px 8px;
-  color: #d7dce2;
-  background: #2a3139;
-  border: 1px solid #414954;
-  border-radius: 4px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
   font: inherit;
 }
 
 .input:focus {
   outline: none;
-  border-color: #5b9cff;
+  border-color: var(--pi-accent);
 }
 
 .input:disabled {
-  color: #7b8490;
-  background: #252b32;
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
   cursor: not-allowed;
 }
 
 .errorArea {
   min-height: 16px;
-  color: #f08a8a;
+  color: var(--pi-danger);
   font-size: 12px;
 }
 
@@ -75,42 +75,42 @@
 
 .button {
   padding: 5px 9px;
-  color: #d7dce2;
-  background: #2a3139;
-  border: 1px solid #414954;
-  border-radius: 4px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
   cursor: pointer;
   font: inherit;
 }
 
 .button:hover:not(:disabled) {
-  background: #353e49;
+  background: var(--pi-bg-control-hover);
 }
 
 .button:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: 1px;
 }
 
 .button:disabled {
-  color: #7b8490;
-  background: #252b32;
-  border-color: #343a42;
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
   cursor: not-allowed;
 }
 
 .primary {
-  color: #fff;
-  background: #2d6db5;
-  border-color: #4b93e6;
+  color: var(--pi-text-inverse);
+  background: var(--pi-accent-strong);
+  border-color: var(--pi-accent-border);
 }
 
 .primary:hover:not(:disabled) {
-  background: #3679c4;
+  background: var(--pi-accent-strong-hover);
 }
 
 .primary:disabled {
-  color: #7b8490;
-  background: #252b32;
-  border-color: #343a42;
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
 }

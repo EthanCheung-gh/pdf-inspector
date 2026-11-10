@@ -1,12 +1,12 @@
 .hint {
   padding: 8px;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 12px;
 }
 
 .stateBox {
   padding: 8px;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 12px;
   display: flex;
   flex-direction: column;
@@ -16,28 +16,28 @@
 
 .retry {
   padding: 2px 8px;
-  color: #cbd3dc;
-  background: #252b32;
-  border: 1px solid #3b434d;
-  border-radius: 3px;
+  color: var(--pi-text-secondary);
+  background: var(--pi-bg-control-disabled);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm);
   cursor: pointer;
   font: inherit;
   font-size: 12px;
 }
 
 .retry:hover {
-  color: #fff;
-  background: #353e49;
+  color: var(--pi-text-inverse);
+  background: var(--pi-bg-control-hover);
 }
 
 .retry:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: 1px;
 }
 
 .progress {
   width: 100%;
-  accent-color: #5b9cff;
+  accent-color: var(--pi-accent);
 }
 
 /* The list and the summary share the panel height; only the list scrolls. */
@@ -55,8 +55,8 @@
   align-items: center;
   gap: 4px;
   padding: 5px 8px;
-  color: #8e99a6;
-  border-bottom: 1px solid #303740;
+  color: var(--pi-text-subtle);
+  border-bottom: 1px solid var(--pi-border-muted);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
@@ -65,7 +65,7 @@
 /* Non-embedded fonts are a portability problem, not a hard failure: amber
  * text plus the ⚠ glyph keeps the message readable without relying on colour. */
 .summaryWarning {
-  color: #e0b36a;
+  color: var(--pi-warning);
   background: rgba(224, 179, 106, 0.08);
   border-bottom-color: rgba(224, 179, 106, 0.35);
 }
@@ -104,7 +104,7 @@
 }
 
 .row:hover {
-  background: #262d35;
+  background: var(--pi-bg-raised);
 }
 
 .rowButton {
@@ -124,13 +124,13 @@
 }
 
 .rowButton:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: -2px;
 }
 
 .name {
   max-width: 100%;
-  color: #cbd3dc;
+  color: var(--pi-text-secondary);
   font-weight: 600;
   font-size: 12px;
   overflow-wrap: anywhere;
@@ -147,7 +147,7 @@
   align-items: center;
   padding: 0 4px;
   border: 1px solid transparent;
-  border-radius: 3px;
+  border-radius: var(--pi-radius-sm);
   font-size: 9px;
   font-weight: 600;
   line-height: 14px;
@@ -155,37 +155,37 @@
 }
 
 .badgeSuccess {
-  color: #9ed9ae;
+  color: var(--pi-success);
   background: rgba(158, 217, 174, 0.12);
   border-color: rgba(158, 217, 174, 0.35);
 }
 
 .badgeDanger {
-  color: #e2a2a7;
+  color: var(--pi-danger-soft);
   background: rgba(226, 162, 167, 0.12);
   border-color: rgba(226, 162, 167, 0.4);
 }
 
 .badgeWarning {
-  color: #e0b36a;
+  color: var(--pi-warning);
   background: rgba(224, 179, 106, 0.12);
   border-color: rgba(224, 179, 106, 0.35);
 }
 
 .badgeMuted {
-  color: #aeb7c2;
+  color: var(--pi-text-muted);
   background: rgba(174, 183, 194, 0.1);
   border-color: rgba(174, 183, 194, 0.28);
 }
 
 .badgeInfo {
-  color: #8fb8e8;
+  color: var(--pi-info-strong);
   background: rgba(143, 184, 232, 0.12);
   border-color: rgba(143, 184, 232, 0.32);
 }
 
 .meta {
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
@@ -201,7 +201,7 @@
   width: 12px;
   height: 12px;
   border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 2px;
+  border-radius: var(--pi-radius-xs);
 }
 
 /* Kept out of the row button so expanding never navigates or filters. */
@@ -211,10 +211,10 @@
   align-items: center;
   justify-content: center;
   padding: 0;
-  color: #6f7882;
+  color: var(--pi-text-dim);
   background: transparent;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--pi-radius-sm);
   cursor: pointer;
   font: inherit;
   font-size: 11px;
@@ -222,12 +222,12 @@
 }
 
 .detailsToggle:hover {
-  color: #cbd3dc;
-  background: #2d353f;
+  color: var(--pi-text-secondary);
+  background: var(--pi-bg-hover);
 }
 
 .detailsToggle:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: -2px;
 }
 
@@ -237,8 +237,8 @@
   gap: 2px;
   margin: 0;
   padding: 5px 8px 7px;
-  background: #191d22;
-  border-top: 1px solid #303740;
+  background: var(--pi-bg-deep-alt);
+  border-top: 1px solid var(--pi-border-muted);
 }
 
 .detailRow {
@@ -249,14 +249,14 @@
 }
 
 .detailRow dt {
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 10px;
 }
 
 .detailRow dd {
   min-width: 0;
   margin: 0;
-  color: #cbd3dc;
+  color: var(--pi-text-secondary);
   font-size: 10px;
   overflow-wrap: anywhere;
 }

@@ -25,13 +25,13 @@
 
 .key {
   flex: 0 0 auto;
-  color: #9fc4ea;
+  color: var(--pi-info);
 }
 
 .text,
 .ref {
   min-width: 0;
-  color: #d7dce2;
+  color: var(--pi-text);
   overflow-wrap: anywhere;
 }
 
@@ -41,40 +41,40 @@
 }
 
 .text[data-kind='number'] {
-  color: #f0c48a;
+  color: var(--pi-warning-text);
 }
 
 .text[data-kind='name'] {
-  color: #9ed9ae;
+  color: var(--pi-success);
 }
 
 .text[data-kind='string'] {
-  color: #e6e9ee;
+  color: var(--pi-text-strong);
 }
 
 .text[data-kind='dict'],
 .text[data-kind='array'],
 .text[data-kind='stream'] {
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
 }
 
 .ref {
   padding: 0 4px;
-  color: #9fc4ea;
+  color: var(--pi-info);
   background: none;
   border: 1px solid transparent;
-  border-radius: 3px;
+  border-radius: var(--pi-radius-sm);
   cursor: pointer;
   font: inherit;
 }
 
 .ref:hover {
-  background: #23303d;
-  border-color: #3d5773;
+  background: var(--pi-accent-soft);
+  border-color: var(--pi-accent-soft-border);
 }
 
 .ref:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: 1px;
 }
 
@@ -85,13 +85,13 @@
   margin: 0;
   padding: 0 0 0 14px;
   list-style: none;
-  border-left: 1px solid #262d34;
+  border-left: 1px solid var(--pi-border-faint);
 }
 
 .notice {
   margin: 0;
   padding: 2px 0 2px 14px;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 10px;
   overflow-wrap: anywhere;
 }
@@ -112,12 +112,12 @@
 }
 
 .metaItem dt {
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
 }
 
 .metaItem dd {
   margin: 0;
-  color: #d7dce2;
+  color: var(--pi-text);
   overflow-wrap: anywhere;
 }
 
@@ -126,10 +126,10 @@
   margin: 2px 0 2px 14px;
   padding: 4px 6px;
   overflow: auto;
-  color: #e6e9ee;
-  background: #1a1f25;
-  border: 1px solid #333b44;
-  border-radius: 3px;
+  color: var(--pi-text-strong);
+  background: var(--pi-bg-sunken);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm);
   font-family: inherit;
   font-size: 11px;
   white-space: pre-wrap;

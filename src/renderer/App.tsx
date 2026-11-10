@@ -16,6 +16,7 @@ import { useAuditStore } from './store/audit-store';
 import { useDiffStore } from './store/diff-store';
 import { usePdfStore } from './store/pdf-store';
 import { useRawStore } from './store/raw-store';
+import { applyTheme, useThemeStore } from './store/theme-store';
 import {
   LEFT_PANEL_LIMITS,
   RIGHT_PANEL_LIMITS,
@@ -26,6 +27,7 @@ import styles from './App.module.css';
 const SIDECAR_STATUS_POLL_INTERVAL_MS = 5_000;
 
 const App = (): JSX.Element => {
+  const theme = useThemeStore((state) => state.theme);
   const setSidecarRunning = usePdfStore((state) => state.setSidecarRunning);
   const clearSelection = usePdfStore((state) => state.clearSelection);
   const textSelectionMode = usePdfStore((state) => state.textSelectionMode);
@@ -55,6 +57,13 @@ const App = (): JSX.Element => {
   // Fonts analysis) survives collapsing and focus mode.
   const leftPaneVisible = !leftCollapsed && !focusMode;
   const rightPaneVisible = !rightCollapsed && !focusMode;
+
+  // The store also applies the theme on `setTheme`; this effect covers the
+  // first mount (including tests and embeds that skip the entry point) and
+  // keeps the document attribute in sync with any state written directly.
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
 
   // Diff and Audit are mutually exclusive: each one replaces the Inspect panes,
   // so two at once would fight over the same area. Diff wins because a completed

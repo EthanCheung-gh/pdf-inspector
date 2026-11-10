@@ -5,9 +5,9 @@
   gap: 12px;
   min-width: 0;
   padding: 0 12px;
-  color: #aeb7c2;
-  background: #1e2329;
-  border-top: 1px solid #353b43;
+  color: var(--pi-text-muted);
+  background: var(--pi-bg-panel);
+  border-top: 1px solid var(--pi-border);
   font-size: 12px;
   overflow: hidden;
 }
@@ -22,7 +22,7 @@
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -30,7 +30,7 @@
 
 .cursorPosition {
   flex: 0 0 auto;
-  color: #cbd3dc;
+  color: var(--pi-text-secondary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -42,7 +42,7 @@
   gap: 5px;
   max-width: 24ch;
   overflow: hidden;
-  color: #cbd3dc;
+  color: var(--pi-text-secondary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -50,10 +50,10 @@
 .selectionType {
   flex: 0 0 auto;
   padding: 1px 5px;
-  color: #e1e6eb;
-  background: #2a313a;
-  border: 1px solid #353b43;
-  border-radius: 3px;
+  color: var(--pi-text-strong);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -67,13 +67,13 @@
   gap: 6px;
   min-width: 0;
   max-width: 46ch;
-  color: #aeb7c2;
+  color: var(--pi-text-muted);
   white-space: nowrap;
 }
 
 .filterLabel {
   flex: 0 0 auto;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
 }
 
 /* The active criteria can be long (font + size + color + types); ellipsize the
@@ -88,10 +88,10 @@
 .clearButton {
   flex: 0 0 auto;
   padding: 1px 7px;
-  color: #cbd3dc;
-  background: #2a313a;
-  border: 1px solid #353b43;
-  border-radius: 3px;
+  color: var(--pi-text-secondary);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm);
   font: inherit;
   font-size: 11px;
   white-space: nowrap;
@@ -99,12 +99,12 @@
 }
 
 .clearButton:hover {
-  color: #fff;
-  background: #333c47;
+  color: var(--pi-text-inverse);
+  background: var(--pi-bg-control-hover);
 }
 
 .clearButton:focus-visible {
-  outline: 2px solid #7fb2e8;
+  outline: 2px solid var(--pi-focus);
   outline-offset: 1px;
 }
 
@@ -116,10 +116,10 @@
   min-width: 0;
   overflow: hidden;
   padding: 3px 7px;
-  color: #ffd7d7;
-  background: #6f2930;
-  border: 1px solid #c95a63;
-  border-radius: 3px;
+  color: var(--pi-danger-on-bg);
+  background: var(--pi-danger-bg);
+  border: 1px solid var(--pi-danger-border);
+  border-radius: var(--pi-radius-sm);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -135,11 +135,11 @@
 }
 
 .connected {
-  color: #9ed9ae;
+  color: var(--pi-success);
 }
 
 .offline {
-  color: #e2a2a7;
+  color: var(--pi-danger-soft);
 }
 
 .indicator {
@@ -148,4 +148,13 @@
   border-radius: 50%;
   background: currentColor;
   box-shadow: 0 0 5px currentColor;
+}
+
+/* --- Islands theme ------------------------------------------------------- */
+
+:global(html[data-theme='islands']) .statusBar {
+  background: var(--pi-bg-panel);
+  border: var(--pi-island-border-width) solid var(--pi-island-border-color);
+  border-radius: var(--pi-island-radius);
+  box-shadow: var(--pi-island-shadow);
 }

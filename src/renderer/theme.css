@@ -1,0 +1,253 @@
+/*
+ * Shared theme tokens for the renderer.
+ *
+ * The default (`:root`, and `html[data-theme='dark']`) is the original dark
+ * palette: the values below are the colours the CSS modules used before the
+ * tokens existed (a few near-identical greys were unified into one token), so
+ * the Dark theme keeps its current appearance.
+ *
+ * `html[data-theme='islands']` re-maps the structural tokens to a near-black
+ * canvas with lighter floating cards; components opt into the island chrome
+ * (radius, border, shadow) inside their own CSS modules.
+ *
+ * Semantic/object colours (PDF object types, annotation kinds, page-box
+ * colours, the white PDF page) are intentionally not tokens and never change
+ * between themes.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* --- backgrounds ------------------------------------------------------- */
+  --pi-bg-app: #161a1f;
+  --pi-bg-deep: #10141a;
+  --pi-bg-deep-alt: #191d22;
+  --pi-bg-canvas: #1a1a2e;
+  --pi-bg-panel: #1e2329;
+  --pi-bg-panel-alt: #22282f;
+  --pi-bg-sunken: #1a1f25;
+  --pi-bg-subtle: #212730;
+  --pi-bg-raised: #262d34;
+  --pi-bg-selected: #26333f;
+  --pi-bg-hover: #2d353f;
+  --pi-bg-hover-strong: #33404d;
+  --pi-bg-control: #2a3139;
+  --pi-bg-control-hover: #353e49;
+  --pi-bg-control-disabled: #252b32;
+  --pi-bg-disabled-alt: #232930;
+  --pi-bg-checker: #232a32;
+  --pi-bg-panel-translucent: rgb(30 35 41 / 94%);
+  --pi-bg-app-translucent: rgb(22 26 31 / 92%);
+  --pi-splitter-bg: #242a31;
+
+  /* --- borders ----------------------------------------------------------- */
+  --pi-border: #353b43;
+  --pi-border-strong: #414954;
+  --pi-border-hover: #4a5866;
+  --pi-border-hover-soft: #3a4450;
+  --pi-border-subtle: #2d353f;
+  --pi-border-muted: #2f363f;
+  --pi-border-faint: #262d34;
+  --pi-border-disabled: #343a42;
+  --pi-border-swatch: #75808c;
+
+  /* --- text -------------------------------------------------------------- */
+  --pi-text: #d7dce2;
+  --pi-text-strong: #e1e6eb;
+  --pi-text-heading: #eef2f6;
+  --pi-text-secondary: #cbd3dc;
+  --pi-text-tab: #b8c1cb;
+  --pi-text-muted: #aeb7c2;
+  --pi-text-soft: #9aa6b2;
+  --pi-text-subtle: #8e99a6;
+  --pi-text-faint: #77818c;
+  --pi-text-dim: #6f7b87;
+  --pi-text-disabled: #7b8490;
+  --pi-text-inverse: #ffffff;
+
+  /* --- accent ------------------------------------------------------------ */
+  --pi-accent: #5b9cff;
+  --pi-accent-border: #4b93e6;
+  --pi-accent-strong: #2d6db5;
+  --pi-accent-strong-hover: #3679c4;
+  --pi-accent-active: #274e76;
+  --pi-accent-soft: #23303d;
+  --pi-accent-soft-border: #3d5773;
+  --pi-accent-soft-border-strong: #4b7fb5;
+  --pi-accent-text: #dce8f7;
+  --pi-accent-text-soft: #cfe3f7;
+  --pi-focus: #7fb2e8;
+  --pi-focus-strong: #5a9fd4;
+
+  /* --- status colours ---------------------------------------------------- */
+  --pi-danger: #f08a8a;
+  --pi-danger-text: #f4a5a5;
+  --pi-danger-text-bright: #ff8f8f;
+  --pi-danger-soft: #e2a2a7;
+  --pi-danger-border: #c95a63;
+  --pi-danger-border-soft: #7a3a3a;
+  --pi-danger-bright: #ff6b6b;
+  --pi-danger-bg: #6f2930;
+  --pi-danger-on-bg: #ffd7d7;
+  --pi-warning: #e0b36a;
+  --pi-warning-text: #f0c48a;
+  --pi-warning-border: #c79a3c;
+  --pi-warning-border-soft: #7a5a2a;
+  --pi-success: #9ed9ae;
+  --pi-success-alt: #9fe0b4;
+  --pi-success-border: #2f6b43;
+  --pi-info: #9fc4ea;
+  --pi-info-text: #a8cdf0;
+  --pi-info-strong: #8fb8e8;
+  --pi-info-bright: #b8d8ff;
+  --pi-info-link: #82b9ed;
+
+  /* --- shape ------------------------------------------------------------- */
+  --pi-radius-xs: 2px;
+  --pi-radius-sm: 3px;
+  --pi-radius-md: 4px;
+  --pi-radius-lg: 8px;
+  --pi-radius-xl: 12px;
+  --pi-gap-xs: 4px;
+  --pi-gap-sm: 6px;
+  --pi-gap-md: 8px;
+  --pi-gap-lg: 12px;
+  --pi-shadow-sm: 0 1px 2px rgb(0 0 0 / 25%);
+  --pi-shadow-md: 0 4px 14px rgb(0 0 0 / 40%);
+
+  /* --- shell / island chrome -------------------------------------------- */
+  /* Dark keeps the classic flush layout: no outer padding, no gaps, no
+   * borders, no shadows. Islands fills these in below. */
+  --pi-shell-bg: var(--pi-bg-app);
+  --pi-island-padding: 0px;
+  --pi-island-gap: 0px;
+  --pi-island-radius: var(--pi-radius-md);
+  --pi-island-border-width: 0px;
+  --pi-island-border-color: transparent;
+  --pi-island-shadow: none;
+  --pi-island-panel-bg: var(--pi-bg-panel);
+}
+
+/*
+ * Islands: VS Code-style floating panels. The window is a near-black canvas
+ * with a very subtle vertical gradient; every major surface becomes a rounded,
+ * bordered card separated by a consistent gap.
+ */
+html[data-theme='islands'] {
+  color-scheme: dark;
+
+  --pi-bg-app: #0b0e12;
+  --pi-bg-deep: #0a0d11;
+  --pi-bg-deep-alt: #0c1015;
+  --pi-bg-canvas: #0c1116;
+  --pi-bg-panel: #161b21;
+  --pi-bg-panel-alt: #131820;
+  --pi-bg-sunken: #0f1419;
+  --pi-bg-subtle: #1a2027;
+  --pi-bg-raised: #1c232b;
+  --pi-bg-selected: #1d2933;
+  --pi-bg-hover: #232b34;
+  --pi-bg-hover-strong: #2a343f;
+  --pi-bg-control: #1e252d;
+  --pi-bg-control-hover: #29323c;
+  --pi-bg-control-disabled: #191f26;
+  --pi-bg-disabled-alt: #181e25;
+  --pi-bg-checker: #1a222a;
+  --pi-bg-panel-translucent: rgb(22 27 33 / 94%);
+  --pi-bg-app-translucent: rgb(11 14 18 / 92%);
+  --pi-splitter-bg: transparent;
+
+  --pi-border: #2a333d;
+  --pi-border-strong: #364252;
+  --pi-border-hover: #46566a;
+  --pi-border-hover-soft: #39434e;
+  --pi-border-subtle: #232b34;
+  --pi-border-muted: #28313b;
+  --pi-border-faint: #1f272f;
+  --pi-border-disabled: #2a323b;
+  --pi-border-swatch: #8a96a3;
+
+  --pi-text: #d7dce2;
+  --pi-text-strong: #e1e6eb;
+  --pi-text-heading: #eef2f6;
+  --pi-text-secondary: #cbd3dc;
+  --pi-text-tab: #c4ced8;
+  --pi-text-muted: #aeb7c2;
+  --pi-text-soft: #a7b2bf;
+  --pi-text-subtle: #8e99a6;
+  --pi-text-faint: #77818c;
+  --pi-text-dim: #7f8b98;
+  --pi-text-disabled: #7b8490;
+  --pi-text-inverse: #ffffff;
+
+  --pi-accent: #5b9cff;
+  --pi-accent-border: #4b93e6;
+  --pi-accent-strong: #2d6db5;
+  --pi-accent-strong-hover: #3679c4;
+  --pi-accent-active: #274e76;
+  --pi-accent-soft: #23303d;
+  --pi-accent-soft-border: #3d5773;
+  --pi-accent-soft-border-strong: #4a6f96;
+  --pi-accent-text: #dce8f7;
+  --pi-accent-text-soft: #d5e7f8;
+  --pi-focus: #7fb2e8;
+  --pi-focus-strong: #6fa9dc;
+
+  --pi-danger: #f08a8a;
+  --pi-danger-text: #f4a5a5;
+  --pi-danger-text-bright: #ff9a9a;
+  --pi-danger-soft: #e2a2a7;
+  --pi-danger-border: #c95a63;
+  --pi-danger-border-soft: #8a4a4a;
+  --pi-danger-bright: #ff7b7b;
+  --pi-danger-bg: #6f2930;
+  --pi-danger-on-bg: #ffd7d7;
+  --pi-warning: #e0b36a;
+  --pi-warning-text: #f0c48a;
+  --pi-warning-border: #c79a3c;
+  --pi-warning-border-soft: #8a6a3a;
+  --pi-success: #9ed9ae;
+  --pi-success-alt: #9fe0b4;
+  --pi-success-border: #2f6b43;
+  --pi-info: #9fc4ea;
+  --pi-info-text: #a8cdf0;
+  --pi-info-strong: #8fb8e8;
+  --pi-info-bright: #c2e0ff;
+  --pi-info-link: #8fc5f5;
+
+  --pi-shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+  --pi-shadow-md: 0 6px 18px rgb(0 0 0 / 45%);
+  --pi-shell-bg: transparent;
+
+  --pi-island-padding: 10px;
+  --pi-island-gap: 10px;
+  --pi-island-radius: 10px;
+  --pi-island-border-width: 1px;
+  --pi-island-border-color: #2b3540;
+  --pi-island-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+  --pi-island-panel-bg: var(--pi-bg-panel);
+
+  background-color: var(--pi-bg-app);
+}
+
+html,
+body {
+  background-color: var(--pi-bg-app);
+}
+
+/*
+ * The root canvas gradient lives on <body> so the App shell can stay
+ * transparent and let it show through the gaps between the islands.
+ */
+html[data-theme='islands'] body {
+  background-color: var(--pi-bg-app);
+  background-image:
+    radial-gradient(1100px 620px at 18% -12%, rgb(46 68 94 / 35%) 0%, transparent 62%),
+    radial-gradient(900px 540px at 105% 8%, rgb(33 54 74 / 24%) 0%, transparent 58%),
+    linear-gradient(165deg, #090b0e 0%, #10151b 48%, #090c10 100%);
+  background-attachment: fixed;
+}
+
+html[data-theme='islands'] #root {
+  background: transparent;
+}

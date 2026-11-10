@@ -14,7 +14,7 @@
 
 .sectionTitle {
   margin: 0 0 6px;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -22,8 +22,8 @@
 }
 
 .sectionContent {
-  border: 1px solid #353b43;
-  border-radius: 4px;
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-md);
   overflow: hidden;
 }
 
@@ -34,7 +34,7 @@
   align-items: center;
   min-height: 28px;
   padding: 5px 8px;
-  border-bottom: 1px solid #303740;
+  border-bottom: 1px solid var(--pi-border-muted);
 }
 
 .row:last-child {
@@ -42,13 +42,13 @@
 }
 
 .label {
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
 }
 
 .value {
   min-width: 0;
   overflow-wrap: anywhere;
-  color: #e1e6eb;
+  color: var(--pi-text-strong);
   font-variant-numeric: tabular-nums;
 }
 
@@ -62,7 +62,7 @@
   display: inline-flex;
   padding: 2px 6px;
   border: 1px solid transparent;
-  border-radius: 3px;
+  border-radius: var(--pi-radius-sm);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -71,7 +71,7 @@
 }
 
 .badgeLink {
-  color: #8fb8e8;
+  color: var(--pi-info-strong);
   background: rgba(143, 184, 232, 0.12);
   border-color: rgba(143, 184, 232, 0.32);
 }
@@ -89,7 +89,7 @@
 }
 
 .badgeNote {
-  color: #e0b36a;
+  color: var(--pi-warning);
   background: rgba(224, 179, 106, 0.12);
   border-color: rgba(224, 179, 106, 0.35);
 }
@@ -101,7 +101,7 @@
 }
 
 .badgeOther {
-  color: #aeb7c2;
+  color: var(--pi-text-muted);
   background: rgba(174, 183, 194, 0.1);
   border-color: rgba(174, 183, 194, 0.28);
 }
@@ -115,26 +115,26 @@
 .colorSwatch {
   width: 14px;
   height: 14px;
-  border: 1px solid #75808c;
-  border-radius: 2px;
+  border: 1px solid var(--pi-border-swatch);
+  border-radius: var(--pi-radius-xs);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 20%);
 }
 
 /* The sanitized target is the only string the opener ever receives. */
 .url {
-  color: #8fb8e8;
+  color: var(--pi-info-strong);
   overflow-wrap: anywhere;
 }
 
 /* Display-only raw PDF.js target, kept visually distinct from an openable URL. */
 .unsafeUrl {
-  color: #e2a2a7;
+  color: var(--pi-danger-soft);
   overflow-wrap: anywhere;
   text-decoration: line-through;
 }
 
 .warning {
-  color: #e0b36a;
+  color: var(--pi-warning);
 }
 
 .actions {
@@ -142,45 +142,45 @@
   flex-wrap: wrap;
   gap: 6px;
   padding: 6px 8px;
-  border-top: 1px solid #303740;
+  border-top: 1px solid var(--pi-border-muted);
 }
 
 .button {
   padding: 3px 10px;
-  color: #e1e6eb;
-  background: #2a313a;
-  border: 1px solid #353b43;
-  border-radius: 3px;
+  color: var(--pi-text-strong);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm);
   font: inherit;
   font-size: 11px;
   cursor: pointer;
 }
 
 .button:hover {
-  background: #333c47;
+  background: var(--pi-bg-control-hover);
 }
 
 .button:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: 1px;
 }
 
 .button:disabled {
-  color: #77818c;
-  background: #232930;
-  border-color: #2e353d;
+  color: var(--pi-text-faint);
+  background: var(--pi-bg-disabled-alt);
+  border-color: var(--pi-border-subtle);
   cursor: not-allowed;
 }
 
 .note {
   padding: 6px 8px;
-  color: #8e99a6;
-  border-top: 1px solid #303740;
+  color: var(--pi-text-subtle);
+  border-top: 1px solid var(--pi-border-muted);
 }
 
 .error {
   padding: 6px 8px;
-  color: #e2a2a7;
+  color: var(--pi-danger-soft);
   background: rgba(226, 162, 167, 0.08);
   border-top: 1px solid rgba(226, 162, 167, 0.35);
   overflow-wrap: anywhere;
@@ -193,7 +193,7 @@
 }
 
 .option {
-  color: #e1e6eb;
+  color: var(--pi-text-strong);
   overflow-wrap: anywhere;
 }
 

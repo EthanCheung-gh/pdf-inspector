@@ -11,6 +11,7 @@ import { useWorkspaceStore } from '../../store/workspace-store';
 import { SearchBox } from './SearchBox';
 import { ExportDialog } from './ExportDialog';
 import { OpenUrlDialog } from './OpenUrlDialog';
+import { ThemeToggle } from './ThemeToggle';
 import type { OpenedFromUrl } from './OpenUrlDialog';
 import styles from './Toolbar.module.css';
 
@@ -382,6 +383,7 @@ export const Toolbar: React.FC = () => {
       <div className={styles.spacer} />
       {!workspaceActive && <ExportDialog />}
       {!workspaceActive && <SearchBox />}
+      <ThemeToggle />
       <span className={styles.filename} title={displayTitle}>{filename}</span>
 
       <OpenUrlDialog

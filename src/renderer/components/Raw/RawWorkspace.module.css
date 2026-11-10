@@ -15,7 +15,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: #161a1f;
+  background: var(--pi-bg-app);
 }
 
 .toolbar {
@@ -26,14 +26,14 @@
   gap: 6px;
   min-height: 34px;
   padding: 4px 8px;
-  background: #1a1f25;
-  border-bottom: 1px solid #353b43;
+  background: var(--pi-bg-sunken);
+  border-bottom: 1px solid var(--pi-border);
   font-size: 12px;
 }
 
 .title {
   flex: 0 0 auto;
-  color: #eef2f6;
+  color: var(--pi-text-heading);
   font-weight: 600;
 }
 
@@ -42,7 +42,7 @@
   max-width: 320px;
   min-width: 0;
   overflow: hidden;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -55,10 +55,10 @@
 .button {
   flex-shrink: 0;
   padding: 4px 7px;
-  color: #d7dce2;
-  background: #2a3139;
-  border: 1px solid #414954;
-  border-radius: 4px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
   cursor: pointer;
   font: inherit;
   font-size: 12px;
@@ -66,18 +66,18 @@
 }
 
 .button:hover:not(:disabled) {
-  background: #353e49;
+  background: var(--pi-bg-control-hover);
 }
 
 .button:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: 1px;
 }
 
 .button:disabled {
-  color: #7b8490;
-  background: #252b32;
-  border-color: #343a42;
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
   cursor: not-allowed;
 }
 
@@ -85,7 +85,7 @@
   flex-shrink: 0;
   width: 1px;
   height: 20px;
-  background: #414954;
+  background: var(--pi-border-strong);
 }
 
 /* --- tabs ---------------------------------------------------------------- */
@@ -95,17 +95,17 @@
   flex-shrink: 0;
   gap: 2px;
   padding: 2px;
-  background: #22282f;
-  border: 1px solid #353b43;
-  border-radius: 4px;
+  background: var(--pi-bg-panel-alt);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-md);
 }
 
 .tab {
   padding: 3px 8px;
-  color: #aeb7c2;
+  color: var(--pi-text-muted);
   background: none;
   border: 1px solid transparent;
-  border-radius: 3px;
+  border-radius: var(--pi-radius-sm);
   cursor: pointer;
   font: inherit;
   font-size: 11px;
@@ -113,19 +113,19 @@
 }
 
 .tab:hover {
-  color: #e6e9ee;
-  background: #2a3139;
+  color: var(--pi-text-strong);
+  background: var(--pi-bg-control);
 }
 
 .tab:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: 1px;
 }
 
 .activeTab {
-  color: #fff;
-  background: #2d6db5;
-  border-color: #4b93e6;
+  color: var(--pi-text-inverse);
+  background: var(--pi-accent-strong);
+  border-color: var(--pi-accent-border);
 }
 
 /* --- body: tree | detail -------------------------------------------------- */
@@ -158,7 +158,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-right: 1px solid #2f363f;
+  border-right: 1px solid var(--pi-border-muted);
 }
 
 .detailPane {
@@ -187,13 +187,13 @@
   align-items: baseline;
   gap: 6px;
   padding: 5px 8px;
-  border-bottom: 1px solid #262d34;
+  border-bottom: 1px solid var(--pi-border-faint);
   font-size: 11px;
 }
 
 .panelTitle {
   flex: 0 0 auto;
-  color: #eef2f6;
+  color: var(--pi-text-heading);
   font-weight: 600;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
@@ -202,7 +202,7 @@
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -211,7 +211,7 @@
 
 .copyStatus {
   flex: 0 0 auto;
-  color: #9ed9ae;
+  color: var(--pi-success);
   font-size: 10px;
 }
 
@@ -220,23 +220,23 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 4px;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 10px;
 }
 
 .select {
   max-width: 100%;
   padding: 2px 4px;
-  color: #d7dce2;
-  background: #22282f;
-  border: 1px solid #414954;
-  border-radius: 3px;
+  color: var(--pi-text);
+  background: var(--pi-bg-panel-alt);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-sm);
   font: inherit;
   font-size: 11px;
 }
 
 .select:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: 1px;
 }
 
@@ -266,18 +266,18 @@
   gap: 4px 10px;
   min-width: 0;
   padding-bottom: 3px;
-  border-bottom: 1px solid #262d34;
+  border-bottom: 1px solid var(--pi-border-faint);
 }
 
 .streamTitle {
-  color: #eef2f6;
+  color: var(--pi-text-heading);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
   font-weight: 600;
 }
 
 .streamMeta {
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10px;
   font-variant-numeric: tabular-nums;
@@ -295,17 +295,17 @@
   padding: 2px 6px;
   text-align: left;
   vertical-align: top;
-  border-bottom: 1px solid #22282f;
+  border-bottom: 1px solid var(--pi-border-faint);
 }
 
 .operatorTable th {
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-weight: 500;
   font-size: 10px;
 }
 
 .operatorTable code {
-  color: #9fc4ea;
+  color: var(--pi-info);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
 }
@@ -313,7 +313,7 @@
 .indexCell,
 .offsetCell {
   width: 1%;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -334,7 +334,7 @@
 .loading {
   margin: 0;
   padding: 6px 0;
-  color: #a8cdf0;
+  color: var(--pi-info-text);
   font-size: 11px;
   overflow-wrap: anywhere;
 }
@@ -342,7 +342,7 @@
 .empty {
   margin: 0;
   padding: 8px;
-  color: #aeb7c2;
+  color: var(--pi-text-muted);
   font-size: 11px;
   overflow-wrap: anywhere;
 }
@@ -350,7 +350,7 @@
 .notice {
   margin: 0;
   padding: 3px 0;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 10px;
   overflow-wrap: anywhere;
 }
@@ -358,7 +358,7 @@
 .error {
   margin: 0;
   padding: 6px 8px;
-  color: #f08a8a;
+  color: var(--pi-danger);
   background: rgba(240, 138, 138, 0.08);
   border-bottom: 1px solid rgba(240, 138, 138, 0.35);
   font-size: 12px;
@@ -372,7 +372,7 @@
   gap: 6px;
   margin: 0;
   padding: 4px 0;
-  color: #f08a8a;
+  color: var(--pi-danger);
   font-size: 11px;
   overflow-wrap: anywhere;
 }
@@ -392,4 +392,31 @@
   clip: rect(0 0 0 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* --- Islands theme ------------------------------------------------------- */
+
+:global(html[data-theme='islands']) .workspace {
+  background: var(--pi-bg-panel);
+  border: var(--pi-island-border-width) solid var(--pi-island-border-color);
+  border-radius: var(--pi-island-radius);
+  box-shadow: var(--pi-island-shadow);
+}
+
+:global(html[data-theme='islands']) .toolbar {
+  background: transparent;
+  border-bottom-color: var(--pi-border-subtle);
+}
+
+:global(html[data-theme='islands']) .body {
+  gap: var(--pi-island-gap);
+  padding: var(--pi-island-gap);
+}
+
+:global(html[data-theme='islands']) .treePane,
+:global(html[data-theme='islands']) .detailPane {
+  background: var(--pi-bg-panel-alt);
+  border: 1px solid var(--pi-border-subtle);
+  border-radius: var(--pi-radius-lg);
+  overflow: hidden;
 }

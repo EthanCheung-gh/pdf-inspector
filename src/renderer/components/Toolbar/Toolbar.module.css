@@ -5,9 +5,9 @@
   min-width: 0;
   min-height: 40px;
   padding: 0 8px;
-  color: #d7dce2;
-  background: #1e2329;
-  border-bottom: 1px solid #353b43;
+  color: var(--pi-text);
+  background: var(--pi-bg-panel);
+  border-bottom: 1px solid var(--pi-border);
   font-size: 12px;
 }
 
@@ -21,54 +21,54 @@
 .button {
   flex-shrink: 0;
   padding: 4px 7px;
-  color: #d7dce2;
-  background: #2a3139;
-  border: 1px solid #414954;
-  border-radius: 4px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
   cursor: pointer;
   font: inherit;
   white-space: nowrap;
 }
 
 .button:hover:not(:disabled) {
-  background: #353e49;
+  background: var(--pi-bg-control-hover);
 }
 
 .button:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: 1px;
 }
 
 .button.active {
-  color: #fff;
-  background: #2d6db5;
-  border-color: #4b93e6;
+  color: var(--pi-text-inverse);
+  background: var(--pi-accent-strong);
+  border-color: var(--pi-accent-border);
 }
 
 /* Softer than .active: marks panes/layers that are currently visible without
  * competing with the mode toggles for attention. */
 .button.paneVisible {
-  color: #dce8f7;
-  background: #23303d;
-  border-color: #4b7fb5;
+  color: var(--pi-accent-text);
+  background: var(--pi-accent-soft);
+  border-color: var(--pi-accent-soft-border-strong);
 }
 
 .button:disabled {
-  color: #7b8490;
-  background: #252b32;
-  border-color: #343a42;
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
   cursor: not-allowed;
 }
 
 .separator {
   width: 1px;
   height: 22px;
-  background: #414954;
+  background: var(--pi-border-strong);
 }
 
 .value {
   min-width: 40px;
-  color: #aeb7c2;
+  color: var(--pi-text-muted);
   text-align: center;
   white-space: nowrap;
 }
@@ -88,7 +88,7 @@
   max-width: 360px;
   min-width: 0;
   overflow: hidden;
-  color: #aeb7c2;
+  color: var(--pi-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -118,4 +118,31 @@
   .toolbar.searchOpen .filename {
     display: none;
   }
+}
+
+/* Theme toggle: same footprint as the other toolbar buttons, with the active
+ * theme called out in the accent colour. */
+.themeToggle {
+  min-width: 88px;
+  text-align: left;
+}
+
+.button.themeToggleActive {
+  color: var(--pi-accent-text);
+  background: var(--pi-accent-soft);
+  border-color: var(--pi-accent-soft-border);
+}
+
+/* --- Islands theme ------------------------------------------------------- */
+
+:global(html[data-theme='islands']) .toolbar {
+  background: var(--pi-bg-panel);
+  border: var(--pi-island-border-width) solid var(--pi-island-border-color);
+  border-radius: var(--pi-island-radius);
+  box-shadow: var(--pi-island-shadow);
+}
+
+/* Slightly raised controls read as separate chips inside the toolbar card. */
+:global(html[data-theme='islands']) .button {
+  box-shadow: var(--pi-shadow-sm);
 }

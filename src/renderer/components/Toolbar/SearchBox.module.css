@@ -21,16 +21,16 @@
    * filename instead of eating into it further. */
   min-width: 48px;
   padding: 4px 8px;
-  color: #d7dce2;
-  background: #2a3139;
-  border: 1px solid #414954;
-  border-radius: 4px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
   font-size: 13px;
 }
 
 .input:focus {
   outline: none;
-  border-color: #5b9cff;
+  border-color: var(--pi-accent);
 }
 
 /*
@@ -50,7 +50,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11.5px;
-  color: #aeb7c2;
+  color: var(--pi-text-muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -59,27 +59,27 @@
   /* Compact but still a comfortable click target; three of these plus the
    * input and the count have to share one toolbar row. */
   padding: 4px 8px;
-  color: #d7dce2;
-  background: #2a3139;
-  border: 1px solid #414954;
-  border-radius: 4px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
   cursor: pointer;
   font-size: 13px;
   line-height: 1;
 }
 
 .button:hover:not(:disabled) {
-  background: #353e49;
+  background: var(--pi-bg-control-hover);
 }
 
 .button:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: 1px;
 }
 
 .button:disabled {
-  color: #7b8490;
-  background: #252b32;
-  border-color: #343a42;
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
   cursor: not-allowed;
 }

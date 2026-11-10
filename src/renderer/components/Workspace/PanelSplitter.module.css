@@ -3,7 +3,7 @@
   flex: 0 0 6px;
   align-self: stretch;
   width: 6px;
-  background: #242a31;
+  background: var(--pi-splitter-bg);
   cursor: col-resize;
   touch-action: none;
   outline: none;
@@ -16,16 +16,29 @@
   bottom: 0;
   left: 2px;
   width: 1px;
-  background: #353b43;
+  background: var(--pi-border);
   content: "";
 }
 
 .splitter:hover,
 .splitter.dragging {
-  background: #33404d;
+  background: var(--pi-bg-hover-strong);
 }
 
 .splitter:focus-visible {
-  background: #33404d;
-  box-shadow: inset 0 0 0 2px #5a9fd4;
+  background: var(--pi-bg-hover-strong);
+  box-shadow: inset 0 0 0 2px var(--pi-focus-strong);
+}
+
+/* --- Islands theme ------------------------------------------------------- */
+
+/* The splitter keeps its 6px hit area and drag behaviour; only the visible
+ * line goes away so it reads as the gap between two cards. */
+:global(html[data-theme='islands']) .splitter {
+  background: transparent;
+}
+
+:global(html[data-theme='islands']) .splitter::after {
+  background: var(--pi-border-subtle);
+  opacity: 0.45;
 }

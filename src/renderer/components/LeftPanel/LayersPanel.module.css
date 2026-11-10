@@ -12,11 +12,11 @@
   justify-content: space-between;
   gap: 8px;
   padding: 7px 8px;
-  border-bottom: 1px solid #303740;
+  border-bottom: 1px solid var(--pi-border-muted);
 }
 
 .title {
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -32,10 +32,10 @@
 .soloButton,
 .eyeButton {
   padding: 2px 6px;
-  color: #aeb7c2;
-  background: #252b32;
-  border: 1px solid #3b434d;
-  border-radius: 3px;
+  color: var(--pi-text-muted);
+  background: var(--pi-bg-control-disabled);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm);
   cursor: pointer;
   font: inherit;
   font-size: 10px;
@@ -45,14 +45,14 @@
 .bulkButton:hover,
 .soloButton:hover,
 .eyeButton:hover {
-  color: #fff;
-  background: #353e49;
+  color: var(--pi-text-inverse);
+  background: var(--pi-bg-control-hover);
 }
 
 .bulkButton:focus-visible,
 .soloButton:focus-visible,
 .eyeButton:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: 1px;
 }
 
@@ -75,51 +75,51 @@
 }
 
 .row:hover {
-  background: #262d35;
+  background: var(--pi-bg-raised);
 }
 
 .swatch {
   width: 10px;
   height: 10px;
   border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 2px;
+  border-radius: var(--pi-radius-xs);
 }
 
 .label {
   min-width: 0;
   overflow: hidden;
-  color: #cbd3dc;
+  color: var(--pi-text-secondary);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .count {
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 
 .soloButton {
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
 }
 
 .soloButton.soloActive {
-  color: #fff;
-  background: #2d6db5;
-  border-color: #4b93e6;
+  color: var(--pi-text-inverse);
+  background: var(--pi-accent-strong);
+  border-color: var(--pi-accent-border);
 }
 
 .eyeButton {
   padding: 2px 4px;
-  color: #6f7882;
+  color: var(--pi-text-dim);
   font-size: 12px;
   text-align: center;
 }
 
 .eyeButton.eyeVisible {
-  color: #9fd3a3;
+  color: var(--pi-success);
 }
 
 .opacityRow {
@@ -128,16 +128,16 @@
   gap: 6px;
   align-items: center;
   padding: 7px 8px;
-  border-top: 1px solid #303740;
+  border-top: 1px solid var(--pi-border-muted);
 }
 
 .opacityLabel {
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 11px;
 }
 
 .opacityValue {
-  color: #aeb7c2;
+  color: var(--pi-text-muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -146,6 +146,6 @@
 .slider {
   width: 100%;
   min-width: 0;
-  accent-color: #5b9cff;
+  accent-color: var(--pi-accent);
   cursor: pointer;
 }

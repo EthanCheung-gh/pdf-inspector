@@ -11,8 +11,8 @@
   gap: 8px;
   min-height: 32px;
   padding: 0 8px;
-  background: #10141a;
-  border-bottom: 1px solid #2a323c;
+  background: var(--pi-bg-deep);
+  border-bottom: 1px solid var(--pi-border-subtle);
 }
 
 .tabs {
@@ -32,16 +32,16 @@
   align-items: center;
   max-width: 220px;
   min-width: 96px;
-  background: #1b2129;
-  border: 1px solid #2f3a45;
-  border-radius: 4px;
-  color: #b8c1cb;
+  background: var(--pi-bg-sunken);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-md);
+  color: var(--pi-text-tab);
 }
 
 .tabActive {
-  background: #252e38;
-  border-color: #4a5866;
-  color: #eef2f6;
+  background: var(--pi-bg-raised);
+  border-color: var(--pi-border-hover);
+  color: var(--pi-text-heading);
 }
 
 .label {
@@ -79,7 +79,7 @@
   margin-right: 4px;
   padding: 0;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--pi-radius-sm);
   background: none;
   color: inherit;
   font-size: 11px;
@@ -89,13 +89,13 @@
 }
 
 .close:hover:not(:disabled) {
-  background: #3a4551;
-  color: #ffffff;
+  background: var(--pi-bg-control-hover);
+  color: var(--pi-text-inverse);
 }
 
 .status {
   flex: 0 0 auto;
-  color: #9fb0c0;
+  color: var(--pi-text-soft);
   font-size: 11px;
 }
 
@@ -103,8 +103,22 @@
   flex: 0 1 auto;
   max-width: 420px;
   overflow: hidden;
-  color: #ff8f8f;
+  color: var(--pi-danger-text-bright);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* --- Islands theme ------------------------------------------------------- */
+
+:global(html[data-theme='islands']) .bar {
+  background: var(--pi-bg-panel);
+  border: var(--pi-island-border-width) solid var(--pi-island-border-color);
+  border-radius: var(--pi-island-radius);
+  box-shadow: var(--pi-island-shadow);
+}
+
+/* Tabs sit slightly proud of the strip, like VS Code's editor tabs. */
+:global(html[data-theme='islands']) .tab {
+  box-shadow: var(--pi-shadow-sm);
 }

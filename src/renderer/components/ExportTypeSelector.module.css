@@ -3,7 +3,7 @@
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-  color: #d7dce2;
+  color: var(--pi-text);
   font-size: 13px;
 }
 
@@ -14,13 +14,13 @@
 }
 
 .label {
-  color: #aeb7c2;
+  color: var(--pi-text-muted);
   font-size: 12px;
 }
 
 .count {
   min-width: 30px;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -31,28 +31,28 @@
 
 .miniButton {
   padding: 2px 8px;
-  color: #d7dce2;
-  background: #2a3139;
-  border: 1px solid #414954;
-  border-radius: 4px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
 
 .miniButton:hover:not(:disabled) {
-  background: #353e49;
+  background: var(--pi-bg-control-hover);
 }
 
 .miniButton:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: 1px;
 }
 
 .miniButton:disabled {
-  color: #7b8490;
-  background: #252b32;
-  border-color: #343a42;
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
   cursor: not-allowed;
 }
 
@@ -66,13 +66,13 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #d7dce2;
+  color: var(--pi-text);
   cursor: pointer;
 }
 
 .option input {
   margin: 0;
-  accent-color: #4b93e6;
+  accent-color: var(--pi-accent-border);
 }
 
 .option input:disabled {

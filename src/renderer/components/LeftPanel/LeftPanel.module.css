@@ -4,9 +4,9 @@
   flex-direction: column;
   width: 100%;
   min-width: 0;
-  color: #cbd3dc;
-  background: #1e2329;
-  border-right: 1px solid #353b43;
+  color: var(--pi-text-secondary);
+  background: var(--pi-bg-panel);
+  border-right: 1px solid var(--pi-border);
   font-size: 12px;
   overflow: hidden;
 }
@@ -17,7 +17,7 @@
   display: flex;
   align-items: center;
   min-width: 0;
-  border-bottom: 1px solid #353b43;
+  border-bottom: 1px solid var(--pi-border);
 }
 
 .tabBar {
@@ -32,7 +32,7 @@
   padding: 8px 1px;
   border: 0;
   background: transparent;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font: inherit;
   font-size: 9.5px;
   font-weight: 700;
@@ -49,13 +49,13 @@
 }
 
 .tabButton:hover {
-  background: #2d353f;
-  color: #cbd3dc;
+  background: var(--pi-bg-hover);
+  color: var(--pi-text-secondary);
 }
 
 .tabButton.activeTab {
-  color: #fff;
-  background: #274e76;
+  color: var(--pi-text-inverse);
+  background: var(--pi-accent-active);
 }
 
 /* Compact glyph button next to the tab bar; the accessible name carries the
@@ -70,9 +70,9 @@
   margin: 0 4px 0 2px;
   padding: 0;
   border: 0;
-  border-radius: 3px;
+  border-radius: var(--pi-radius-sm);
   background: transparent;
-  color: #8e99a6;
+  color: var(--pi-text-subtle);
   font: inherit;
   font-size: 14px;
   line-height: 1;
@@ -80,12 +80,12 @@
 }
 
 .collapseButton:hover {
-  background: #2d353f;
-  color: #cbd3dc;
+  background: var(--pi-bg-hover);
+  color: var(--pi-text-secondary);
 }
 
 .collapseButton:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: -2px;
 }
 
@@ -120,7 +120,20 @@
   flex: 1;
   place-items: center;
   padding: 24px;
-  color: #77818c;
+  color: var(--pi-text-faint);
   line-height: 1.5;
   text-align: center;
+}
+
+/* --- Islands theme ------------------------------------------------------- */
+
+:global(html[data-theme='islands']) .panel {
+  background: var(--pi-island-panel-bg);
+  border: var(--pi-island-border-width) solid var(--pi-island-border-color);
+  border-radius: var(--pi-island-radius);
+  box-shadow: var(--pi-island-shadow);
+}
+
+:global(html[data-theme='islands']) .tabHeader {
+  border-bottom-color: var(--pi-border-subtle);
 }

@@ -6,16 +6,16 @@
 /* Same visual treatment as the old ExportMenu trigger. */
 .button {
   padding: 4px 8px;
-  border: 1px solid #414954;
-  border-radius: 4px;
-  color: #d7dce2;
-  background: #2a3139;
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
   cursor: pointer;
   font-size: 13px;
 }
 
 .button:hover:not(:disabled) {
-  background: #353e49;
+  background: var(--pi-bg-control-hover);
 }
 
 .button:disabled {
@@ -37,9 +37,9 @@
   width: 460px;
   max-width: calc(100vw - 32px);
   padding: 18px;
-  color: #d7dce2;
-  background: #1e2329;
-  border: 1px solid #414954;
+  color: var(--pi-text);
+  background: var(--pi-bg-panel);
+  border: 1px solid var(--pi-border-strong);
   border-radius: 6px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   font-size: 13px;
@@ -51,7 +51,7 @@
 
 .title {
   margin: 0 0 12px;
-  color: #eef2f6;
+  color: var(--pi-text-heading);
   font-size: 14px;
   font-weight: 600;
 }
@@ -65,7 +65,7 @@
 }
 
 .rowLabel {
-  color: #aeb7c2;
+  color: var(--pi-text-muted);
   font-size: 12px;
 }
 
@@ -84,26 +84,26 @@
 
 .radioLabel input {
   margin: 0;
-  accent-color: #4b93e6;
+  accent-color: var(--pi-accent-border);
 }
 
 .selectorRow {
   margin-bottom: 6px;
   padding: 8px 10px;
-  background: #2a3139;
-  border: 1px solid #414954;
-  border-radius: 4px;
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
 }
 
 .errorArea {
   min-height: 16px;
-  color: #f08a8a;
+  color: var(--pi-danger);
   font-size: 12px;
 }
 
 .progress {
   margin-bottom: 6px;
-  color: #aeb7c2;
+  color: var(--pi-text-muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -121,30 +121,30 @@
 }
 
 .actions .button:focus-visible {
-  outline: 2px solid #5b9cff;
+  outline: 2px solid var(--pi-accent);
   outline-offset: 1px;
 }
 
 .actions .button:disabled {
-  color: #7b8490;
-  background: #252b32;
-  border-color: #343a42;
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
   cursor: not-allowed;
   opacity: 1;
 }
 
 .primary {
-  color: #fff;
-  background: #2d6db5;
-  border-color: #4b93e6;
+  color: var(--pi-text-inverse);
+  background: var(--pi-accent-strong);
+  border-color: var(--pi-accent-border);
 }
 
 .primary:hover:not(:disabled) {
-  background: #3679c4;
+  background: var(--pi-accent-strong-hover);
 }
 
 .primary:disabled {
-  color: #7b8490;
-  background: #252b32;
-  border-color: #343a42;
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
 }

@@ -7,6 +7,7 @@ import { useAuditStore } from './store/audit-store';
 import { useDiffStore } from './store/diff-store';
 import { usePdfStore } from './store/pdf-store';
 import { useRawStore } from './store/raw-store';
+import { useThemeStore } from './store/theme-store';
 import { useWorkspaceStore } from './store/workspace-store';
 import type { PdfMetadata, PdfWord } from './types/pdf-objects';
 import type { RawDocument } from './types/raw-pdf';
@@ -73,6 +74,7 @@ beforeEach(() => {
   useDiffStore.getState().reset();
   useAuditStore.getState().reset();
   useRawStore.getState().reset();
+  useThemeStore.setState({ theme: 'dark' });
   useWorkspaceStore.setState({
     leftCollapsed: false,
     rightCollapsed: false,
@@ -107,6 +109,19 @@ describe('App workspace mode', () => {
     // The toolbar and status bar are part of the shell in both modes.
     expect(screen.getByRole('button', { name: 'Open' })).toBeTruthy();
     expect(screen.getByLabelText('Application status')).toBeTruthy();
+  });
+
+  it('applies the active theme to the document root', () => {
+    useThemeStore.setState({ theme: 'islands' });
+    render(React.createElement(App));
+
+    expect(document.documentElement.dataset.theme).toBe('islands');
+
+    act(() => {
+      useThemeStore.getState().toggleTheme();
+    });
+
+    expect(document.documentElement.dataset.theme).toBe('dark');
   });
 
   it('replaces the Inspect panes with the Diff workspace and keeps the shell usable', () => {

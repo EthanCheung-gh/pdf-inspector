@@ -1,12 +1,19 @@
 .viewport {
   flex: 1;
-  background: #1a1a2e;
+  background: var(--pi-bg-canvas);
   display: flex;
   overflow: auto;
   position: relative;
   /* Keep a stable gutter so a vertical scrollbar appearing/disappearing does not
      change clientWidth (and therefore the fit-width zoom) in a feedback loop. */
   scrollbar-gutter: stable;
+}
+
+/* Islands: the canvas card gets a faint spotlight instead of a flat fill. */
+:global(html[data-theme='islands']) .viewport {
+  background:
+    radial-gradient(900px 520px at 50% 8%, rgb(38 52 68 / 38%) 0%, transparent 70%),
+    var(--pi-bg-canvas);
 }
 
 .pagesContainer {
@@ -30,7 +37,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #666;
+  color: var(--pi-text-dim);
   font-size: 16px;
 }
 
@@ -41,7 +48,7 @@
 }
 
 .errorText {
-  color: #ff6b6b;
+  color: var(--pi-danger-bright);
   max-width: 400px;
   text-align: center;
   padding: 0 24px;
