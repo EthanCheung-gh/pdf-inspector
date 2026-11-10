@@ -55,12 +55,12 @@ async function stopTestServer(): Promise<void> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
-function openUpload(body: string = PDF_BYTES): Promise<Response> {
+function openUpload(body: string = PDF_BYTES, fileName: string = 'large.pdf'): Promise<Response> {
   return fetch(`${baseUrl}/api/open`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/pdf',
-      'X-Filename': encodeURIComponent('large.pdf'),
+      'X-Filename': encodeURIComponent(fileName),
     },
     body,
   });
@@ -116,6 +116,59 @@ describe('POST /api/open budget', () => {
       ],
     ]);
     expect(registry.getCurrent()).not.toBeNull();
+  });
+});
+
+describe('POST /api/open display name', () => {
+  it('preserves a Unicode upload name in the response and the registry', async () => {
+    const response = await openUpload(PDF_BYTES, '测试 报告.pdf');
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { name: string; path: string };
+    expect(payload.name).toBe('测试 报告.pdf');
+    expect(payload.name).not.toContain('_');
+
+    const current = registry.getCurrent();
+    expect(current?.name).toBe('测试 报告.pdf');
+    expect(payload.path).toBe(`/doc/${current?.id}/${encodeURIComponent('测试 报告.pdf')}`);
+  });
+
+  it('still strips paths and Windows-invalid characters from the name', async () => {
+    const response = await openUpload(PDF_BYTES, '../../etc/passwd*?.pdf');
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { name: string };
+    // Last segment only, invalid characters replaced, still a .pdf name.
+    expect(payload.name).toBe('passwd__.pdf');
+    expect(payload.name).not.toContain('/');
+    expect(payload.name).not.toContain('..');
+  });
+
+  it('strips invisible bidi control characters from the name', async () => {
+    const response = await openUpload(PDF_BYTES, 're\u202Eport\u2066.pdf\u2069');
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { name: string };
+    expect(payload.name).toBe('report.pdf');
+    expect(payload.name).not.toMatch(/[\u202A-\u202E\u2066-\u2069]/);
+  });
+
+  it('truncates long names without splitting a surrogate pair', async () => {
+    // 99 BMP chars + an emoji: 101 UTF-16 units, exactly 100 code points, so a
+    // UTF-16 slice at 100 would keep only the high surrogate.
+    const response = await openUpload(PDF_BYTES, `${'a'.repeat(99)}😀.pdf`);
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { name: string };
+    expect(payload.name).toBe(`${'a'.repeat(99)}😀.pdf`);
+    expect(() => encodeURIComponent(payload.name)).not.toThrow();
+    expect(registry.getCurrent()?.name).toBe(payload.name);
+
+    // Over the limit the emoji is dropped whole instead of being cut in half.
+    const longResponse = await openUpload(PDF_BYTES, `${'a'.repeat(100)}😀.pdf`);
+    const longPayload = (await longResponse.json()) as { name: string };
+    expect(longPayload.name).toBe(`${'a'.repeat(100)}.pdf`);
+    expect(() => encodeURIComponent(longPayload.name)).not.toThrow();
   });
 });
 

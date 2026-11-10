@@ -41,6 +41,8 @@ export interface DocumentTabSource {
   path: string;
   metadata: PdfMetadata;
   sourceUrl?: string | null;
+  /** Display name from the opening bridge, used when no URL label applies. */
+  name?: string | null;
 }
 
 export interface RemoveTabResult {
@@ -144,7 +146,9 @@ export const useDocumentTabsStore = create<DocumentTabsState>((set, get) => ({
       id: nextTabId(),
       path: source.path,
       sourceUrl: source.sourceUrl ?? null,
-      name: name ?? source.sourceUrl ?? documentTabName(source.path),
+      // A URL is its own label; otherwise prefer the name the bridge reported
+      // (keeps Unicode upload names readable) before falling back to the path.
+      name: name ?? source.sourceUrl ?? source.name ?? documentTabName(source.path),
       metadata: source.metadata,
       snapshot: captureViewSnapshot(),
     };

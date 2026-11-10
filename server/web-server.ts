@@ -228,9 +228,13 @@ async function hasPdfMagic(filePath: string): Promise<boolean> {
 }
 
 /**
- * Turn a user/header-supplied file name into a safe display name and disk
- * basename. Parent directories, control characters and exotic characters can
- * never survive, and the result always ends in `.pdf`.
+ * Turn a user/header-supplied file name into a safe display name and basename.
+ *
+ * Unicode is preserved on purpose: a Chinese upload must keep its name in the
+ * UI and in exported file names instead of becoming `_____.pdf`. Only path
+ * separators and characters that are invalid on Windows (or control codes) are
+ * replaced, so parent directories can never survive, and the result always ends
+ * in `.pdf`.
  */
 function sanitizeFileName(raw: unknown): string {
   const input = typeof raw === 'string' && raw.trim() ? raw : 'document.pdf';
@@ -244,15 +248,19 @@ function sanitizeFileName(raw: unknown): string {
 
   const base = decoded.replace(/\\/g, '/').split('/').pop() ?? '';
   const cleaned = base
-    .replace(/[\u0000-\u001f\u007f]/g, '')
-    .replace(/[^A-Za-z0-9._ -]/g, '_')
+    // Bidi overrides/isolates are invisible but reorder how the rest of the
+    // name renders, so they are removed instead of replaced.
+    .replace(/[\u202A-\u202E\u2066-\u2069]/g, '')
+    .replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '_')
     .trim()
     .replace(/^\.+/, '');
 
   const withoutExtension = cleaned.toLowerCase().endsWith('.pdf')
     ? cleaned.slice(0, -'.pdf'.length)
     : cleaned;
-  const stem = withoutExtension.replace(/^\.+/, '').slice(0, 100);
+  // Truncate by code point, not UTF-16 unit: slicing in the middle of an emoji
+  // would leave a lone surrogate, which cannot be URI-encoded or displayed.
+  const stem = Array.from(withoutExtension.replace(/^\.+/, '')).slice(0, 100).join('');
   return `${stem || 'document'}.pdf`;
 }
 

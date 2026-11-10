@@ -61,6 +61,18 @@ describe('addTab', () => {
     expect(tabStore().addTab(source('/docs/a.pdf'), 'A (annotated)').name).toBe('A (annotated)');
   });
 
+  it('uses the bridge display name (Unicode preserved) as the label', () => {
+    const tab = tabStore().addTab({
+      path: '/tmp/_____-1a2b.pdf',
+      metadata,
+      name: '测试 报告.pdf',
+    });
+
+    expect(tab.name).toBe('测试 报告.pdf');
+    // An explicit name still wins over the source's display name.
+    expect(tabStore().addTab({ path: '/docs/b.pdf', metadata, name: 'b.pdf' }, 'B').name).toBe('B');
+  });
+
   it('dedupes a local file by path and focuses the existing tab', () => {
     const first = tabStore().addTab(source('/docs/a.pdf'));
     const second = tabStore().addTab(source('/docs/b.pdf'));

@@ -8,6 +8,7 @@ import {
 } from '../../../shared/audit-types';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { ipc } from '../../services/ipc-client';
+import { exportStemFromName } from '../../services/export-data';
 import { useAuditStore, type AuditFilter } from '../../store/audit-store';
 import styles from './AuditWorkspace.module.css';
 
@@ -19,17 +20,14 @@ export function auditPageLabel(page: number | null): string {
 }
 
 /**
- * `report.pdf` -> `report.audit.json`.
+ * `report.pdf` -> `report.audit.json`, `测试 报告.pdf` -> `测试 报告.audit.json`.
  *
- * Mirrors `suggestDiffJsonFilename`: strip any directory and the `.pdf`
- * extension, then replace everything that is not portable in a file name so the
- * suggested name is valid on both platforms.
+ * Mirrors `suggestDiffJsonFilename` through the shared `exportStemFromName`
+ * helper, which decodes percent escapes, keeps Unicode and makes the stem
+ * portable on both platforms. An unusable name falls back to `document`.
  */
 export function suggestAuditJsonFilename(fileName: string | null): string {
-  const base = (fileName ?? '').split(/[\\/]/).pop() ?? '';
-  const withoutExtension = base.replace(/\.pdf$/i, '');
-  const safe = withoutExtension.replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '');
-  return `${safe || 'document'}.audit.json`;
+  return `${exportStemFromName(fileName) || 'document'}.audit.json`;
 }
 
 export function isAuditFilterActive(filter: AuditFilter): boolean {

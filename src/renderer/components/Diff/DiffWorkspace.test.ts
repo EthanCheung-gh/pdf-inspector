@@ -399,7 +399,7 @@ describe('DiffWorkspace actions', () => {
       filterName: string;
       extensions: string[];
     };
-    expect(request.defaultPath).toBe('old_pdf-vs-new-diff.json');
+    expect(request.defaultPath).toBe('old pdf-vs-new-diff.json');
     expect(request.filterName).toBe('JSON');
     expect(request.extensions).toEqual(['json']);
     const parsed = JSON.parse(request.content) as { schemaVersion: number; pages: unknown[] };

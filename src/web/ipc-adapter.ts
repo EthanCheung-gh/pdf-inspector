@@ -160,6 +160,12 @@ function mapOpenResult(result: ServerOpenDocumentResult): OpenPdfResult {
     path: toAbsoluteDocumentUrl(result.path),
     metadata: result.metadata as PdfMetadata,
   };
+  // The backend's display name is the user's original upload name (Unicode
+  // preserved), while `path` ends in `%E6%B5%8B...`; keep it for labels and
+  // export file names.
+  if (result.name) {
+    mapped.name = result.name;
+  }
   if (result.sourceUrl) {
     mapped.sourceUrl = result.sourceUrl;
   }

@@ -67,6 +67,12 @@ export type OpenPdfResult = {
   path: string;
   metadata: PdfMetadata;
   /**
+   * Display name of the document (the upload name on the web, the file basename
+   * on the desktop). Used for labels and as an export-filename fallback when
+   * `path` is a temp/encoded location.
+   */
+  name?: string;
+  /**
    * Set when the document was opened from a URL. `path` then points at the
    * downloaded temp copy, so the UI shows this instead of the temp file name.
    */

@@ -129,7 +129,7 @@ export function registerIpcHandlers(sidecar: SidecarTransport): void {
     // longer the open document and can be removed.
     await trackOpenDocument(filePath, null);
 
-    return { canceled: false, path: filePath, metadata: meta };
+    return { canceled: false, path: filePath, metadata: meta, name: path.basename(filePath) };
   });
 
   // Document tabs: switch to a document the renderer already has a path for.
@@ -148,7 +148,7 @@ export function registerIpcHandlers(sidecar: SidecarTransport): void {
     const meta = await openInSidecar(sidecar, filePath);
     await trackOpenDocument(filePath, null);
 
-    return { canceled: false, path: filePath, metadata: meta };
+    return { canceled: false, path: filePath, metadata: meta, name: path.basename(filePath) };
   });
 
   ipcMain.handle(IPC_CHANNELS.OPEN_PDF_URL, async (_event, rawUrl: string) => {

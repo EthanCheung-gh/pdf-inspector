@@ -225,6 +225,7 @@ describe('web ipc adapter', () => {
       canceled: false,
       path: `${ORIGIN}/doc/abc123/remote%20file.pdf`,
       metadata: PDF_METADATA,
+      name: 'remote file.pdf',
       sourceUrl: 'https://example.com/remote%20file.pdf',
     });
   });
@@ -264,6 +265,37 @@ describe('web ipc adapter', () => {
       'X-Filename': encodeURIComponent('my report #1.pdf'),
     });
     expect((init.headers as Record<string, string>)['X-Filename']).not.toContain(' ');
+  });
+
+  it('maps the display name of a picked /api/open upload', async () => {
+    const file = new File(['%PDF-1.7'], '测试 报告.pdf', { type: 'application/pdf' });
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        canceled: false,
+        path: '/doc/abc123/%E6%B5%8B%E8%AF%95%20%E6%8A%A5%E5%91%8A.pdf',
+        metadata: PDF_METADATA,
+        name: '测试 报告.pdf',
+      }),
+    );
+
+    const pending = api().openPdf();
+    const input = document.querySelector('input[type="file"]');
+    if (!(input instanceof HTMLInputElement)) throw new Error('no file input was created');
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    input.dispatchEvent(new Event('change'));
+
+    await expect(pending).resolves.toEqual({
+      canceled: false,
+      path: `${ORIGIN}/doc/abc123/%E6%B5%8B%E8%AF%95%20%E6%8A%A5%E5%91%8A.pdf`,
+      metadata: PDF_METADATA,
+      name: '测试 报告.pdf',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/open');
+    expect((fetchMock.mock.calls[0][1] as RequestInit).headers).toEqual({
+      'Content-Type': 'application/pdf',
+      'X-Filename': encodeURIComponent('测试 报告.pdf'),
+    });
   });
 
   it('builds a diff upload request that names its side', () => {

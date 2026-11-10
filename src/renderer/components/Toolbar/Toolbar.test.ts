@@ -79,6 +79,7 @@ describe('Toolbar open URL', () => {
     usePdfStore.setState({
       filePath: null,
       sourceUrl: null,
+      documentName: null,
       metadata: null,
       pageCount: 0,
       currentPage: 1,
@@ -327,6 +328,7 @@ describe('Toolbar audit entry', () => {
     usePdfStore.setState({
       filePath: null,
       sourceUrl: null,
+      documentName: null,
       metadata: null,
       pageCount: 0,
       currentPage: 1,
@@ -376,6 +378,28 @@ describe('Toolbar audit entry', () => {
     // Inspect-only controls are hidden while Audit owns the workspace.
     expect(screen.queryByRole('group', { name: 'Page navigation' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Select Text' })).toBeNull();
+  });
+
+  it('uses the bridge display name for the header and the audit workspace', async () => {
+    const webPath = 'http://localhost:8080/doc/abc123/%E6%B5%8B%E8%AF%95%20report.pdf';
+    usePdfStore.setState({
+      filePath: webPath,
+      documentName: '测试 报告.pdf',
+      metadata,
+      pageCount: 5,
+    });
+
+    render(React.createElement(Toolbar));
+
+    // Readable label; the tooltip still carries the resolved document URL.
+    expect(screen.getByTitle(webPath).textContent).toBe('测试 报告.pdf');
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Audit' }));
+    });
+
+    expect(useAuditStore.getState().fileName).toBe('测试 报告.pdf');
+    expect(screen.getByTitle(webPath).textContent).toBe('测试 报告.pdf');
   });
 
   it('audits a URL-opened document under its source URL', async () => {
@@ -511,6 +535,7 @@ describe('Toolbar raw entry', () => {
     usePdfStore.setState({
       filePath: null,
       sourceUrl: null,
+      documentName: null,
       metadata: null,
       pageCount: 0,
       currentPage: 1,
@@ -572,6 +597,30 @@ describe('Toolbar raw entry', () => {
     // Inspect-only controls are hidden while Raw owns the workspace.
     expect(screen.queryByRole('group', { name: 'Page navigation' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Select Text' })).toBeNull();
+  });
+
+  it('uses the bridge display name for the raw workspace and header', async () => {
+    const webPath = 'http://localhost:8080/doc/abc123/%E6%B5%8B%E8%AF%95%20report.pdf';
+    usePdfStore.setState({
+      filePath: webPath,
+      documentName: '测试 报告.pdf',
+      metadata,
+      pageCount: 5,
+    });
+
+    render(React.createElement(Toolbar));
+
+    expect(screen.getByTitle(webPath).textContent).toBe('测试 报告.pdf');
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Raw' }));
+    });
+
+    const state = useRawStore.getState();
+    expect(state.active).toBe(true);
+    expect(state.filePath).toBe(webPath);
+    expect(state.fileName).toBe('测试 报告.pdf');
+    expect(screen.getByTitle(webPath).textContent).toBe('测试 报告.pdf');
   });
 
   it('never opens Raw over an active Audit', async () => {

@@ -315,7 +315,7 @@ describe('AuditWorkspace actions', () => {
       filterName: string;
       extensions: string[];
     };
-    expect(request.defaultPath).toBe('My_Report.audit.json');
+    expect(request.defaultPath).toBe('My Report.audit.json');
     expect(request.filterName).toBe('JSON');
     expect(request.extensions).toEqual(['json']);
     expect(request.content).toBe(JSON.stringify(makeReport(), null, 2));
@@ -452,8 +452,20 @@ describe('audit workspace helpers', () => {
 
   it('suggests a portable JSON file name', () => {
     expect(suggestAuditJsonFilename('report.pdf')).toBe('report.audit.json');
-    expect(suggestAuditJsonFilename('/docs/My Report.PDF')).toBe('My_Report.audit.json');
+    expect(suggestAuditJsonFilename('/docs/My Report.PDF')).toBe('My Report.audit.json');
     expect(suggestAuditJsonFilename(null)).toBe('document.audit.json');
+  });
+
+  it('keeps Unicode and decodes percent escapes', () => {
+    expect(suggestAuditJsonFilename('测试 报告.pdf')).toBe('测试 报告.audit.json');
+    expect(suggestAuditJsonFilename('/doc/x/%E6%B5%8B%E8%AF%95%20report.pdf')).toBe(
+      '测试 report.audit.json',
+    );
+    expect(
+      suggestAuditJsonFilename('https://example.com/files/%E6%B5%8B%E8%AF%95%20report.pdf?x=1'),
+    ).toBe('测试 report.audit.json');
+    // Unusable names keep the existing fallback.
+    expect(suggestAuditJsonFilename('_____.pdf')).toBe('document.audit.json');
   });
 
   it('combines both filter axes', () => {

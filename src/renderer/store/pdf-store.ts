@@ -28,6 +28,13 @@ export interface PdfState {
   filePath: string | null;
   /** URL the document was opened from, or null for local files. */
   sourceUrl: string | null;
+  /**
+   * Display file name supplied by the opening bridge (upload name on the web,
+   * basename on the desktop), or null when it is unknown. `filePath` may be an
+   * encoded `/doc/<id>/...` URL or a temp copy, so this is the name exports and
+   * labels prefer.
+   */
+  documentName: string | null;
   metadata: PdfMetadata | null;
   pageCount: number;
   currentPage: number;
@@ -85,7 +92,12 @@ export interface PdfState {
   subset: ObjectSubset | null;
 
   // Actions
-  setFile: (path: string, meta: PdfMetadata, sourceUrl?: string | null) => void;
+  setFile: (
+    path: string,
+    meta: PdfMetadata,
+    sourceUrl?: string | null,
+    documentName?: string | null,
+  ) => void;
   setPage: (page: number) => void;
   setZoom: (zoom: number) => void;
   setPageData: (data: PageData) => void;
@@ -133,6 +145,7 @@ export interface PdfState {
 export const usePdfStore = create<PdfState>((set, get) => ({
   filePath: null,
   sourceUrl: null,
+  documentName: null,
   metadata: null,
   pageCount: 0,
   currentPage: 1,
@@ -175,12 +188,14 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   filterCriteria: {},
   subset: null,
 
-  setFile: (path, meta, sourceUrl = null) =>
+  setFile: (path, meta, sourceUrl = null, documentName = null) =>
     set({
       filePath: path,
       // Reset with the rest of the document state: opening a local file after a
       // URL drops the URL, opening a URL keeps it for the filename label.
       sourceUrl: sourceUrl ?? null,
+      // The bridge's display name belongs to this document only.
+      documentName: documentName ?? null,
       metadata: meta,
       pageCount: meta.pages,
       currentPage: 1,
@@ -337,6 +352,7 @@ export const usePdfStore = create<PdfState>((set, get) => ({
     set({
       filePath: null,
       sourceUrl: null,
+      documentName: null,
       metadata: null,
       pageCount: 0,
       currentPage: 1,

@@ -221,8 +221,106 @@ export function objectsToCsv(
   return serializeCsvSections(selected, (type) => OBJECT_CSV_ROWS[type](objects));
 }
 
+/**
+ * Percent-decoding that never throws and is bounded.
+ *
+ * Document paths can reach the renderer already encoded (the web backend serves
+ * `/doc/<uuid>/%E6%B5%8B%E8%AF%95.pdf`), sometimes double-encoded, and a
+ * malformed sequence must never break an export. At most two passes are
+ * attempted; anything still encoded afterwards is left as-is.
+ */
+function safeDecode(value: string): string {
+  let current = value;
+  for (let pass = 0; pass < 2; pass += 1) {
+    if (!/%[0-9A-Fa-f]{2}/.test(current)) break;
+    try {
+      const decoded = decodeURIComponent(current);
+      if (decoded === current) break;
+      current = decoded;
+    } catch {
+      break;
+    }
+  }
+  return current;
+}
+
+/** Characters that cannot appear in a file name on Windows (and controls). */
+const INVALID_FILENAME_CHARS = /[<>:"/\\|?*\u0000-\u001f\u007f]/g;
+
+/**
+ * Bidirectional overrides/isolates. They are invisible in a file manager but
+ * reorder how the rest of the name is displayed, so a name can look like a
+ * different file than it is.
+ */
+const BIDI_CONTROL_CHARS = /[\u202A-\u202E\u2066-\u2069]/g;
+
+/** A stem made only of separators/placeholders carries no user information. */
+const PLACEHOLDER_STEM = /^[_.\-\s]*$/;
+
+/**
+ * Whether a stem can name an exported file.
+ *
+ * Rejects empty values and legacy placeholders such as `_____` (what the old
+ * web sanitizer produced for Chinese uploads) so they never become a filename.
+ */
+function isUsableStem(stem: string): boolean {
+  return stem.length > 0 && !PLACEHOLDER_STEM.test(stem);
+}
+
+/**
+ * Turn a raw name into a safe stem: no invisible bidi controls, no directories,
+ * no invalid characters. Unicode letters are kept.
+ */
+function sanitizeStem(raw: string): string {
+  return raw
+    .replace(BIDI_CONTROL_CHARS, '')
+    .replace(/[\\/]/g, '_')
+    .replace(INVALID_FILENAME_CHARS, '_')
+    .trim();
+}
+
+/** Drop a `.pdf` suffix (case-insensitive) from an already decoded name. */
+function stripPdfExtension(name: string): string {
+  return name.replace(/\.pdf$/i, '');
+}
+
+/**
+ * Portable filename stem from a document name, URL or path.
+ *
+ * Used by the audit/diff exporters, which are handed whatever the store knows:
+ * a display name, an absolute path or a source URL. Percent escapes are
+ * decoded, directories/query/hash are dropped, `.pdf` is stripped, invalid and
+ * bidi-control characters are removed and an unusable placeholder yields `''`
+ * so the caller can apply its own fallback. Unicode is preserved.
+ */
+export function exportStemFromName(raw: string | null | undefined): string {
+  if (!raw) return '';
+
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+
+  let candidate = trimmed;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+    try {
+      // A URL can only name a file through its pathname (no query/hash).
+      candidate = new URL(trimmed).pathname;
+    } catch {
+      // Not a parseable URL: treat it as a plain path below.
+    }
+  }
+
+  // A trailing separator means the value names a directory, not a file.
+  if (/[\\/]$/.test(candidate)) return '';
+
+  const segment = candidate.split(/[\\/]/).pop() ?? '';
+  const stem = sanitizeStem(stripPdfExtension(safeDecode(segment)));
+  return isUsableStem(stem) ? stem : '';
+}
+
 function localStem(pdfPath: string | null): string {
-  return (pdfPath?.split(/[\\/]/).pop() ?? 'document').replace(/\.pdf$/i, '');
+  const segment = pdfPath?.split(/[\\/]/).pop() ?? '';
+  const stem = sanitizeStem(stripPdfExtension(safeDecode(segment)));
+  return isUsableStem(stem) ? stem : 'document';
 }
 
 /**
@@ -252,19 +350,96 @@ function urlStem(sourceUrl: string | null | undefined): string | null {
     return null;
   }
 
-  const stem = decoded.replace(/[\\/]/g, '_').replace(/\.pdf$/i, '').trim();
-  return stem.length > 0 ? stem : null;
+  const stem = sanitizeStem(stripPdfExtension(decoded));
+  return isUsableStem(stem) ? stem : null;
 }
 
+/**
+ * Stem from the display name the opening bridge reported, or null.
+ *
+ * Deliberately not percent-decoded: the bridge (web server, desktop main) has
+ * already decoded its upload/path name, so a literal `%20` in a real file name
+ * must stay literal instead of turning into a space.
+ */
+function documentNameStem(documentName: string | null | undefined): string | null {
+  if (!documentName) return null;
+  const stem = sanitizeStem(stripPdfExtension(documentName));
+  return isUsableStem(stem) ? stem : null;
+}
+
+/**
+ * Build the suggested export filename.
+ *
+ * Precedence: the source URL (what the user typed/pasted), then the display
+ * name reported by the bridge (the original upload name on the web, the file
+ * basename on the desktop), then the local path's last segment. Both the URL
+ * and the local path are decoded, so `%E6%B5%8B...`/`%20` never leak into a
+ * download name.
+ */
 export function suggestFilename(
   pdfPath: string | null,
   scope: 'page' | 'document',
   page: number,
   ext: 'json' | 'csv',
   sourceUrl?: string | null,
+  documentName?: string | null,
 ): string {
   // URL documents are downloaded to a temp file with a hash in its name, so
   // prefer the name the user recognises from the URL they opened.
-  const base = urlStem(sourceUrl) ?? localStem(pdfPath);
+  const base = urlStem(sourceUrl) ?? documentNameStem(documentName) ?? localStem(pdfPath);
   return scope === 'page' ? `${base}-p${page}.${ext}` : `${base}-all.${ext}`;
+}
+
+/** Export extensions the dialog recognises when the format radio changes. */
+const EXPORT_NAME_EXTENSION = /\.(json|csv)$/i;
+
+/** Extension of a PDF or a previous export, replaced when appending the new one. */
+const REPLACEABLE_EXTENSION = /\.(json|csv|pdf)$/i;
+
+/**
+ * Validate/normalise a filename typed into the export dialog.
+ *
+ * Trims, drops directory components, replaces invalid/control characters with
+ * `_`, strips leading/trailing dots and spaces and guarantees exactly one
+ * trailing `.<ext>` (an existing `.json`/`.csv`/`.pdf` is replaced). Unicode is
+ * preserved. Returns `''` when nothing usable remains (`___`, `...`, `/`), so
+ * the caller can fall back to the generated suggestion.
+ */
+export function sanitizeExportFileName(name: string, ext: 'json' | 'csv'): string {
+  if (typeof name !== 'string') return '';
+
+  const trimmed = name.trim();
+  // A trailing separator means a directory was typed, not a file name.
+  if (/[\\/]$/.test(trimmed)) return '';
+
+  const base = trimmed.split(/[\\/]/).pop() ?? '';
+  const cleaned = base
+    .replace(BIDI_CONTROL_CHARS, '')
+    .replace(INVALID_FILENAME_CHARS, '_')
+    .trim()
+    .replace(/[.\s]+$/, '');
+
+  const stem = stripExtension(cleaned)
+    .replace(/^[.\s]+/, '')
+    .replace(/[.\s]+$/, '');
+  if (!isUsableStem(stem)) return '';
+  return `${stem}.${ext}`;
+}
+
+/** Strip a recognised trailing extension, if the name has one. */
+function stripExtension(name: string): string {
+  return REPLACEABLE_EXTENSION.test(name) ? name.replace(REPLACEABLE_EXTENSION, '') : name;
+}
+
+/**
+ * Swap the extension of a user-edited draft name when the format changes.
+ *
+ * Only a recognised `.json`/`.csv` suffix is rewritten; a draft without an
+ * extension (or with an unrelated one) is left alone and normalised on export.
+ */
+export function swapExportFormatExtension(
+  name: string,
+  ext: 'json' | 'csv',
+): string {
+  return EXPORT_NAME_EXTENSION.test(name) ? name.replace(EXPORT_NAME_EXTENSION, `.${ext}`) : name;
 }

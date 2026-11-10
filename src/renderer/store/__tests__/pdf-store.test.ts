@@ -293,6 +293,37 @@ describe('sourceUrl state', () => {
   });
 });
 
+describe('documentName state', () => {
+  beforeEach(() => {
+    usePdfStore.setState({ filePath: null, sourceUrl: null, documentName: null, metadata: null });
+  });
+
+  it('defaults to null', () => {
+    expect(usePdfStore.getInitialState().documentName).toBeNull();
+  });
+
+  it('setFile stores the display name (Unicode preserved)', () => {
+    usePdfStore.getState().setFile('/tmp/download.pdf', metadata, null, '测试 报告.pdf');
+
+    expect(usePdfStore.getState().documentName).toBe('测试 报告.pdf');
+    expect(usePdfStore.getState().filePath).toBe('/tmp/download.pdf');
+  });
+
+  it('a following setFile without a name clears it', () => {
+    usePdfStore.getState().setFile('/tmp/a.pdf', metadata, null, 'a.pdf');
+    usePdfStore.getState().setFile('/tmp/b.pdf', metadata);
+
+    expect(usePdfStore.getState().documentName).toBeNull();
+  });
+
+  it('setFile with an explicit null name yields null', () => {
+    usePdfStore.getState().setFile('/tmp/a.pdf', metadata, null, 'a.pdf');
+    usePdfStore.getState().setFile('/tmp/a.pdf', metadata, null, null);
+
+    expect(usePdfStore.getState().documentName).toBeNull();
+  });
+});
+
 describe('export progress', () => {
   it('setExportProgress sets and clears', () => {
     const s = usePdfStore.getState();
@@ -513,6 +544,7 @@ describe('resetDocument', () => {
     usePdfStore.setState({
       filePath: '/tmp/report.pdf',
       sourceUrl: null,
+      documentName: '报告.pdf',
       metadata,
       pageCount: metadata.pages,
       currentPage: 4,
@@ -551,6 +583,7 @@ describe('resetDocument', () => {
     const state = usePdfStore.getState();
     expect(state.filePath).toBeNull();
     expect(state.sourceUrl).toBeNull();
+    expect(state.documentName).toBeNull();
     expect(state.metadata).toBeNull();
     expect(state.pageCount).toBe(0);
     expect(state.currentPage).toBe(1);

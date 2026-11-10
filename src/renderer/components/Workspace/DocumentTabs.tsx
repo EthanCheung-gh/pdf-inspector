@@ -73,7 +73,9 @@ export const DocumentTabs: React.FC = () => {
           return;
         }
 
-        usePdfStore.getState().setFile(result.path, result.metadata, result.sourceUrl ?? null);
+        usePdfStore
+          .getState()
+          .setFile(result.path, result.metadata, result.sourceUrl ?? null, result.name ?? null);
         // A URL tab's downloaded copy is owned by the document that replaced it,
         // so reactivation produces a new temp path and fresh metadata.
         useDocumentTabsStore.getState().updateTab(tabId, {

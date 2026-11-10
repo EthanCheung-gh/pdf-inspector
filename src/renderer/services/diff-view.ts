@@ -18,6 +18,7 @@ import {
   type DiffSide,
 } from '../../shared/diff-types';
 import { MAX_FIT_WIDTH_ZOOM, MIN_FIT_WIDTH_ZOOM } from './page-geometry';
+import { exportStemFromName } from './export-data';
 
 export const DIFF_CHANGE_KINDS: readonly DiffChangeKind[] = [
   'added',
@@ -440,13 +441,16 @@ export function pageGeometrySummary(change: DiffChange): string[] {
   return lines;
 }
 
-/** `a.pdf` + `b.pdf` -> `a-vs-b-diff.json`, safe on both platforms. */
+/**
+ * `a.pdf` + `b.pdf` -> `a-vs-b-diff.json`.
+ *
+ * Each side goes through the shared `exportStemFromName` helper, so Unicode
+ * names survive, percent-encoded names/paths/URLs are decoded and only
+ * portability-invalid characters are replaced. A missing side keeps its
+ * `old`/`new` fallback.
+ */
 export function suggestDiffJsonFilename(oldName: string | null, newName: string | null): string {
-  const strip = (name: string | null, fallback: string): string => {
-    const base = (name ?? '').split(/[\\/]/).pop() ?? '';
-    const withoutExtension = base.replace(/\.pdf$/i, '');
-    const safe = withoutExtension.replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '');
-    return safe || fallback;
-  };
+  const strip = (name: string | null, fallback: string): string =>
+    exportStemFromName(name) || fallback;
   return `${strip(oldName, 'old')}-vs-${strip(newName, 'new')}-diff.json`;
 }

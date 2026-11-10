@@ -330,9 +330,24 @@ describe('change details', () => {
 
   it('suggests a portable JSON filename', () => {
     expect(suggestDiffJsonFilename('/docs/old report.pdf', 'new.pdf')).toBe(
-      'old_report-vs-new-diff.json',
+      'old report-vs-new-diff.json',
     );
     expect(suggestDiffJsonFilename(null, null)).toBe('old-vs-new-diff.json');
+  });
+
+  it('keeps Unicode and decodes percent escapes', () => {
+    expect(suggestDiffJsonFilename('测试 报告.pdf', '新 版本.pdf')).toBe(
+      '测试 报告-vs-新 版本-diff.json',
+    );
+    expect(
+      suggestDiffJsonFilename(
+        'https://example.com/%E6%B5%8B%E8%AF%95%20old.pdf?token=abc',
+        '/tmp/new%20file.pdf',
+      ),
+    ).toBe('测试 old-vs-new file-diff.json');
+    expect(suggestDiffJsonFilename('_____.pdf', 'new:file?.pdf')).toBe(
+      'old-vs-new_file_-diff.json',
+    );
   });
 });
 

@@ -26,6 +26,7 @@ export const Toolbar: React.FC = () => {
   const isLoading = usePdfStore((state) => state.isLoading);
   const filePath = usePdfStore((state) => state.filePath);
   const sourceUrl = usePdfStore((state) => state.sourceUrl);
+  const storedDocumentName = usePdfStore((state) => state.documentName);
   const textSelectionMode = usePdfStore((state) => state.textSelectionMode);
   const regionMode = usePdfStore((state) => state.regionMode);
   const setFile = usePdfStore((state) => state.setFile);
@@ -83,7 +84,7 @@ export const Toolbar: React.FC = () => {
       // old report, filters and selection instead of leaving them attached to a
       // file that is no longer open.
       useAuditStore.getState().reset();
-      setFile(result.path, result.metadata);
+      setFile(result.path, result.metadata, undefined, result.name ?? null);
       // After `setFile`, so a new tab's snapshot is the fresh document's view.
       // Opening an already open path focuses that tab instead of duplicating it.
       if (trackTabs) useDocumentTabsStore.getState().addTab(result);
@@ -108,7 +109,7 @@ export const Toolbar: React.FC = () => {
       // Same as `handleOpen`: a URL document is a different document, so the
       // previous audit cannot survive it.
       useAuditStore.getState().reset();
-      setFile(result.path, result.metadata, result.sourceUrl ?? null);
+      setFile(result.path, result.metadata, result.sourceUrl ?? null, result.name ?? null);
       // A URL tab is keyed by its source URL, so re-opening the same URL focuses
       // the existing tab even though every open downloads a new temp copy.
       if (trackTabs) useDocumentTabsStore.getState().addTab(result);
@@ -159,15 +160,21 @@ export const Toolbar: React.FC = () => {
 
   const visibleLayerCount = overlayVisibleCount(overlayVisibility);
 
-  // The name the user sees for the open document: a URL as-is, a local file as
-  // its basename. Audit reuses it as the workspace/file name, so the header and
-  // the exported JSON never expose an absolute path.
-  const documentName = sourceUrl ?? (filePath ? (filePath.split(/[\\/]/).pop() ?? filePath) : null);
+  // The name the user sees for the open document. The opening bridge's display
+  // name wins (web upload name, desktop basename; Unicode preserved), then the
+  // source URL, then the local basename. Audit and Raw reuse it as their
+  // workspace/file name, so the header, both workspaces and their exported JSON
+  // never expose an absolute or percent-encoded path.
+  const localDocumentName = filePath ? (filePath.split(/[\\/]/).pop() ?? filePath) : null;
+  const documentName = storedDocumentName ?? sourceUrl ?? localDocumentName;
   const diffTitle = `${diffOldName ?? '—'} → ${diffNewName ?? '—'}`;
   // Diff, Audit and Raw each replace the Inspect panes; while one of them is
   // open the Inspect-only controls would act on a document the user cannot see.
   const workspaceActive = diffActive || auditActive || rawActive;
-  const displayTitle = diffActive ? diffTitle : sourceUrl ?? filePath ?? undefined;
+  // The tooltip keeps the full source URL or path; only the label is shortened.
+  const displayTitle = diffActive
+    ? diffTitle
+    : sourceUrl ?? filePath ?? storedDocumentName ?? undefined;
   const filename = diffActive ? diffTitle : documentName ?? 'No file open';
   // The open search box is the widest optional control group. The toolbar
   // advertises it (`.searchOpen`) so CSS can give search the room it needs at

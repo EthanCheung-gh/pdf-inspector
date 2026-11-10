@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { PageData, PdfMetadata, PdfObject, PdfObjectType } from '../../types/pdf-objects';
 import {
   EXPORT_OBJECT_TYPES,
+  exportStemFromName,
   objectsToCsv,
   objectsToJson,
   pagesToCsv,
   pagesToJson,
+  sanitizeExportFileName,
   suggestFilename,
+  swapExportFormatExtension,
 } from '../export-data';
 
 const metadata: PdfMetadata = {
@@ -276,6 +279,161 @@ describe('suggestFilename', () => {
     expect(
       suggestFilename('/tmp/report-1a2b3c4d.pdf', 'page', 1, 'json', 'https://example.com/a%2Fb.pdf'),
     ).toBe('a_b-p1.json');
+  });
+
+  it('decodes a percent-encoded URL segment instead of leaking escapes', () => {
+    expect(
+      suggestFilename(
+        '/tmp/_____.pdf',
+        'page',
+        1,
+        'json',
+        'https://example.com/files/%E6%B5%8B%E8%AF%95%20report.pdf',
+      ),
+    ).toBe('测试 report-p1.json');
+  });
+
+  it('decodes a percent-encoded local path segment', () => {
+    expect(suggestFilename('/tmp/%E6%B5%8B%E8%AF%95%20report.pdf', 'page', 2, 'json')).toBe(
+      '测试 report-p2.json',
+    );
+    // The web backend serves /doc/<uuid>/<encoded name>; only the last segment
+    // and no percent escapes may reach the filename.
+    expect(
+      suggestFilename(
+        'http://localhost:8080/doc/1a2b/%E6%B5%8B%E8%AF%95%20report.pdf',
+        'document',
+        1,
+        'csv',
+      ),
+    ).toBe('测试 report-all.csv');
+  });
+
+  it('prefers the reported document name over a placeholder temp path', () => {
+    expect(
+      suggestFilename('/tmp/_____-1a2b3c4d.pdf', 'page', 1, 'json', null, '测试 报告.pdf'),
+    ).toBe('测试 报告-p1.json');
+  });
+
+  it('does not percent-decode an already-decoded bridge name', () => {
+    // The server/desktop decode the upload name before reporting it, so a
+    // literal "%20" belongs to the real file name and must survive.
+    expect(suggestFilename('/tmp/x.pdf', 'page', 1, 'json', null, 'q3%20draft.pdf')).toBe(
+      'q3%20draft-p1.json',
+    );
+    // URL and local-path decoding still happen.
+    expect(
+      suggestFilename(
+        '/tmp/x.pdf',
+        'page',
+        1,
+        'json',
+        'https://example.com/q3%20draft.pdf',
+        'ignored.pdf',
+      ),
+    ).toBe('q3 draft-p1.json');
+    expect(suggestFilename('/tmp/q3%20draft.pdf', 'page', 1, 'json')).toBe('q3 draft-p1.json');
+  });
+
+  it('ignores an unusable document name and the temp placeholder', () => {
+    expect(suggestFilename('/tmp/_____.pdf', 'page', 1, 'json', null, '_____.pdf')).toBe(
+      'document-p1.json',
+    );
+  });
+
+  it('falls back to "document" when the local stem is only underscores', () => {
+    expect(suggestFilename('/tmp/_____.pdf', 'document', 1, 'csv')).toBe('document-all.csv');
+    expect(suggestFilename('/tmp/---...pdf', 'page', 3, 'json')).toBe('document-p3.json');
+    expect(suggestFilename('/tmp/__- ..pdf', 'page', 1, 'json')).toBe('document-p1.json');
+  });
+
+  it('prefers the URL stem over the document name', () => {
+    expect(
+      suggestFilename(
+        '/tmp/_____.pdf',
+        'page',
+        1,
+        'json',
+        'https://example.com/files/%E6%B5%8B%E8%AF%95.pdf',
+        '另一个名字.pdf',
+      ),
+    ).toBe('测试-p1.json');
+  });
+});
+
+describe('sanitizeExportFileName', () => {
+  it('keeps a normal stem and appends the requested extension', () => {
+    expect(sanitizeExportFileName('my export', 'json')).toBe('my export.json');
+    expect(sanitizeExportFileName('测试 报告', 'csv')).toBe('测试 报告.csv');
+  });
+
+  it('replaces invalid characters and strips directories', () => {
+    expect(sanitizeExportFileName('re:port<1>?.json', 'json')).toBe('re_port_1__.json');
+    expect(sanitizeExportFileName('/etc/passwd', 'csv')).toBe('passwd.csv');
+    expect(sanitizeExportFileName('..\\..\\secret.pdf', 'csv')).toBe('secret.csv');
+  });
+
+  it('replaces an existing export or pdf extension instead of stacking it', () => {
+    expect(sanitizeExportFileName('report.csv', 'json')).toBe('report.json');
+    expect(sanitizeExportFileName('report.JSON', 'json')).toBe('report.json');
+    expect(sanitizeExportFileName('报告.PDF', 'csv')).toBe('报告.csv');
+    expect(sanitizeExportFileName('report', 'csv')).toBe('report.csv');
+  });
+
+  it('trims leading/trailing dots and spaces', () => {
+    expect(sanitizeExportFileName('  report .json  ', 'json')).toBe('report.json');
+    expect(sanitizeExportFileName('...report', 'json')).toBe('report.json');
+  });
+
+  it('returns an empty string when nothing usable remains', () => {
+    expect(sanitizeExportFileName('', 'json')).toBe('');
+    expect(sanitizeExportFileName('   ', 'json')).toBe('');
+    expect(sanitizeExportFileName('___', 'json')).toBe('');
+    expect(sanitizeExportFileName('---', 'json')).toBe('');
+    expect(sanitizeExportFileName('...', 'json')).toBe('');
+    expect(sanitizeExportFileName('/tmp/', 'json')).toBe('');
+    expect(sanitizeExportFileName('.json', 'json')).toBe('');
+  });
+
+  it('strips invisible bidi control characters', () => {
+    expect(sanitizeExportFileName('re\u202Eport\u2066.txt\u2069', 'json')).toBe('report.txt.json');
+  });
+});
+
+describe('exportStemFromName', () => {
+  it('keeps Unicode names and strips .pdf case-insensitively', () => {
+    expect(exportStemFromName('测试 报告.pdf')).toBe('测试 报告');
+    expect(exportStemFromName('My Report.PDF')).toBe('My Report');
+  });
+
+  it('decodes percent escapes in paths and URLs', () => {
+    expect(exportStemFromName('/doc/x/%E6%B5%8B%E8%AF%95%20report.pdf')).toBe('测试 report');
+    expect(
+      exportStemFromName('https://example.com/files/%E6%B5%8B%E8%AF%95%20report.pdf?token=abc#p2'),
+    ).toBe('测试 report');
+  });
+
+  it('drops directories, invalid characters and bidi controls', () => {
+    expect(exportStemFromName('C:\\docs\\re:port?.pdf')).toBe('re_port_');
+    expect(exportStemFromName('..\\..\\etc\\passwd.pdf')).toBe('passwd');
+    expect(exportStemFromName('re\u202Eport.pdf')).toBe('report');
+  });
+
+  it('returns an empty string for unusable names', () => {
+    expect(exportStemFromName(null)).toBe('');
+    expect(exportStemFromName(undefined)).toBe('');
+    expect(exportStemFromName('   ')).toBe('');
+    expect(exportStemFromName('_____.pdf')).toBe('');
+    expect(exportStemFromName('/tmp/')).toBe('');
+  });
+});
+
+describe('swapExportFormatExtension', () => {
+  it('swaps only a recognised export extension', () => {
+    expect(swapExportFormatExtension('report.json', 'csv')).toBe('report.csv');
+    expect(swapExportFormatExtension('报告.CSV', 'json')).toBe('报告.json');
+    expect(swapExportFormatExtension('my report', 'csv')).toBe('my report');
+    expect(swapExportFormatExtension('report.pdf', 'csv')).toBe('report.pdf');
   });
 });
 

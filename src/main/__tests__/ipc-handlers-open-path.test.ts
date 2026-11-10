@@ -108,7 +108,12 @@ describe('OPEN_PDF_PATH', () => {
       { path: '/docs/second.pdf' },
       OPEN_PDF_TIMEOUT_MS,
     );
-    expect(result).toEqual({ canceled: false, path: '/docs/second.pdf', metadata });
+    expect(result).toEqual({
+      canceled: false,
+      path: '/docs/second.pdf',
+      metadata,
+      name: 'second.pdf',
+    });
   });
 
   it('tracks the path as the current document for a sidecar restart', async () => {
