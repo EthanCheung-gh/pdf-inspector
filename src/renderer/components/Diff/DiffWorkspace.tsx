@@ -805,6 +805,15 @@ export const DiffWorkspace: React.FC = () => {
           {loading && (
             <p className={styles.centerEmpty} role="status" aria-live="polite">
               Comparing documents…
+              {/*
+                Muted reassurance for large pairs. Deliberately no percentage:
+                page pairing is only known after the fingerprint pass, so any
+                number here would be invented.
+              */}
+              <span className={styles.loadingNote}>
+                Large PDFs can take several minutes; the comparison continues while pages make
+                progress.
+              </span>
             </p>
           )}
 

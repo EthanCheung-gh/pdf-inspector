@@ -260,3 +260,46 @@ def test_diff_documents_requires_an_options_object(old_pdf, new_pdf):
     response = _diff(SidecarSession(), old_pdf, new_pdf, ["position_tolerance"])
 
     assert response["error"] == '"options" must be an object'
+
+
+def test_handle_forwards_progress_for_a_diff(old_pdf, new_pdf):
+    events = []
+
+    response = SidecarSession().handle(
+        "diff_documents",
+        {"old_path": old_pdf, "new_path": new_pdf},
+        request_id=11,
+        progress=events.append,
+    )
+
+    assert "error" not in response
+    assert response["id"] == 11
+    stages = [event["stage"] for event in events]
+    assert stages[0] == "start"
+    assert stages[-1] == "done"
+    assert events[0] == {"stage": "start", "oldPages": 1, "newPages": 2}
+    assert events[-1] == {
+        "stage": "done",
+        "oldPages": 1,
+        "newPages": 2,
+        "pages": len(response["result"]["pages"]),
+    }
+
+
+def test_handle_without_a_progress_callback_still_works(old_pdf, new_pdf):
+    response = _diff(SidecarSession(), old_pdf, new_pdf)
+
+    assert "error" not in response
+    assert response["result"]["summary"]["pagesAdded"] == 1
+
+
+def test_handle_reports_no_progress_for_other_methods(old_pdf, new_pdf):
+    events = []
+    session = SidecarSession()
+
+    assert "error" not in session.handle("open", {"path": old_pdf}, 1, events.append)
+    assert "error" not in session.handle("extract_page", {"page": 1}, 2, events.append)
+
+    # Only diff_documents reports progress; other methods stay silent so their
+    # idle budget is never extended by unrelated output.
+    assert events == []

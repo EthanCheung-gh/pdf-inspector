@@ -66,6 +66,11 @@ class FakeChildProcess extends EventEmitter {
     this.stdout.emit('data', Buffer.from(`${JSON.stringify({ id, result })}\n`));
   }
 
+  /** Emit a progress line (`{"id", "progress"}`) as a working request does. */
+  emitProgress(id: number, progress: Record<string, unknown>): void {
+    this.stdout.emit('data', Buffer.from(`${JSON.stringify({ id, progress })}\n`));
+  }
+
   requests(): WrittenRequest[] {
     return this.stdin.write.mock.calls.map((call) => JSON.parse(call[0] as string) as WrittenRequest);
   }
@@ -515,10 +520,10 @@ describe('SidecarManager per-request timeouts', () => {
       );
 
       const fontsRejection = expect(fonts).rejects.toThrow(
-        'Request "analyze_fonts" timed out after 120s',
+        'Request "analyze_fonts" timed out after 120s without progress',
       );
       const metadataRejection = expect(metadata).rejects.toThrow(
-        'Request "extract_metadata" timed out after 30s',
+        'Request "extract_metadata" timed out after 30s without progress',
       );
 
       // At the default budget only the ordinary request has failed.
@@ -546,10 +551,86 @@ describe('SidecarManager per-request timeouts', () => {
 
       const request = sidecar.send('extract_page', { page: 1 }, 5_000);
       const rejection = expect(request).rejects.toThrow(
-        'Request "extract_page" timed out after 5s',
+        'Request "extract_page" timed out after 5s without progress',
       );
 
       await vi.advanceTimersByTimeAsync(5_000);
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a diff pending while progress arrives and resolves on the response', async () => {
+    vi.useFakeTimers();
+    const sidecar = new SidecarManager();
+    sidecar.enableAutoRestart(false);
+
+    try {
+      await sidecar.start();
+      const proc = spawned[0];
+
+      // A 5s INACTIVITY budget: total elapsed time may exceed it as long as the
+      // sidecar keeps reporting page progress.
+      const request = sidecar.send('diff_documents', { old_path: 'a', new_path: 'b' }, 5_000);
+      let settled = false;
+      void request.then(
+        () => { settled = true; },
+        () => { settled = true; },
+      );
+
+      const id = proc.requests().find((r) => r.method === 'diff_documents')?.id;
+      expect(id).toBeTypeOf('number');
+
+      // 4s of silence: still within the budget.
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(settled).toBe(false);
+
+      // A real progress report (page pairing started) rearms the timer.
+      proc.emitProgress(id as number, { stage: 'pages', done: 0, total: 12 });
+      await flushMicrotasks();
+
+      // 8s total, but only 4s since the progress line: still pending.
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(settled).toBe(false);
+
+      // Another 4s of progress reports keeps it alive well past the budget.
+      proc.emitProgress(id as number, { stage: 'pages', done: 1, total: 12 });
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(settled).toBe(false);
+
+      // The final response settles it; nothing was lost by the progress lines.
+      proc.emitResponse(id as number, { schemaVersion: 1 });
+      await flushMicrotasks();
+
+      await expect(request).resolves.toEqual({ schemaVersion: 1 });
+      expect(settled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still times out a diff that stops reporting progress', async () => {
+    vi.useFakeTimers();
+    const sidecar = new SidecarManager();
+    sidecar.enableAutoRestart(false);
+
+    try {
+      await sidecar.start();
+      const proc = spawned[0];
+
+      const request = sidecar.send('diff_documents', { old_path: 'a', new_path: 'b' }, 5_000);
+      const rejection = expect(request).rejects.toThrow(
+        'Request "diff_documents" timed out after 5s without progress',
+      );
+
+      const id = proc.requests().find((r) => r.method === 'diff_documents')?.id as number;
+      proc.emitProgress(id, { stage: 'pages', done: 1, total: 4 });
+      await flushMicrotasks();
+
+      // 4s after the last report: alive. 5s of silence: failed.
+      await vi.advanceTimersByTimeAsync(4_000);
+      await vi.advanceTimersByTimeAsync(1_000);
       await rejection;
     } finally {
       vi.useRealTimers();

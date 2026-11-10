@@ -70,7 +70,19 @@ function formatTimeout(timeoutMs: number): string {
 
 export class SidecarManager {
   private process: ChildProcess | null = null;
-  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  private pending = new Map<
+    number,
+    {
+      resolve: (v: unknown) => void;
+      reject: (e: Error) => void;
+      /**
+       * Restart this request's inactivity timer. Called for every progress line
+       * the sidecar emits for the request, so a legitimately long job (a diff of
+       * two large PDFs) is bounded by silence, not by total elapsed time.
+       */
+      touch: () => void;
+    }
+  >();
   private nextId = 1;
   private buffer = '';
   private autoRestartEnabled = true;
@@ -301,6 +313,14 @@ export class SidecarManager {
               continue;
             }
 
+            // Progress line (`{"id": 7, "progress": {...}}`): the request is
+            // still working, so its idle budget starts over. It is NOT a
+            // response: the pending entry stays registered and unsettled.
+            if (typeof parsed.id === 'number' && parsed.progress !== undefined) {
+              this.pending.get(parsed.id)?.touch();
+              continue;
+            }
+
             // Normal JSON-RPC response parsing (only triggers after start settles)
             const pending = this.pending.get(parsed.id);
             if (pending) {
@@ -355,9 +375,11 @@ export class SidecarManager {
    * without needing the renderer's timeout-driven retry. If that start fails,
    * the start error propagates to the caller.
    *
-   * `timeoutMs` bounds this single request; methods that legitimately take
-   * longer than the default (font analysis) pass a larger value. It is
-   * per-call, so one channel cannot relax the timeout of another.
+   * `timeoutMs` bounds how long this single request may stay SILENT, not how
+   * long it may take: methods that legitimately run long (a diff of two large
+   * documents) report progress, which rearms the timer. Methods that legitimately
+   * take longer than the default without progress (font analysis) pass a larger
+   * value. It is per-call, so one channel cannot relax the timeout of another.
    */
   async send(
     method: string,
@@ -392,6 +414,11 @@ export class SidecarManager {
    * Deliberately does not start the sidecar: `stop()`/`restart()` must never
    * resurrect the process they are tearing down.
    *
+   * `timeoutMs` is an INACTIVITY budget: the timer is rearmed by every progress
+   * line the sidecar emits for this id (see the stdout handler), so a diff of
+   * two large PDFs may run far longer than the budget as long as pages keep
+   * completing, while a silent hang still fails after `timeoutMs`.
+   *
    * The request timer is always cleared when the request settles — including
    * when `stop()` rejects it — so no timer outlives its request.
    */
@@ -404,14 +431,28 @@ export class SidecarManager {
     const request: SidecarRequest = { id, method, params };
 
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`Request "${method}" timed out after ${formatTimeout(timeoutMs)}`));
-      }, timeoutMs);
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+
+      /** (Re)start the inactivity window for this request. */
+      const armTimeout = (): void => {
+        if (timeout !== undefined) clearTimeout(timeout);
+        timeout = setTimeout(() => {
+          timeout = undefined;
+          this.pending.delete(id);
+          reject(
+            new Error(
+              `Request "${method}" timed out after ${formatTimeout(timeoutMs)} without progress`,
+            ),
+          );
+        }, timeoutMs);
+      };
+
+      armTimeout();
 
       this.pending.set(id, {
         resolve: (v) => { clearTimeout(timeout); resolve(v); },
         reject: (e) => { clearTimeout(timeout); reject(e); },
+        touch: armTimeout,
       });
 
       try {

@@ -536,6 +536,13 @@
   overflow-wrap: anywhere;
 }
 
+/* Muted second line under the loading text; no fake completion percentage. */
+.loadingNote {
+  max-width: 46ch;
+  color: var(--pi-text-subtle);
+  font-size: 11px;
+}
+
 .pageBar {
   display: flex;
   flex: 0 0 auto;

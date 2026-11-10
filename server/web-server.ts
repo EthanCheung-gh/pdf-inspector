@@ -277,7 +277,14 @@ function nameFromUrl(url: URL): string {
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
+  /** Current inactivity timer; replaced (not just restarted) on progress. */
+  timer?: ReturnType<typeof setTimeout>;
+  /**
+   * Rearm this request's inactivity timer. Called for every progress line the
+   * sidecar emits for the request, so a long diff of two large PDFs stays
+   * pending while pages keep completing instead of hitting a total cap.
+   */
+  touch: () => void;
 }
 
 /**
@@ -287,9 +294,10 @@ interface PendingRequest {
  * - one child process at a time; `start()` coalesces concurrent callers;
  * - stdout is line-buffered; the first `{"ready":true}` line resolves start;
  * - `stdin` writes are serialized, but responses may arrive out of order;
- * - every request has its own timeout (30s default; 120s for `open`, `extract_page`,
- *   analyze_fonts, both audit methods and the raw readers; the diff endpoint
- *   passes 300s);
+ * - every request has an INACTIVITY budget (30s default; 120s for `open`,
+ *   `extract_page`, analyze_fonts, both audit methods and the raw readers; the
+ *   diff endpoint passes 300s). A progress line from the sidecar rearms the
+ *   timer, so a long diff is bounded by silence rather than total time;
  * - an exit rejects all pending requests and clears the running state;
  * - `send()` lazily starts the sidecar once, unless stop() was requested;
  * - `restart()` shuts the old process down, spawns a new one and re-opens the
@@ -429,6 +437,13 @@ export class SidecarManager {
           const id = typeof message.id === 'number' ? message.id : null;
           if (id === null) continue;
 
+          // Progress line: the request is still working, so its idle budget
+          // starts over. It is not a response — the pending entry stays.
+          if (message.progress !== undefined) {
+            this.pending.get(id)?.touch();
+            continue;
+          }
+
           const pending = this.pending.get(id);
           if (!pending) continue; // Timed out or a request from a previous process.
           this.pending.delete(id);
@@ -512,12 +527,28 @@ export class SidecarManager {
 
     const id = this.nextId++;
     const response = new Promise<unknown>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      // The budget is an inactivity window: every progress line for this id
+      // rearms it (see the stdout handler), so a diff that keeps completing
+      // pages is never cut off by total elapsed time.
+      const expire = (): void => {
         this.pending.delete(id);
-        reject(new Error(`Request "${method}" timed out after ${formatTimeout(timeoutMs)}`));
-      }, timeoutMs);
+        reject(
+          new Error(
+            `Request "${method}" timed out after ${formatTimeout(timeoutMs)} without progress`,
+          ),
+        );
+      };
 
-      this.pending.set(id, { resolve, reject, timer });
+      const entry: PendingRequest = {
+        resolve,
+        reject,
+        touch: () => {
+          clearTimeout(entry.timer);
+          entry.timer = setTimeout(expire, timeoutMs);
+        },
+      };
+      entry.touch();
+      this.pending.set(id, entry);
     });
 
     try {

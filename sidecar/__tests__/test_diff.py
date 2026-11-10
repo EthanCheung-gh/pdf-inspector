@@ -1081,6 +1081,72 @@ def test_repeated_runs_produce_identical_json(tmp_path):
     assert first['pages'] == second['pages']
 
 
+def _progress_fixture(tmp_path) -> tuple[str, str]:
+    """Three-page pair: page 1 unchanged, page 2 changed, page 3 shifted text."""
+    old = _multi_page(
+        tmp_path / 'old.pdf',
+        [_page_label('Alpha'), _page_label('Beta'), _page_label('Gamma')],
+    )
+    new = _multi_page(
+        tmp_path / 'new.pdf',
+        [_page_label('Alpha'), _page_label('Beta changed'), _page_label('Gamma')],
+    )
+    return old, new
+
+
+def test_progress_reports_start_fingerprints_pages_and_done(tmp_path):
+    old, new = _progress_fixture(tmp_path)
+    events: list[dict] = []
+
+    result = diff_files(old, new, progress=events.append)
+
+    assert events, 'a diff must report progress when a callback is given'
+    assert events[0] == {'stage': 'start', 'oldPages': 3, 'newPages': 3}
+    assert events[-1] == {
+        'stage': 'done',
+        'oldPages': 3,
+        'newPages': 3,
+        'pages': len(result['pages']),
+    }
+
+    fingerprints = [event for event in events if event['stage'] == 'fingerprints']
+    # One report per page and side, in side order, counting up to that side's total.
+    assert [event['side'] for event in fingerprints] == ['old'] * 3 + ['new'] * 3
+    assert [event['done'] for event in fingerprints] == [1, 2, 3, 1, 2, 3]
+    assert all(event['total'] == 3 for event in fingerprints)
+
+    pages = [event for event in events if event['stage'] == 'pages']
+    totals = {event['total'] for event in pages}
+    assert totals == {len(result['pages'])}
+    done = [event['done'] for event in pages]
+    # Pairing start, then one report per appended page, strictly increasing.
+    assert done[0] == 0
+    assert done[1:] == list(range(1, len(result['pages']) + 1))
+    assert done == sorted(done)
+    assert len(set(done)) == len(done)
+
+
+def test_progress_does_not_change_the_result(tmp_path):
+    old, new = _progress_fixture(tmp_path)
+    events: list[dict] = []
+
+    plain = diff_files(old, new)
+    reported = diff_files(old, new, progress=events.append)
+
+    assert json.dumps(plain, sort_keys=True) == json.dumps(reported, sort_keys=True)
+    assert reported == plain
+    assert events
+
+
+def test_no_progress_callback_keeps_the_old_call_shape(tmp_path):
+    old, new = _progress_fixture(tmp_path)
+
+    result = diff_files(old, new, DiffOptions())
+
+    assert result['old']['pages'] == 3
+    assert result['new']['pages'] == 3
+
+
 def test_malformed_pdf_raises_clear_error(tmp_path):
     good = _text_pdf(tmp_path / 'good.pdf', 'Hello')
     broken = tmp_path / 'broken.pdf'

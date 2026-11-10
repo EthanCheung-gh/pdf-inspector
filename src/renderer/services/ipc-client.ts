@@ -5,7 +5,6 @@ import type { OpenExternalResult } from '../../shared/external-url';
 import {
   ANALYZE_FONTS_RENDERER_TIMEOUT_MS,
   AUDIT_RENDERER_TIMEOUT_MS,
-  DIFF_RENDERER_TIMEOUT_MS,
   EXTRACT_PAGE_RENDERER_TIMEOUT_MS,
   OPEN_PDF_RENDERER_TIMEOUT_MS,
   OPEN_PDF_URL_TIMEOUT_MS,
@@ -203,15 +202,14 @@ export const ipc = {
       'auditPages',
       AUDIT_RENDERER_TIMEOUT_MS,
     ),
-  // A diff extracts both documents page by page, so it gets the same kind of
-  // dedicated budget as font analysis: the renderer must stay patient longer
-  // than main so main's clear timeout message wins the race.
+  // No renderer timer: a diff's budget is an INACTIVITY budget in the backend
+  // (main process / web server), rearmed by every progress report the sidecar
+  // emits, so a large pair may legitimately run for many minutes while pages
+  // keep completing. A fixed renderer cap would fail exactly those runs and
+  // restart a healthy sidecar, so the progress-aware backend owns the timeout
+  // (like `saveFile`/`pickDiffPdf`, which also resolve outside `callWithTimeout`).
   diffPdfs: (oldSource: DiffSource, newSource: DiffSource, options?: DiffOptionsInput) =>
-    callWithTimeout(
-      () => window.pdfInspector.diffPdfs(oldSource, newSource, options),
-      'diffPdfs',
-      DIFF_RENDERER_TIMEOUT_MS,
-    ),
+    window.pdfInspector.diffPdfs(oldSource, newSource, options),
   // No timeout: this resolves only after the user answers a native file dialog
   // (or dismisses the browser's file picker), which can take arbitrarily long.
   pickDiffPdf: (side: DiffSide) => window.pdfInspector.pickDiffPdf(side),

@@ -129,6 +129,14 @@
   font-size: 12px;
 }
 
+/* Muted second line: explains a long diff without implying a completion %. */
+.progressHint {
+  display: block;
+  margin-top: 2px;
+  color: var(--pi-text-subtle);
+  font-size: 11px;
+}
+
 .actions {
   display: flex;
   justify-content: flex-end;

@@ -151,6 +151,11 @@ describe('DiffSetupDialog compare', () => {
     fireEvent.click(compareButton());
 
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Comparing'));
+    // The loading state also explains why a large pair takes a while; it stays
+    // deliberately free of a fake percentage.
+    expect(screen.getByRole('status').textContent).toContain(
+      'Large PDFs can take several minutes; the comparison continues while pages make progress.',
+    );
 
     resolveDiff(makeSampleResult());
     await waitFor(() => expect(store().active).toBe(true));

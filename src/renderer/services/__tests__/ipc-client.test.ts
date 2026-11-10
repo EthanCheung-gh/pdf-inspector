@@ -15,6 +15,7 @@ const mockExtractPage = vi.fn();
 const mockAnalyzeFonts = vi.fn();
 const mockOpenPdf = vi.fn();
 const mockOpenPdfUrl = vi.fn();
+const mockDiffPdfs = vi.fn();
 
 globalThis.window = {
   pdfInspector: {
@@ -26,6 +27,7 @@ globalThis.window = {
     analyzeFonts: mockAnalyzeFonts,
     getImageData: vi.fn(),
     getSidecarStatus: vi.fn(),
+    diffPdfs: mockDiffPdfs,
   },
 } as unknown as Window & typeof globalThis;
 
@@ -115,6 +117,25 @@ describe('ipc-client timeout recovery', () => {
     await cappedRejection;
 
     expect(mockRestartSidecar).toHaveBeenCalledTimes(3);
+  });
+
+  it('diffPdfs has no renderer timer: a slow diff is awaited, never restarted', async () => {
+    const result = { schemaVersion: 1, pages: [] };
+    let resolveDiff: (value: unknown) => void = () => {};
+    mockDiffPdfs.mockReturnValueOnce(new Promise((resolve) => { resolveDiff = resolve; }));
+
+    const promise = ipc.diffPdfs('/docs/old.pdf', '/docs/new.pdf', {});
+    expect(mockDiffPdfs).toHaveBeenCalledWith('/docs/old.pdf', '/docs/new.pdf', {});
+
+    // Past the old 305s renderer cap and past every other renderer budget: the
+    // progress-aware backend owns the diff timeout, so nothing restarts here.
+    await vi.advanceTimersByTimeAsync(400_000);
+    expect(mockRestartSidecar).not.toHaveBeenCalled();
+
+    resolveDiff(result);
+    await expect(promise).resolves.toBe(result);
+    expect(mockRestartSidecar).not.toHaveBeenCalled();
+    expect(mockDiffPdfs).toHaveBeenCalledTimes(1);
   });
 
   it('extractPage keeps waiting past the 30s default', async () => {

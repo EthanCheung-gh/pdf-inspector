@@ -31,7 +31,7 @@ import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 try:  # imported as ``sidecar.diff`` (namespace package)
     from .extractor import PdfExtractor
@@ -1396,16 +1396,37 @@ def _close_extractor(extractor: Optional[PdfExtractor]) -> None:
         pass
 
 
+def _emit_progress(
+    progress: Optional[Callable[[dict[str, Any]], None]],
+    payload: dict[str, Any],
+) -> None:
+    """Report one progress payload, if the caller asked for progress.
+
+    Payloads are deterministic (stage names plus counters) and never touch the
+    result: a listener can drive a UI or an inactivity timeout without changing
+    what :func:`diff_files` returns.
+    """
+    if progress is not None:
+        progress(payload)
+
+
 def diff_files(
     old_path: str | Path,
     new_path: str | Path,
     options: Optional[DiffOptions] = None,
+    progress: Optional[Callable[[dict[str, Any]], None]] = None,
 ) -> dict[str, Any]:
     """Diff two PDF files and return a JSON-serialisable ``DiffResult``.
 
     Pages are read one at a time: a fingerprint pass pairs the pages, the diff
     pass extracts only the two pages of the current pair.  Both extractors are
     closed whether the diff succeeds or fails.
+
+    ``progress`` (optional) is called with a deterministic payload as the work
+    advances: ``start`` (page counts), one ``fingerprints`` report per page and
+    side, one ``pages`` report per paired page and a final ``done`` summary.
+    Transport layers use it to keep a long diff from looking like a hang; the
+    returned dict is identical whether or not a callback is passed.
     """
     opts = options if options is not None else DiffOptions()
     if not isinstance(opts, DiffOptions):
@@ -1426,22 +1447,54 @@ def diff_files(
         old_page_count = _page_count(old_extractor, old_file, 'old')
         new_page_count = _page_count(new_extractor, new_file, 'new')
 
-        old_fingerprints = [
-            page_fingerprint(
-                _extract_page(old_extractor, page_num, old_file, 'old')
+        _emit_progress(
+            progress,
+            {'stage': 'start', 'oldPages': old_page_count, 'newPages': new_page_count},
+        )
+
+        old_fingerprints = []
+        for page_num in range(1, old_page_count + 1):
+            old_fingerprints.append(
+                page_fingerprint(
+                    _extract_page(old_extractor, page_num, old_file, 'old')
+                )
             )
-            for page_num in range(1, old_page_count + 1)
-        ]
-        new_fingerprints = [
-            page_fingerprint(
-                _extract_page(new_extractor, page_num, new_file, 'new')
+            _emit_progress(
+                progress,
+                {
+                    'stage': 'fingerprints',
+                    'side': 'old',
+                    'done': page_num,
+                    'total': old_page_count,
+                },
             )
-            for page_num in range(1, new_page_count + 1)
-        ]
+
+        new_fingerprints = []
+        for page_num in range(1, new_page_count + 1):
+            new_fingerprints.append(
+                page_fingerprint(
+                    _extract_page(new_extractor, page_num, new_file, 'new')
+                )
+            )
+            _emit_progress(
+                progress,
+                {
+                    'stage': 'fingerprints',
+                    'side': 'new',
+                    'done': page_num,
+                    'total': new_page_count,
+                },
+            )
+
+        pairs = pair_pages(old_fingerprints, new_fingerprints)
+        _emit_progress(progress, {'stage': 'pages', 'done': 0, 'total': len(pairs)})
 
         pages: list[dict[str, Any]] = []
-        for old_index, new_index in pair_pages(old_fingerprints, new_fingerprints):
+        for index, (old_index, new_index) in enumerate(pairs):
             if old_index is None and new_index is None:  # pragma: no cover - defensive
+                _emit_progress(
+                    progress, {'stage': 'pages', 'done': index + 1, 'total': len(pairs)}
+                )
                 continue
             if old_index is None:
                 page = _extract_page(new_extractor, new_index, new_file, 'new')
@@ -1460,8 +1513,7 @@ def diff_files(
                         'changes': changes,
                     }
                 )
-                continue
-            if new_index is None:
+            elif new_index is None:
                 page = _extract_page(old_extractor, old_index, old_file, 'old')
                 changes = _one_sided_changes(page, old_index, 'removed', opts)
                 pages.append(
@@ -1478,33 +1530,36 @@ def diff_files(
                         'changes': changes,
                     }
                 )
-                continue
+            else:
+                old_page = _extract_page(old_extractor, old_index, old_file, 'old')
+                new_page = _extract_page(new_extractor, new_index, new_file, 'new')
+                changes = diff_pages(old_page, new_page, opts, old_index, new_index)
+                pages.append(
+                    {
+                        'oldIndex': old_index,
+                        'newIndex': new_index,
+                        'status': 'changed' if changes else 'unchanged',
+                        'oldSize': {
+                            'width': _number(old_page.get('width')),
+                            'height': _number(old_page.get('height')),
+                        },
+                        'newSize': {
+                            'width': _number(new_page.get('width')),
+                            'height': _number(new_page.get('height')),
+                        },
+                        'match': {
+                            'score': page_match_score(
+                                old_fingerprints[old_index - 1],
+                                new_fingerprints[new_index - 1],
+                            ),
+                            'reordered': old_index != new_index,
+                        },
+                        'changes': changes,
+                    }
+                )
 
-            old_page = _extract_page(old_extractor, old_index, old_file, 'old')
-            new_page = _extract_page(new_extractor, new_index, new_file, 'new')
-            changes = diff_pages(old_page, new_page, opts, old_index, new_index)
-            pages.append(
-                {
-                    'oldIndex': old_index,
-                    'newIndex': new_index,
-                    'status': 'changed' if changes else 'unchanged',
-                    'oldSize': {
-                        'width': _number(old_page.get('width')),
-                        'height': _number(old_page.get('height')),
-                    },
-                    'newSize': {
-                        'width': _number(new_page.get('width')),
-                        'height': _number(new_page.get('height')),
-                    },
-                    'match': {
-                        'score': page_match_score(
-                            old_fingerprints[old_index - 1],
-                            new_fingerprints[new_index - 1],
-                        ),
-                        'reordered': old_index != new_index,
-                    },
-                    'changes': changes,
-                }
+            _emit_progress(
+                progress, {'stage': 'pages', 'done': index + 1, 'total': len(pairs)}
             )
 
         all_changes = [change for page in pages for change in page['changes']]
@@ -1520,6 +1575,16 @@ def diff_files(
             'objectsMoved': sum(1 for change in all_changes if change['kind'] == 'moved'),
             'objectsModified': sum(1 for change in all_changes if change['kind'] == 'modified'),
         }
+
+        _emit_progress(
+            progress,
+            {
+                'stage': 'done',
+                'oldPages': old_page_count,
+                'newPages': new_page_count,
+                'pages': len(pages),
+            },
+        )
 
         return {
             'schemaVersion': SCHEMA_VERSION,

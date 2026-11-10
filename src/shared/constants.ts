@@ -82,25 +82,21 @@ export const PDF_URL_TIMEOUT_MS = 60_000;
 export const OPEN_PDF_URL_TIMEOUT_MS = PDF_URL_TIMEOUT_MS + OPEN_PDF_TIMEOUT_MS + 5_000;
 
 /**
- * Timeout for the `diff_documents` request.
+ * Inactivity budget for the `diff_documents` request.
+ *
+ * This is NOT a cap on how long a diff may run. The sidecar reports progress
+ * after every fingerprinted page and every paired page, and each report rearms
+ * this timer (see `SidecarManager.writeRequest` and the web backend's manager),
+ * so a large pair that keeps completing pages may legitimately run far longer
+ * than 300s. Only SILENCE of this length fails the request:
+ * `Request "diff_documents" timed out after 300s without progress`.
  *
  * A diff extracts BOTH documents page by page, so it is the most expensive
- * operation the sidecar performs and gets its own, generous budget: 300s is
- * well above `analyze_fonts` (120s) so a large pair of documents does not look
- * like a hang. It is per-request (see `SidecarManager.send`), so diffing can
- * never extend or shorten the budget of an extract/analyze call.
+ * operation the sidecar performs and gets the largest budget (well above
+ * `analyze_fonts`' 120s). It is per-request, so diffing can never extend or
+ * shorten the budget of an extract/analyze call.
  */
 export const DIFF_TIMEOUT_MS = 300_000;
-
-/**
- * Renderer-side budget for `diffPdfs`.
- *
- * Larger than the main-process budget for the same reason as
- * `ANALYZE_FONTS_RENDERER_TIMEOUT_MS`: main must time out first so its clear
- * `Request "diff_documents" timed out after 300s` error surfaces instead of a
- * renderer-side "Sidecar timeout" that triggers a restart.
- */
-export const DIFF_RENDERER_TIMEOUT_MS = DIFF_TIMEOUT_MS + 5_000;
 
 /**
  * Timeout for one `audit_document` / `audit_pages` request.

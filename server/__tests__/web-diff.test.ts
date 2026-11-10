@@ -331,7 +331,7 @@ describe('POST /api/diff', () => {
     const oldToken = await uploadSide('old');
     const newToken = await uploadSide('new');
     send.mockRejectedValueOnce(
-      new Error('Request "diff_documents" timed out after 300s'),
+      new Error('Request "diff_documents" timed out after 300s without progress'),
     );
 
     const response = await postDiff({ oldToken, newToken });

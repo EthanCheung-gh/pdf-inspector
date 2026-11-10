@@ -205,6 +205,16 @@ export const DiffSetupDialog: React.FC = () => {
         {loading && (
           <div className={styles.progress} role="status" aria-live="polite">
             Comparing documents…
+            {/*
+              Reassurance, not a progress meter: the diff has no reliable
+              percentage (page pairing is only known after the fingerprint
+              pass), so the dialog states why a large pair takes a while
+              instead of inventing a number.
+            */}
+            <span className={styles.progressHint}>
+              Large PDFs can take several minutes; the comparison continues while pages make
+              progress.
+            </span>
           </div>
         )}
 

@@ -605,6 +605,11 @@ describe('DiffWorkspace ignore regions', () => {
 
     expect(store().loading).toBe(true);
     expect(screen.getByRole('button', { name: 'Applying…' })).toBeTruthy();
+    // The in-flight state reassures about long comparisons without inventing a
+    // completion percentage.
+    expect(
+      screen.getAllByRole('status').map((element) => element.textContent).join(' '),
+    ).toContain('Large PDFs can take several minutes');
 
     await act(async () => {
       reject?.(new Error('Cannot read new PDF'));

@@ -107,11 +107,16 @@ class SidecarSession:
         method: str,
         params: Optional[dict[str, Any]] = None,
         request_id: int = 0,
+        progress: Optional[Callable[[dict[str, Any]], None]] = None,
     ) -> dict[str, Any]:
-        """Handle one request and return the response dict ({'id', 'result'} / {'id', 'error'})."""
+        """Handle one request and return the response dict ({'id', 'result'} / {'id', 'error'}).
+
+        ``progress`` is forwarded to methods that report incremental work (only
+        ``diff_documents`` today); every other method ignores it.
+        """
         params = params or {}
         try:
-            result = self._dispatch(method, params)
+            result = self._dispatch(method, params, progress)
         except RpcError as e:
             return {'id': request_id, 'error': str(e)}
         except Exception as e:
@@ -120,7 +125,12 @@ class SidecarSession:
             return {'id': request_id, 'error': str(e)}
         return {'id': request_id, 'result': result}
 
-    def _dispatch(self, method: str, params: dict[str, Any]) -> Any:
+    def _dispatch(
+        self,
+        method: str,
+        params: dict[str, Any],
+        progress: Optional[Callable[[dict[str, Any]], None]] = None,
+    ) -> Any:
         if method == 'open':
             return self._open(params)
 
@@ -146,7 +156,7 @@ class SidecarSession:
             return self._require_extractor().get_image_data(params['stream_id'])
 
         if method == 'diff_documents':
-            return self._diff_documents(params)
+            return self._diff_documents(params, progress)
 
         if method == 'audit_document':
             return audit_document(self._require_extractor())
@@ -183,12 +193,18 @@ class SidecarSession:
         self._extractor = extractor
         return extractor.get_metadata()
 
-    def _diff_documents(self, params: dict[str, Any]) -> dict[str, Any]:
+    def _diff_documents(
+        self,
+        params: dict[str, Any],
+        progress: Optional[Callable[[dict[str, Any]], None]] = None,
+    ) -> dict[str, Any]:
         """Diff two PDFs on throwaway extractors.
 
         Deliberately independent of the session: the current document, its page
         cache and its extractor are untouched, so a diff never changes what the
         user is inspecting. ``diff_files`` owns (and closes) its own extractors.
+        ``progress`` is the transport's per-page report, used to keep a long diff
+        from looking like an idle request.
         """
         old_path = params.get('old_path')
         new_path = params.get('new_path')
@@ -198,7 +214,7 @@ class SidecarSession:
 
         options = _parse_diff_options(params.get('options'))
         try:
-            return diff_files(old_path, new_path, options)
+            return diff_files(old_path, new_path, options, progress)
         except (DiffError, ValueError) as exc:
             # A bad PDF or bad option values are user errors, not protocol
             # failures: report the message without a traceback.
@@ -257,7 +273,14 @@ def main():
             sys.stderr.flush()
             continue
 
-        response = session.handle(req.method, req.params, req.id)
+        # Progress is a separate stdout message ({'id', 'progress'}), written and
+        # flushed as soon as the work reports it: the parent uses it to keep the
+        # request's inactivity timeout alive instead of capping the total time.
+        def report_progress(payload: dict[str, Any], request_id: int = req.id) -> None:
+            sys.stdout.write(json.dumps({"id": request_id, "progress": payload}) + "\n")
+            sys.stdout.flush()
+
+        response = session.handle(req.method, req.params, req.id, report_progress)
         resp = format_response(RpcResponse(
             id=response['id'],
             result=response.get('result'),
