@@ -60,6 +60,7 @@ describe('ExportDialog', () => {
     usePdfStore.setState({
       filePath: '/tmp/doc.pdf',
       sourceUrl: null,
+      documentName: null,
       metadata,
       pageCount: 3,
       currentPage: 1,
@@ -75,6 +76,14 @@ describe('ExportDialog', () => {
   function openDialog(): HTMLElement {
     fireEvent.click(screen.getByRole('button', { name: 'Export' }));
     return screen.getByRole('dialog');
+  }
+
+  function fileNameInput(dialog: HTMLElement): HTMLInputElement {
+    return within(dialog).getByLabelText('File name') as HTMLInputElement;
+  }
+
+  function setFileName(dialog: HTMLElement, value: string): void {
+    fireEvent.change(fileNameInput(dialog), { target: { value } });
   }
 
   function typesGroup(dialog: HTMLElement): HTMLElement {
@@ -120,6 +129,120 @@ describe('ExportDialog', () => {
     const checkboxes = within(typesGroup(dialog)).getAllByRole('checkbox');
     expect(checkboxes).toHaveLength(7);
     checkboxes.forEach((box) => expect((box as HTMLInputElement).checked).toBe(true));
+  });
+
+  it('prefills the file name with the generated suggestion', () => {
+    render(React.createElement(ExportDialog));
+
+    const dialog = openDialog();
+    const input = fileNameInput(dialog);
+
+    expect(input.value).toBe('doc-p1.json');
+    expect(input.placeholder).toBe('report-p1.json');
+  });
+
+  it('prefers the document display name and decodes encoded paths', () => {
+    usePdfStore.setState({
+      filePath: '/tmp/_____-1a2b.pdf',
+      documentName: '测试 报告.pdf',
+    });
+    render(React.createElement(ExportDialog));
+
+    expect(fileNameInput(openDialog()).value).toBe('测试 报告-p1.json');
+    cleanup();
+
+    usePdfStore.setState({
+      filePath: 'http://localhost:8080/doc/x/%E6%B5%8B%E8%AF%95%20report.pdf',
+      documentName: null,
+    });
+    render(React.createElement(ExportDialog));
+
+    expect(fileNameInput(openDialog()).value).toBe('测试 report-p1.json');
+  });
+
+  it('submits a custom file name with the export extension', async () => {
+    render(React.createElement(ExportDialog));
+    const dialog = openDialog();
+
+    setFileName(dialog, 'my export');
+    fireEvent.click(exportButton(dialog));
+
+    await waitFor(() => expect(saveFile).toHaveBeenCalledTimes(1));
+    expect(saveFile.mock.calls[0][0].defaultPath).toBe('my export.json');
+  });
+
+  it('keeps a custom stem and swaps the extension when the format changes', async () => {
+    render(React.createElement(ExportDialog));
+    const dialog = openDialog();
+
+    setFileName(dialog, 'my export.json');
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'CSV' }));
+
+    expect(fileNameInput(dialog).value).toBe('my export.csv');
+
+    fireEvent.click(exportButton(dialog));
+
+    await waitFor(() => expect(saveFile).toHaveBeenCalledTimes(1));
+    expect(saveFile.mock.calls[0][0].defaultPath).toBe('my export.csv');
+    expect(saveFile.mock.calls[0][0].extensions).toEqual(['csv']);
+  });
+
+  it('updates the whole suggestion while the name was not edited', async () => {
+    render(React.createElement(ExportDialog));
+    const dialog = openDialog();
+
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Whole document' }));
+    expect(fileNameInput(dialog).value).toBe('doc-all.json');
+
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'CSV' }));
+    expect(fileNameInput(dialog).value).toBe('doc-all.csv');
+
+    extractPage.mockImplementation(async (page: number) => makePage(page));
+    fireEvent.click(exportButton(dialog));
+
+    await waitFor(() => expect(saveFile).toHaveBeenCalledTimes(1));
+    expect(saveFile.mock.calls[0][0].defaultPath).toBe('doc-all.csv');
+  });
+
+  it('falls back to the generated name when the custom name is unusable', async () => {
+    render(React.createElement(ExportDialog));
+    const dialog = openDialog();
+
+    setFileName(dialog, '***');
+    fireEvent.click(exportButton(dialog));
+
+    await waitFor(() => expect(saveFile).toHaveBeenCalledTimes(1));
+    expect(saveFile.mock.calls[0][0].defaultPath).toBe('doc-p1.json');
+  });
+
+  it('never submits a directory path from the name field', async () => {
+    render(React.createElement(ExportDialog));
+    const dialog = openDialog();
+
+    setFileName(dialog, '/etc/passwd');
+    fireEvent.click(exportButton(dialog));
+
+    await waitFor(() => expect(saveFile).toHaveBeenCalledTimes(1));
+    expect(saveFile.mock.calls[0][0].defaultPath).toBe('passwd.json');
+  });
+
+  it('disables the name field while exporting', async () => {
+    let resolveSave: (value: { canceled: boolean }) => void = () => undefined;
+    saveFile.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+
+    render(React.createElement(ExportDialog));
+    const dialog = openDialog();
+
+    fireEvent.click(exportButton(dialog));
+
+    await waitFor(() => expect(fileNameInput(dialog).disabled).toBe(true));
+    resolveSave({ canceled: false });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
   it('exports the current page as JSON without the unselected type', async () => {

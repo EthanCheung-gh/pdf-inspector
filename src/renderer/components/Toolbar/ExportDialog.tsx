@@ -1,5 +1,12 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { EXPORT_OBJECT_TYPES, pagesToCsv, pagesToJson, suggestFilename } from '../../services/export-data';
+import {
+  EXPORT_OBJECT_TYPES,
+  pagesToCsv,
+  pagesToJson,
+  sanitizeExportFileName,
+  suggestFilename,
+  swapExportFormatExtension,
+} from '../../services/export-data';
 import { ipc } from '../../services/ipc-client';
 import { usePdfStore } from '../../store/pdf-store';
 import type { PageData, PdfObjectType } from '../../types/pdf-objects';
@@ -12,15 +19,39 @@ type Format = 'json' | 'csv';
 const ALL_TYPES: PdfObjectType[] = [...EXPORT_OBJECT_TYPES];
 
 /**
+ * Auto-generated name for a scope/format, from the open document.
+ *
+ * Read straight from the store so the open handler and the scope/format
+ * handlers always derive the default the same way.
+ */
+function generatedFileName(scope: Scope, format: Format): string {
+  const store = usePdfStore.getState();
+  return suggestFilename(
+    store.filePath,
+    scope,
+    store.currentPage,
+    format,
+    store.sourceUrl,
+    store.documentName,
+  );
+}
+
+/**
  * Toolbar export entry point: a trigger button plus the modal that replaces the
- * old four-item dropdown. The modal owns scope, format and the object-type
- * selection so a single export can be trimmed to the types the user cares about.
+ * old four-item dropdown. The modal owns scope, format, the editable file name
+ * and the object-type selection so a single export can be trimmed to the types
+ * the user cares about.
  */
 export const ExportDialog: React.FC = () => {
   const [open, setOpen] = useState(false);
   const [scope, setScope] = useState<Scope>('page');
   const [format, setFormat] = useState<Format>('json');
   const [types, setTypes] = useState<PdfObjectType[]>(ALL_TYPES);
+  const [fileName, setFileName] = useState('');
+  // The generated suggestion `fileName` currently mirrors. While they are
+  // equal, scope/format changes may replace the whole value; once the user
+  // edits it, only a recognised extension is swapped.
+  const [autoFileName, setAutoFileName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,18 +64,47 @@ export const ExportDialog: React.FC = () => {
   const formatName = useId();
   const scopeLabelId = useId();
   const formatLabelId = useId();
+  const fileNameId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
 
-  // Fresh dialog state every time it opens: all types, page scope, JSON.
+  // Fresh dialog state every time it opens: all types, page scope, JSON and the
+  // generated name for the open document.
   useEffect(() => {
     if (!open) return;
+    const generated = generatedFileName('page', 'json');
     setScope('page');
     setFormat('json');
     setTypes([...EXPORT_OBJECT_TYPES]);
+    setFileName(generated);
+    setAutoFileName(generated);
     setError(null);
     setBusy(false);
     dialogRef.current?.focus();
   }, [open]);
+
+  const handleScopeChange = useCallback(
+    (nextScope: Scope) => {
+      const generated = generatedFileName(nextScope, format);
+      setScope(nextScope);
+      setAutoFileName(generated);
+      // An untouched name follows the new suggestion; a custom name is kept
+      // (only the format affects its extension).
+      setFileName((current) => (current === autoFileName ? generated : current));
+    },
+    [autoFileName, format],
+  );
+
+  const handleFormatChange = useCallback(
+    (nextFormat: Format) => {
+      const generated = generatedFileName(scope, nextFormat);
+      setFormat(nextFormat);
+      setAutoFileName(generated);
+      setFileName((current) =>
+        current === autoFileName ? generated : swapExportFormatExtension(current, nextFormat),
+      );
+    },
+    [autoFileName, scope],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -90,8 +150,13 @@ export const ExportDialog: React.FC = () => {
 
       const content =
         format === 'json' ? pagesToJson(pages, store.metadata, types) : pagesToCsv(pages, types);
+      // The user's name is normalised (no directories, exactly one extension);
+      // an unusable value falls back to the generated suggestion.
+      const generated = generatedFileName(scope, format);
+      const defaultPath =
+        sanitizeExportFileName(fileName, format) || sanitizeExportFileName(generated, format);
       const result = await ipc.saveFile({
-        defaultPath: suggestFilename(store.filePath, scope, store.currentPage, format, store.sourceUrl),
+        defaultPath,
         content,
         filterName: format.toUpperCase(),
         extensions: [format],
@@ -112,7 +177,7 @@ export const ExportDialog: React.FC = () => {
       usePdfStore.getState().setExportProgress(null);
       setBusy(false);
     }
-  }, [busy, format, scope, types]);
+  }, [busy, fileName, format, scope, types]);
 
   const handleBackdropClick = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -165,7 +230,7 @@ export const ExportDialog: React.FC = () => {
                     value="page"
                     checked={scope === 'page'}
                     disabled={busy}
-                    onChange={() => setScope('page')}
+                    onChange={() => handleScopeChange('page')}
                   />
                   Current page
                 </label>
@@ -176,7 +241,7 @@ export const ExportDialog: React.FC = () => {
                     value="document"
                     checked={scope === 'document'}
                     disabled={busy}
-                    onChange={() => setScope('document')}
+                    onChange={() => handleScopeChange('document')}
                   />
                   Whole document
                 </label>
@@ -195,7 +260,7 @@ export const ExportDialog: React.FC = () => {
                     value="json"
                     checked={format === 'json'}
                     disabled={busy}
-                    onChange={() => setFormat('json')}
+                    onChange={() => handleFormatChange('json')}
                   />
                   JSON
                 </label>
@@ -206,11 +271,28 @@ export const ExportDialog: React.FC = () => {
                     value="csv"
                     checked={format === 'csv'}
                     disabled={busy}
-                    onChange={() => setFormat('csv')}
+                    onChange={() => handleFormatChange('csv')}
                   />
                   CSV
                 </label>
               </div>
+            </div>
+
+            <div className={styles.row}>
+              <label htmlFor={fileNameId} className={styles.rowLabel}>
+                File name
+              </label>
+              <input
+                id={fileNameId}
+                className={styles.fileNameInput}
+                type="text"
+                value={fileName}
+                placeholder={`report-p1.${format}`}
+                disabled={busy}
+                spellCheck={false}
+                autoComplete="off"
+                onChange={(event) => setFileName(event.target.value)}
+              />
             </div>
 
             <div className={styles.selectorRow}>

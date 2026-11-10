@@ -87,6 +87,30 @@
   accent-color: var(--pi-accent-border);
 }
 
+.fileNameInput {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
+  font: inherit;
+}
+
+.fileNameInput:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
+.fileNameInput:disabled {
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
+  cursor: not-allowed;
+}
+
 .selectorRow {
   margin-bottom: 6px;
   padding: 8px 10px;
