@@ -11,6 +11,7 @@ import {
   formatAnnotationValue,
   isSafeExternalUrl,
   loadPageAnnotations,
+  loadPageAnnotationsForIndex,
   normalizeAnnotation,
   resolveDestinationPage,
 } from '../annotations';
@@ -25,6 +26,8 @@ interface FakeDocOptions {
   annotations?: (page: number) => unknown[];
   destinations?: Partial<Record<string, unknown[] | null>>;
   pageIndices?: Partial<Record<number, number>>;
+  /** Per-page `page.view`; omitted pages expose no view at all. */
+  views?: Partial<Record<number, unknown>>;
 }
 
 /**
@@ -35,8 +38,10 @@ function createFakeDoc(options: FakeDocOptions = {}) {
   const loadAnnotations = options.annotations ?? (() => []);
   const destinations = options.destinations ?? {};
   const pageIndices = options.pageIndices ?? {};
+  const views = options.views ?? {};
 
   const getPage = vi.fn(async (pageNumber: number) => ({
+    view: views[pageNumber],
     getAnnotations: async () => loadAnnotations(pageNumber),
   }));
   const getDestination = vi.fn(async (name: string) =>
@@ -833,6 +838,43 @@ describe('loadPageAnnotations', () => {
     expect(pageOneAgain[0].id).toBe(pageOne[0].id);
   });
 
+  it('caches separately per MediaBox origin so rects never mix', async () => {
+    const fake = createFakeDoc({
+      annotations: () => [{ subtype: 'Highlight', id: 'hl', rect: [110, 220, 310, 420] }],
+    });
+
+    const offsetOrigin = { x: 100, y: 200 };
+    const atZero = await loadPageAnnotations(fake.doc, 1, ORIGIN);
+    const offset = await loadPageAnnotations(fake.doc, 1, offsetOrigin);
+    const atZeroAgain = await loadPageAnnotations(fake.doc, 1, ORIGIN);
+    const offsetAgain = await loadPageAnnotations(fake.doc, 1, offsetOrigin);
+
+    // One fetch per distinct origin, not per call.
+    expect(fake.getPage).toHaveBeenCalledTimes(2);
+    expect(atZero[0].rect).toEqual({ x0: 110, y0: 220, x1: 310, y1: 420 });
+    expect(offset[0].rect).toEqual({ x0: 10, y0: 20, x1: 210, y1: 220 });
+    expect(atZeroAgain[0].rect).toEqual(atZero[0].rect);
+    expect(offsetAgain[0].rect).toEqual(offset[0].rect);
+  });
+
+  it('treats a non-finite origin component as zero in the cache key', async () => {
+    const fake = createFakeDoc({
+      annotations: () => [{ subtype: 'Highlight', id: 'hl', rect: [10, 20, 30, 40] }],
+    });
+
+    const fromZero = await loadPageAnnotations(fake.doc, 1, ORIGIN);
+    const fromNaN = await loadPageAnnotations(fake.doc, 1, { x: Number.NaN, y: 0 });
+    const fromInfinity = await loadPageAnnotations(fake.doc, 1, {
+      x: 0,
+      y: Number.POSITIVE_INFINITY,
+    });
+
+    // An unusable origin normalizes to {0,0}, so it reuses the zero entry.
+    expect(fake.getPage).toHaveBeenCalledTimes(1);
+    expect(fromNaN).toEqual(fromZero);
+    expect(fromInfinity).toEqual(fromZero);
+  });
+
   it('drops a rejected load from the cache so the next call retries', async () => {
     let attempts = 0;
     const getPage = vi.fn(async () => {
@@ -868,6 +910,102 @@ describe('loadPageAnnotations', () => {
 
     await expect(loadPageAnnotations(fake.doc, 0, ORIGIN)).resolves.toEqual([]);
     await expect(loadPageAnnotations(fake.doc, Number.NaN, ORIGIN)).resolves.toEqual([]);
+    expect(fake.getPage).not.toHaveBeenCalled();
+  });
+});
+
+describe('loadPageAnnotationsForIndex', () => {
+  it('normalizes against the page view origin', async () => {
+    const fake = createFakeDoc({
+      annotations: () => [{ subtype: 'Highlight', id: 'hl', rect: [110, 220, 310, 420] }],
+      views: { 1: [100, 200, 600, 900] },
+    });
+
+    const annotations = await loadPageAnnotationsForIndex(fake.doc, 1);
+
+    expect(fake.getPage).toHaveBeenCalledWith(1);
+    expect(annotations).toHaveLength(1);
+    expect(annotations[0].rect).toEqual({ x0: 10, y0: 20, x1: 210, y1: 220 });
+  });
+
+  it('shares its cache entry with loadPageAnnotations for the same origin', async () => {
+    const fake = createFakeDoc({
+      annotations: () => [{ subtype: 'Highlight', id: 'hl', rect: [110, 220, 310, 420] }],
+      views: { 1: [100, 200, 600, 900] },
+    });
+
+    const indexed = await loadPageAnnotationsForIndex(fake.doc, 1);
+    const currentPage = await loadPageAnnotations(fake.doc, 1, { x: 100, y: 200 });
+
+    // The index read primed the shared cache; the current-page reader reused it.
+    expect(fake.getPage).toHaveBeenCalledTimes(1);
+    expect(currentPage).toEqual(indexed);
+    // Copies stay isolated, so neither reader can mutate the other's data.
+    expect(currentPage).not.toBe(indexed);
+    expect(currentPage[0]).not.toBe(indexed[0]);
+  });
+
+  it('keeps the index origin out of the current page cache', async () => {
+    const fake = createFakeDoc({
+      annotations: () => [{ subtype: 'Highlight', id: 'hl', rect: [110, 220, 310, 420] }],
+      views: { 1: [100, 200, 600, 900] },
+    });
+
+    const indexed = await loadPageAnnotationsForIndex(fake.doc, 1);
+    const currentPage = await loadPageAnnotations(fake.doc, 1, ORIGIN);
+
+    expect(fake.getPage).toHaveBeenCalledTimes(2);
+    expect(indexed[0].rect).toEqual({ x0: 10, y0: 20, x1: 210, y1: 220 });
+    expect(currentPage[0].rect).toEqual({ x0: 110, y0: 220, x1: 310, y1: 420 });
+  });
+
+  it('falls back to a zero origin when page.view is missing or unusable', async () => {
+    const views: unknown[] = [
+      undefined,
+      null,
+      [],
+      [10],
+      ['10', 20, 30, 40],
+      [Number.NaN, 20, 30, 40],
+      [10, Number.POSITIVE_INFINITY, 30, 40],
+      'view',
+    ];
+
+    for (const view of views) {
+      const fake = createFakeDoc({
+        annotations: () => [{ subtype: 'Highlight', id: 'hl', rect: [10, 20, 30, 40] }],
+        views: { 1: view },
+      });
+
+      const annotations = await loadPageAnnotationsForIndex(fake.doc, 1);
+      expect(annotations[0].rect).toEqual({ x0: 10, y0: 20, x1: 30, y1: 40 });
+    }
+  });
+
+  it('retries after a failed page load', async () => {
+    let attempts = 0;
+    const getPage = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('page load failed');
+      return {
+        view: [0, 0, 100, 100],
+        getAnnotations: async () => [{ subtype: 'Text', id: 'note', rect: [0, 0, 1, 1] }],
+      };
+    });
+    const doc = { getPage } as unknown as PDFDocumentProxy;
+
+    await expect(loadPageAnnotationsForIndex(doc, 2)).rejects.toThrow('page load failed');
+
+    const annotations = await loadPageAnnotationsForIndex(doc, 2);
+    expect(annotations).toHaveLength(1);
+    expect(getPage).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns no annotations for an invalid page number', async () => {
+    const fake = createFakeDoc();
+
+    await expect(loadPageAnnotationsForIndex(fake.doc, 0)).resolves.toEqual([]);
+    await expect(loadPageAnnotationsForIndex(fake.doc, Number.NaN)).resolves.toEqual([]);
     expect(fake.getPage).not.toHaveBeenCalled();
   });
 });

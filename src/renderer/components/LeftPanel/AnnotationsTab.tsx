@@ -1,17 +1,29 @@
-import React, { useId, useMemo } from 'react';
+import React, { useId, useMemo, useState } from 'react';
+import { annotationDocumentKey, annotationIndexPageTotal, useAnnotationIndex } from '../../hooks/useAnnotationIndex';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
+import type {
+  AnnotationFormIssue,
+  AnnotationIndexSummary,
+  AnnotationLinkIssue,
+} from '../../services/annotation-index';
 import {
   ANNOTATION_KINDS,
   ANNOTATION_KIND_LABELS,
   annotationKindLabel,
+  annotationSearchText,
   annotationSubtypeLabel,
   filterAnnotations,
   formatAnnotationValue,
 } from '../../services/annotations';
+import {
+  useAnnotationIndexStore,
+  type AnnotationIndexKindFilter,
+} from '../../store/annotation-index-store';
 import { useAnnotationStore, type AnnotationKindFilter } from '../../store/annotation-store';
 import { usePdfStore } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
 import type { AnnotationKind, PdfAnnotation } from '../../types/annotations';
+import { AnnotationExportDialog } from './AnnotationExportDialog';
 import styles from './AnnotationsTab.module.css';
 
 /** Badge colour per kind; mirrors the annotation overlay palette. */
@@ -23,6 +35,25 @@ const KIND_BADGE_CLASSES: Record<AnnotationKind, string> = {
   stamp: styles.badgeStamp,
   other: styles.badgeOther,
 };
+
+/**
+ * Which list the tab shows: the annotations of the page on screen, or every
+ * annotation of the document. The current page stays the default.
+ */
+export type AnnotationScope = 'page' | 'document';
+
+/** Ordered options of the mode switch. */
+export const ANNOTATION_SCOPES: ReadonlyArray<{ value: AnnotationScope; label: string }> = [
+  { value: 'page', label: 'Current page' },
+  { value: 'document', label: 'Whole document' },
+];
+
+/** Stable empty list so an unindexed document keeps one array reference. */
+const EMPTY_ANNOTATIONS: PdfAnnotation[] = [];
+
+/** Same for the health-check lists of a document without an index. */
+const EMPTY_LINK_ISSUES: AnnotationLinkIssue[] = [];
+const EMPTY_FORM_ISSUES: AnnotationFormIssue[] = [];
 
 /**
  * One-line row preview: the link target, the form field (with its value), or
@@ -79,6 +110,55 @@ export function annotationSummary(
   ].join(' · ');
 }
 
+/**
+ * `N annotations · P pages · L links · F form fields` for the whole document.
+ *
+ * The counts come from the index summary, which is computed once while the
+ * document is read, so the list never re-counts on every render.
+ */
+export function documentAnnotationSummary(summary: AnnotationIndexSummary): string {
+  return [
+    countLabel(summary.annotations, 'annotation', 'annotations'),
+    countLabel(summary.pagesWithAnnotations, 'page', 'pages'),
+    countLabel(summary.links, 'link', 'links'),
+    countLabel(summary.formFields, 'form field', 'form fields'),
+  ].join(' · ');
+}
+
+/**
+ * Link issues that describe a problem rather than an inventory entry.
+ *
+ * `external` is the informational list of openable http(s) targets; the two
+ * other kinds are the links a reader should look at.
+ */
+export function isProblemLinkIssue(issue: AnnotationLinkIssue): boolean {
+  return issue.kind !== 'external';
+}
+
+/**
+ * Number of entries the `Issues` section reports: every non-external link
+ * issue plus every form issue. External links are never counted as issues.
+ */
+export function documentIssueCount(
+  linkIssues: readonly AnnotationLinkIssue[],
+  formIssues: readonly AnnotationFormIssue[],
+): number {
+  return linkIssues.filter(isProblemLinkIssue).length + formIssues.length;
+}
+
+/** How many informational external-link entries the document has. */
+export function externalLinkCount(linkIssues: readonly AnnotationLinkIssue[]): number {
+  return linkIssues.filter((issue) => issue.kind === 'external').length;
+}
+
+/**
+ * `p.2, p.4`: the pages a form issue spans. Kept in the index's ascending
+ * order so a field's page list reads like a table of contents.
+ */
+export function issuePagesLabel(pages: readonly number[]): string {
+  return pages.map((page) => `p.${page}`).join(', ');
+}
+
 /** Raw subtypes present on the page, sorted for a stable filter menu. */
 export function subtypeFilterOptions(annotations: readonly PdfAnnotation[]): string[] {
   const subtypes = new Set<string>();
@@ -97,16 +177,61 @@ function countOfKind(annotations: readonly PdfAnnotation[], kind: AnnotationKind
   return annotations.reduce((total, annotation) => (annotation.kind === kind ? total + 1 : total), 0);
 }
 
+/** One row of either list; the presentation is what keeps both lists equal. */
+const AnnotationRow: React.FC<{
+  annotation: PdfAnnotation;
+  selected: boolean;
+  className: string;
+  onActivate: (annotation: PdfAnnotation) => void;
+}> = ({ annotation, selected, className, onActivate }) => {
+  const preview = annotationRowPreview(annotation);
+
+  return (
+    <li className={className}>
+      <button
+        type="button"
+        className={`${styles.row} ${selected ? styles.selected : ''}`}
+        aria-pressed={selected}
+        title={annotationSubtypeLabel(annotation.subtype)}
+        onClick={() => onActivate(annotation)}
+      >
+        <span className={styles.rowHeader}>
+          <span className={`${styles.badge} ${KIND_BADGE_CLASSES[annotation.kind]}`}>
+            {annotationKindLabel(annotation.kind)}
+          </span>
+          <span className={styles.subtype}>{annotationSubtypeLabel(annotation.subtype)}</span>
+          {annotation.hidden && (
+            <span className={styles.hiddenMarker} title="Hidden annotation">
+              Hidden
+            </span>
+          )}
+          <span className={styles.page} title={`Page ${annotation.page}`}>
+            p.{annotation.page}
+          </span>
+        </span>
+        {preview.length > 0 && <span className={styles.preview}>{preview}</span>}
+      </button>
+    </li>
+  );
+};
+
 /**
- * Current-page annotation list.
+ * Annotation list with two scopes.
  *
- * The list is read-only and page-scoped: it renders whatever the annotation
- * store holds for the page on screen, which `usePageAnnotations` keeps in sync
- * with page navigation. Selecting a row shares the selection with the canvas
- * overlay and opens the Inspect tab, where `AnnotationDetails` renders it.
+ * `Current page` renders whatever the annotation store holds for the page on
+ * screen (kept in sync by `usePageAnnotations`). `Whole document` reads the
+ * batched document index, which is started the first time the mode is opened and
+ * keeps running while the user looks at a single page, so switching back and
+ * forth never restarts it. Both lists are read-only; selecting a row shares the
+ * selection with the canvas overlay and opens the Inspect tab, where
+ * `AnnotationDetails` renders it.
  */
 export const AnnotationsTab: React.FC = () => {
   const filePath = usePdfStore((state) => state.filePath);
+  const sourceUrl = usePdfStore((state) => state.sourceUrl);
+  const documentName = usePdfStore((state) => state.documentName);
+  const pageCount = usePdfStore((state) => state.pageCount);
+  const pdfDoc = usePdfStore((state) => state.pdfDocRef);
   const currentPage = usePdfStore((state) => state.currentPage);
   const pageData = usePdfStore((state) => state.pageData);
   const pageLoading = usePdfStore((state) => state.isLoading);
@@ -127,8 +252,33 @@ export const AnnotationsTab: React.FC = () => {
   const setShowBoxes = useAnnotationStore((state) => state.setShowBoxes);
   const requestReload = useAnnotationStore((state) => state.requestReload);
 
+  const [scope, setScope] = useState<AnnotationScope>('page');
+  // The export dialog is document-scope only: the current page list keeps the
+  // existing toolbar object export and never offers an annotation export.
+  const [exportOpen, setExportOpen] = useState(false);
+  const documentKey = annotationDocumentKey(filePath, sourceUrl);
+  // The index is only *started* in document mode, but the hook stays mounted in
+  // both modes, so a running index keeps going when the user goes back to the
+  // current page and its result is still there when they return.
+  const { retry } = useAnnotationIndex(pdfDoc, documentKey, pageCount, scope === 'document');
+
+  const indexDocumentKey = useAnnotationIndexStore((state) => state.documentKey);
+  const indexStatus = useAnnotationIndexStore((state) => state.status);
+  const indexProgress = useAnnotationIndexStore((state) => state.progress);
+  const indexResult = useAnnotationIndexStore((state) => state.result);
+  const indexError = useAnnotationIndexStore((state) => state.error);
+  const indexQuery = useAnnotationIndexStore((state) => state.query);
+  const indexKindFilter = useAnnotationIndexStore((state) => state.kindFilter);
+  const indexSubtypeFilter = useAnnotationIndexStore((state) => state.subtypeFilter);
+  const setIndexQuery = useAnnotationIndexStore((state) => state.setQuery);
+  const setIndexKindFilter = useAnnotationIndexStore((state) => state.setKindFilter);
+  const setIndexSubtypeFilter = useAnnotationIndexStore((state) => state.setSubtypeFilter);
+
   const kindFilterId = useId();
   const subtypeFilterId = useId();
+  const documentKindFilterId = useId();
+  const documentSubtypeFilterId = useId();
+  const searchInputId = useId();
 
   const visible = useMemo(
     () => filterAnnotations(annotations, kindFilter, subtypeFilter),
@@ -144,6 +294,46 @@ export const AnnotationsTab: React.FC = () => {
     return options;
   }, [annotations, subtypeFilter]);
   const filtered = kindFilter !== 'all' || subtypeFilter !== 'all';
+
+  // The document index has its own query and filters: switching scope must not
+  // rewrite what the other list is filtered by.
+  const documentAnnotations = indexResult?.annotations ?? EMPTY_ANNOTATIONS;
+  const documentVisible = useMemo(() => {
+    if (indexResult === null) return EMPTY_ANNOTATIONS;
+
+    const kindAndSubtype = filterAnnotations(
+      indexResult.annotations,
+      indexKindFilter,
+      indexSubtypeFilter,
+    );
+    // `annotationSearchText` is already folded to lower case; the needle is
+    // trimmed and folded the same way before matching.
+    const needle = indexQuery.trim().toLowerCase();
+    if (needle.length === 0) return kindAndSubtype;
+    return kindAndSubtype.filter((annotation) => annotationSearchText(annotation).includes(needle));
+  }, [indexResult, indexKindFilter, indexSubtypeFilter, indexQuery]);
+  const documentSubtypes = useMemo(() => {
+    const options = subtypeFilterOptions(documentAnnotations);
+    if (indexSubtypeFilter !== 'all' && !options.includes(indexSubtypeFilter)) {
+      options.push(indexSubtypeFilter);
+    }
+    return options;
+  }, [documentAnnotations, indexSubtypeFilter]);
+
+  // Health check lists, split once per index: `linkProblems` feeds the open
+  // `Issues` block, `externalLinks` the collapsed informational one. Nothing
+  // here ever opens a URL; the targets are only shown and jumped to.
+  const { linkProblems, externalLinks, formIssues, issueCount } = useMemo(() => {
+    const linkIssues = indexResult?.linkIssues ?? EMPTY_LINK_ISSUES;
+    const issues = indexResult?.formIssues ?? EMPTY_FORM_ISSUES;
+    return {
+      linkProblems: linkIssues.filter(isProblemLinkIssue),
+      externalLinks: linkIssues.filter((issue) => issue.kind === 'external'),
+      formIssues: issues,
+      issueCount: documentIssueCount(linkIssues, issues),
+    };
+  }, [indexResult]);
+
   // Annotation geometry is normalized against the MediaBox origin, so the
   // loader only starts once the page's boxes are known. Without them the
   // annotation store stays empty forever, which must not read as "loading".
@@ -153,12 +343,124 @@ export const AnnotationsTab: React.FC = () => {
   const showingPage = page ?? currentPage;
   const pending = loading || page !== currentPage;
 
-  if (!filePath) {
-    return <div className={styles.emptyState}>Open a PDF to inspect annotations.</div>;
-  }
+  /**
+   * Mirrors the canvas path: only one selection may be active, so the object
+   * selection (and its gold highlight) plus the hover preview are dropped before
+   * the Inspector switches to the annotation.
+   */
+  const focusSelection = (annotation: PdfAnnotation | null): void => {
+    setSelected(annotation);
+    const pdfStore = usePdfStore.getState();
+    pdfStore.setSelectedObject(null);
+    pdfStore.setHoveredObject(null);
+    // Selecting from a list is the same gesture as clicking its box: the details
+    // belong in the Inspector, not in this narrow panel.
+    useWorkspaceStore.getState().setInspectorTab('inspect');
+  };
 
-  if (!hasGeometry) {
-    if (pageLoading) {
+  /**
+   * Document-mode row click: select now when the annotation is already loaded,
+   * otherwise navigate and let the page loader apply the pending id.
+   */
+  const activateDocumentRow = async (annotation: PdfAnnotation): Promise<void> => {
+    const store = useAnnotationStore.getState();
+    const current = usePdfStore.getState().currentPage;
+    if (store.page === annotation.page && annotation.page === current) {
+      const loaded = store.annotations.find((entry) => entry.id === annotation.id) ?? null;
+      if (loaded !== null) {
+        focusSelection(loaded);
+        return;
+      }
+    }
+
+    focusSelection(null);
+    store.requestSelection(annotation.id);
+    await navigate(annotation.page);
+
+    const after = useAnnotationStore.getState();
+    // Navigating resets the page data while the target page's annotations are
+    // still loading, which also drops the pending id; the request is therefore
+    // re-asserted and applied by the next page load instead of being lost.
+    if (after.page === annotation.page) {
+      after.requestSelection(null);
+      const loaded = after.annotations.find((entry) => entry.id === annotation.id) ?? null;
+      if (loaded !== null) after.setSelected(loaded);
+      return;
+    }
+
+    after.requestSelection(annotation.id);
+    after.requestReload();
+  };
+
+  /**
+   * Issue rows navigate through the same path as document rows: the reported
+   * annotation is looked up in the finished index, so the jump lands on the
+   * page that owns it and asks for its selection like a row click does. A link
+   * issue whose annotation is missing (stale issue list) still jumps to the
+   * recorded page instead of doing nothing.
+   */
+  const activateLinkIssue = (issue: AnnotationLinkIssue): void => {
+    const annotation =
+      indexResult?.annotations.find((entry) => entry.id === issue.annotationId) ?? null;
+    if (annotation === null) {
+      void navigate(issue.page);
+      return;
+    }
+    void activateDocumentRow(annotation);
+  };
+
+  /**
+   * Form issues are field groupings, not annotations: there is no widget id to
+   * select (an `unnamed` issue names its widget, but the jump is still a page
+   * move), so the jump only opens the first page the field appears on.
+   */
+  const activateFormIssue = (issue: AnnotationFormIssue): void => {
+    const firstPage = issue.pages[0];
+    if (firstPage === undefined) return;
+    void navigate(firstPage);
+  };
+
+  const renderCurrentPage = (): React.ReactElement => {
+    if (!hasGeometry) {
+      if (pageLoading) {
+        return (
+          <div className={styles.stateBox} role="status">
+            Loading annotations…
+          </div>
+        );
+      }
+
+      return (
+        <div className={styles.stateBox}>
+          <div role="status">Page geometry unavailable; annotations need page data.</div>
+          {/* Only a failed extraction is retryable: re-extract the page through
+              the guarded navigation. A page that extracted without boxes (older
+              sidecar) has nothing to retry. */}
+          {pageError !== null && (
+            <button
+              type="button"
+              className={styles.retry}
+              onClick={() => void navigate(currentPage)}
+            >
+              Retry page load
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    if (error !== null) {
+      return (
+        <div className={styles.stateBox} role="alert">
+          <div>{error}</div>
+          <button type="button" className={styles.retry} onClick={requestReload}>
+            Retry
+          </button>
+        </div>
+      );
+    }
+
+    if (pending) {
       return (
         <div className={styles.stateBox} role="status">
           Loading annotations…
@@ -166,162 +468,423 @@ export const AnnotationsTab: React.FC = () => {
       );
     }
 
+    if (annotations.length === 0) {
+      return (
+        <div className={styles.emptyState} role="status">
+          No annotations on page {showingPage}.
+        </div>
+      );
+    }
+
     return (
-      <div className={styles.stateBox}>
-        <div role="status">Page geometry unavailable; annotations need page data.</div>
-        {/* Only a failed extraction is retryable: re-extract the page through
-            the guarded navigation. A page that extracted without boxes (older
-            sidecar) has nothing to retry. */}
-        {pageError !== null && (
+      <>
+        <div className={styles.summary} role="status">
+          {annotationSummary(annotations, visible, filtered)}
+        </div>
+
+        <div className={styles.controls}>
+          {/* Boxes are a current-page concern only: the document list never
+              claims geometry for a page that is not on canvas. */}
+          <label className={styles.checkLabel}>
+            <input
+              type="checkbox"
+              checked={showBoxes}
+              onChange={(event) => setShowBoxes(event.target.checked)}
+            />
+            Show boxes
+          </label>
+
+          <div className={styles.filterRow}>
+            <label className={styles.filterLabel} htmlFor={kindFilterId}>
+              Kind
+            </label>
+            <select
+              id={kindFilterId}
+              className={styles.select}
+              value={kindFilter}
+              onChange={(event) => setKindFilter(event.target.value as AnnotationKindFilter)}
+            >
+              <option value="all">All kinds</option>
+              {ANNOTATION_KINDS.map((kind) => (
+                <option key={kind} value={kind}>
+                  {ANNOTATION_KIND_LABELS[kind]}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className={styles.filterRow}>
+            <label className={styles.filterLabel} htmlFor={subtypeFilterId}>
+              Subtype
+            </label>
+            <select
+              id={subtypeFilterId}
+              className={styles.select}
+              value={subtypeFilter}
+              onChange={(event) => setSubtypeFilter(event.target.value)}
+            >
+              <option value="all">All subtypes</option>
+              {subtypes.map((subtype) => (
+                <option key={subtype} value={subtype}>
+                  {annotationSubtypeLabel(subtype)}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {visible.length === 0 ? (
+          <div className={styles.emptyState} role="status">
+            No annotations match the current filters.
+          </div>
+        ) : (
+          <ul className={styles.list} aria-label={`Annotations on page ${showingPage}`}>
+            {visible.map((annotation) => (
+              <AnnotationRow
+                key={annotation.id}
+                annotation={annotation}
+                className={styles.item}
+                selected={selected !== null && selected.id === annotation.id}
+                onActivate={focusSelection}
+              />
+            ))}
+          </ul>
+        )}
+      </>
+    );
+  };
+
+  /**
+   * `Issues` (open) plus `External links` (collapsed), shown between the
+   * summary and the filters of the document list.
+   *
+   * The open/closed default is the whole point of the split: a broken link or an
+   * inconsistent field is something to look at, an openable external target is an
+   * inventory. An empty document reports nothing at all here — its empty state
+   * already says everything.
+   */
+  const renderIssues = (): React.ReactElement | null => {
+    if (documentAnnotations.length === 0 && issueCount === 0) return null;
+
+    return (
+      <>
+        <details className={styles.issues} open aria-label="Issues">
+          <summary className={styles.issueSummary}>
+            <span className={styles.issueTitle}>Issues</span>
+            <span className={styles.issueCount}>{issueCount}</span>
+          </summary>
+
+          {issueCount === 0 ? (
+            <div className={styles.issueEmpty}>No link or form issues found.</div>
+          ) : (
+            <ul className={styles.issueList}>
+              {linkProblems.map((issue) => (
+                <li
+                  key={`link:${issue.annotationId}`}
+                  className={`${styles.issueItem} ${styles.issueWarning}`}
+                >
+                  <div className={styles.issueHeader}>
+                    <span className={`${styles.badge} ${styles.badgeWarning}`}>{issue.kind}</span>
+                    <span className={styles.page}>p.{issue.page}</span>
+                    <button
+                      type="button"
+                      className={styles.issueAction}
+                      aria-label={`Go to page ${issue.page}`}
+                      onClick={() => activateLinkIssue(issue)}
+                    >
+                      Go to page
+                    </button>
+                  </div>
+                  {issue.target !== null && (
+                    <div className={styles.issueTarget}>{issue.target}</div>
+                  )}
+                  <div className={styles.issueMessage}>{issue.message}</div>
+                </li>
+              ))}
+
+              {formIssues.map((issue) => {
+                const firstPage = issue.pages[0];
+                // A cross-page field name is normal in PDF forms, so it is a
+                // notice; an unnamed or type-conflicting field is a warning.
+                const informational = issue.kind === 'duplicate-name';
+
+                return (
+                  <li
+                    // `annotationId` keeps two unnamed widgets on one page apart:
+                    // they share kind, field name and page list, and differ only
+                    // in the widget that produced them.
+                    key={`form:${issue.kind}:${issue.annotationId ?? issue.fieldName ?? ''}:${
+                      issue.pages.join(',')
+                    }`}
+                    className={`${styles.issueItem} ${
+                      informational ? styles.issueInfo : styles.issueWarning
+                    }`}
+                  >
+                    <div className={styles.issueHeader}>
+                      <span
+                        className={`${styles.badge} ${
+                          informational ? styles.badgeInfo : styles.badgeWarning
+                        }`}
+                      >
+                        {issue.kind}
+                      </span>
+                      <span className={styles.issuePages}>{issuePagesLabel(issue.pages)}</span>
+                      {firstPage !== undefined && (
+                        <button
+                          type="button"
+                          className={styles.issueAction}
+                          aria-label={`Go to page ${firstPage}`}
+                          onClick={() => activateFormIssue(issue)}
+                        >
+                          Go to page
+                        </button>
+                      )}
+                    </div>
+                    <div className={styles.issueMeta}>
+                      {countLabel(issue.widgetCount, 'widget', 'widgets')}
+                    </div>
+                    <div className={styles.issueMessage}>{issue.message}</div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </details>
+
+        {externalLinks.length > 0 && (
+          <details className={styles.issues} aria-label="External links">
+            <summary className={styles.issueSummary}>
+              <span className={styles.issueTitle}>External links</span>
+              <span className={styles.issueCount}>{externalLinks.length}</span>
+            </summary>
+
+            <ul className={styles.issueList}>
+              {externalLinks.map((issue) => (
+                <li
+                  key={`external:${issue.annotationId}`}
+                  className={`${styles.issueItem} ${styles.issueInfo}`}
+                >
+                  <div className={styles.issueHeader}>
+                    <span className={`${styles.badge} ${styles.badgeInfo}`}>external</span>
+                    <span className={styles.page}>p.{issue.page}</span>
+                    <button
+                      type="button"
+                      className={styles.issueAction}
+                      aria-label={`Go to page ${issue.page}`}
+                      onClick={() => activateLinkIssue(issue)}
+                    >
+                      Go to page
+                    </button>
+                  </div>
+                  {issue.target !== null && (
+                    <div className={styles.issueTarget}>{issue.target}</div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </>
+    );
+  };
+
+  const renderDocument = (): React.ReactElement => {
+    if (documentKey === null) {
+      return (
+        <div className={styles.emptyState} role="status">
+          Open a PDF to index annotations.
+        </div>
+      );
+    }
+
+    // The file is open but PDF.js has not handed over the document yet; an index
+    // cannot start before it does. `numPages` is the total the index will read,
+    // so the panel and the hook never disagree about it.
+    const indexTotal = annotationIndexPageTotal(pdfDoc, pageCount);
+    if (pdfDoc === null || indexTotal < 1) {
+      return (
+        <div className={styles.stateBox} role="status">
+          Waiting for the document to load…
+        </div>
+      );
+    }
+
+    // Only a result that belongs to this document may be shown: the store keeps
+    // the last run's state until the new one starts.
+    const current = indexDocumentKey === documentKey;
+
+    // A failed index is retried from the beginning: the previous run published
+    // nothing, so there is no partial result to resume from.
+    if (indexStatus === 'error' && current) {
+      return (
+        <div className={styles.stateBox} role="alert">
+          <div>{indexError ?? 'Failed to index document annotations'}</div>
+          <button type="button" className={styles.retry} onClick={retry}>
+            Retry
+          </button>
+        </div>
+      );
+    }
+
+    if (indexStatus !== 'ready' || indexResult === null || !current) {
+      const done = indexProgress?.done ?? 0;
+      const total = indexProgress?.total ?? indexTotal;
+      const percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+
+      return (
+        <div className={styles.progress} role="status">
+          <div>
+            {indexProgress === null
+              ? 'Indexing annotations…'
+              : `Indexing annotations ${done}/${total}…`}
+          </div>
+          {/* The current page stays usable: this is a background read that only
+              reports progress here. */}
+          <div className={styles.progressTrack} aria-hidden="true">
+            <div className={styles.progressFill} style={{ width: `${percent}%` }} />
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <>
+        <div className={styles.summary} role="status">
+          {documentAnnotationSummary(indexResult.summary)}
+        </div>
+
+        {/* Exporting is only offered for a finished index: there is nothing to
+            serialize while indexing, and a failed run published no result. */}
+        <div className={styles.exportRow}>
           <button
             type="button"
-            className={styles.retry}
-            onClick={() => void navigate(currentPage)}
+            className={styles.exportButton}
+            aria-haspopup="dialog"
+            aria-expanded={exportOpen}
+            onClick={() => setExportOpen(true)}
           >
-            Retry page load
+            Export
           </button>
+        </div>
+
+        {renderIssues()}
+
+        {documentAnnotations.length > 0 && (
+          <div className={styles.controls}>
+            <div className={styles.filterRow}>
+              <label className={styles.filterLabel} htmlFor={searchInputId}>
+                Search
+              </label>
+              <input
+                id={searchInputId}
+                type="search"
+                className={styles.searchInput}
+                value={indexQuery}
+                placeholder="Text, URL, field…"
+                onChange={(event) => setIndexQuery(event.target.value)}
+              />
+            </div>
+
+            <div className={styles.filterRow}>
+              <label className={styles.filterLabel} htmlFor={documentKindFilterId}>
+                Kind
+              </label>
+              <select
+                id={documentKindFilterId}
+                className={styles.select}
+                value={indexKindFilter}
+                onChange={(event) =>
+                  setIndexKindFilter(event.target.value as AnnotationIndexKindFilter)
+                }
+              >
+                <option value="all">All kinds</option>
+                {ANNOTATION_KINDS.map((kind) => (
+                  <option key={kind} value={kind}>
+                    {ANNOTATION_KIND_LABELS[kind]}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className={styles.filterRow}>
+              <label className={styles.filterLabel} htmlFor={documentSubtypeFilterId}>
+                Subtype
+              </label>
+              <select
+                id={documentSubtypeFilterId}
+                className={styles.select}
+                value={indexSubtypeFilter}
+                onChange={(event) => setIndexSubtypeFilter(event.target.value)}
+              >
+                <option value="all">All subtypes</option>
+                {documentSubtypes.map((subtype) => (
+                  <option key={subtype} value={subtype}>
+                    {annotationSubtypeLabel(subtype)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
         )}
-      </div>
-    );
-  }
 
-  if (error !== null) {
-    return (
-      <div className={styles.stateBox} role="alert">
-        <div>{error}</div>
-        <button type="button" className={styles.retry} onClick={requestReload}>
-          Retry
-        </button>
-      </div>
-    );
-  }
+        {documentAnnotations.length === 0 ? (
+          // Not a role=status: the summary above already announces the empty
+          // document, which keeps a single live region in this panel.
+          <div className={styles.emptyState}>No annotations in this document.</div>
+        ) : documentVisible.length === 0 ? (
+          <div className={styles.emptyState}>No annotations match the current filters.</div>
+        ) : (
+          <ul className={styles.list} aria-label="Document annotations">
+            {documentVisible.map((annotation) => (
+              <AnnotationRow
+                key={annotation.id}
+                annotation={annotation}
+                // Document rows are windowed by CSS: a 1000-page index lists
+                // every annotation without laying all of them out at once.
+                className={`${styles.item} ${styles.documentItem}`}
+                selected={selected !== null && selected.id === annotation.id}
+                onActivate={(entry) => void activateDocumentRow(entry)}
+              />
+            ))}
+          </ul>
+        )}
 
-  if (pending) {
-    return (
-      <div className={styles.stateBox} role="status">
-        Loading annotations…
-      </div>
+        <AnnotationExportDialog
+          open={exportOpen}
+          result={indexResult}
+          documentName={documentName}
+          sourceUrl={sourceUrl}
+          filePath={filePath}
+          pageCount={indexTotal}
+          onClose={() => setExportOpen(false)}
+        />
+      </>
     );
-  }
-
-  if (annotations.length === 0) {
-    return (
-      <div className={styles.emptyState} role="status">
-        No annotations on page {showingPage}.
-      </div>
-    );
-  }
-
-  const handleSelect = (annotation: PdfAnnotation): void => {
-    setSelected(annotation);
-    // Mirror the canvas path: only one selection may be active, so the object
-    // selection (and its gold highlight) plus the hover preview are dropped
-    // before the Inspector switches to the annotation.
-    const pdfStore = usePdfStore.getState();
-    pdfStore.setSelectedObject(null);
-    pdfStore.setHoveredObject(null);
-    // Selecting from the list is the same gesture as clicking its box: the
-    // details belong in the Inspector, not in this narrow panel.
-    useWorkspaceStore.getState().setInspectorTab('inspect');
   };
+
+  if (!filePath) {
+    return <div className={styles.emptyState}>Open a PDF to inspect annotations.</div>;
+  }
 
   return (
     <div className={styles.panel}>
-      <div className={styles.summary} role="status">
-        {annotationSummary(annotations, visible, filtered)}
+      <div className={styles.modeSwitch} role="group" aria-label="Annotation scope">
+        {ANNOTATION_SCOPES.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={`${styles.modeButton} ${
+              scope === option.value ? styles.modeButtonActive : ''
+            }`}
+            aria-pressed={scope === option.value}
+            onClick={() => setScope(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
       </div>
 
-      <div className={styles.controls}>
-        <label className={styles.checkLabel}>
-          <input
-            type="checkbox"
-            checked={showBoxes}
-            onChange={(event) => setShowBoxes(event.target.checked)}
-          />
-          Show boxes
-        </label>
-
-        <div className={styles.filterRow}>
-          <label className={styles.filterLabel} htmlFor={kindFilterId}>
-            Kind
-          </label>
-          <select
-            id={kindFilterId}
-            className={styles.select}
-            value={kindFilter}
-            onChange={(event) => setKindFilter(event.target.value as AnnotationKindFilter)}
-          >
-            <option value="all">All kinds</option>
-            {ANNOTATION_KINDS.map((kind) => (
-              <option key={kind} value={kind}>
-                {ANNOTATION_KIND_LABELS[kind]}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className={styles.filterRow}>
-          <label className={styles.filterLabel} htmlFor={subtypeFilterId}>
-            Subtype
-          </label>
-          <select
-            id={subtypeFilterId}
-            className={styles.select}
-            value={subtypeFilter}
-            onChange={(event) => setSubtypeFilter(event.target.value)}
-          >
-            <option value="all">All subtypes</option>
-            {subtypes.map((subtype) => (
-              <option key={subtype} value={subtype}>
-                {annotationSubtypeLabel(subtype)}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {visible.length === 0 ? (
-        <div className={styles.emptyState} role="status">
-          No annotations match the current filters.
-        </div>
-      ) : (
-        <ul className={styles.list} aria-label={`Annotations on page ${showingPage}`}>
-          {visible.map((annotation) => {
-            const preview = annotationRowPreview(annotation);
-            const isSelected = selected !== null && selected.id === annotation.id;
-
-            return (
-              <li className={styles.item} key={annotation.id}>
-                <button
-                  type="button"
-                  className={`${styles.row} ${isSelected ? styles.selected : ''}`}
-                  aria-pressed={isSelected}
-                  title={annotationSubtypeLabel(annotation.subtype)}
-                  onClick={() => handleSelect(annotation)}
-                >
-                  <span className={styles.rowHeader}>
-                    <span className={`${styles.badge} ${KIND_BADGE_CLASSES[annotation.kind]}`}>
-                      {annotationKindLabel(annotation.kind)}
-                    </span>
-                    <span className={styles.subtype}>
-                      {annotationSubtypeLabel(annotation.subtype)}
-                    </span>
-                    {annotation.hidden && (
-                      <span className={styles.hiddenMarker} title="Hidden annotation">
-                        Hidden
-                      </span>
-                    )}
-                    <span className={styles.page} title={`Page ${annotation.page}`}>
-                      p.{annotation.page}
-                    </span>
-                  </span>
-                  {preview.length > 0 && <span className={styles.preview}>{preview}</span>}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      {scope === 'page' ? renderCurrentPage() : renderDocument()}
     </div>
   );
 };

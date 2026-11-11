@@ -1,0 +1,148 @@
+/*
+ * Annotation export modal. Narrower than the toolbar export dialog because it
+ * only asks for a format and a file name; it reuses the same backdrop, panel
+ * colours and action row so both dialogs read as one family.
+ */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 13, 16, 0.6);
+}
+
+.dialog {
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  padding: 18px;
+  color: var(--pi-text);
+  background: var(--pi-bg-panel);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  font-size: 13px;
+}
+
+.dialog:focus {
+  outline: none;
+}
+
+.title {
+  margin: 0 0 12px;
+  color: var(--pi-text-heading);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.rowLabel {
+  color: var(--pi-text-muted);
+  font-size: 12px;
+}
+
+.radios {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.radioLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.radioLabel input {
+  margin: 0;
+  accent-color: var(--pi-accent-border);
+}
+
+.fileNameInput {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
+  font: inherit;
+}
+
+.fileNameInput:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
+.fileNameInput:disabled {
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
+  cursor: not-allowed;
+}
+
+.errorArea {
+  min-height: 16px;
+  color: var(--pi-danger);
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.button {
+  padding: 5px 9px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--pi-bg-control-hover);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
+.button:disabled {
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
+  cursor: not-allowed;
+}
+
+.primary {
+  color: var(--pi-text-inverse);
+  background: var(--pi-accent-strong);
+  border-color: var(--pi-accent-border);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--pi-accent-strong-hover);
+}
+
+.primary:disabled {
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
+}

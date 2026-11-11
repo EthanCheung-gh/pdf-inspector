@@ -5,7 +5,7 @@
  * validated here before it reaches the UI. These helpers stay free of DOM and
  * React access so they can be unit tested directly.
  */
-import type { PDFDocumentProxy } from 'pdfjs-dist';
+import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import type {
   AnnotationForm,
   AnnotationKind,
@@ -250,35 +250,91 @@ export async function resolveDestinationPage(
 /** One cache entry per document; the WeakMap key is collected with the doc. */
 const pageAnnotationCache = new WeakMap<
   PDFDocumentProxy,
-  Map<number, Promise<PdfAnnotation[]>>
+  Map<string, Promise<PdfAnnotation[]>>
 >();
+
+/**
+ * Cache key for one page at one MediaBox origin.
+ *
+ * The normalized rect depends on the origin, so two readers of the same page
+ * with different origins (the sidecar MediaBox for the current page, the
+ * PDF.js `page.view` for the whole-document index) must never share an entry.
+ */
+function pageCacheKey(page: number, origin: { x: number; y: number }): string {
+  return `${page}:${origin.x}:${origin.y}`;
+}
 
 /**
  * Load and normalize the annotations of one page.
  *
  * Popup annotations (whose text lives on the parent) are filtered out; hidden
  * annotations stay in the list with `hidden: true`. Results are cached per
- * document and page, and every call returns fresh copies so callers can never
- * mutate the cached data. A rejected load is dropped from the cache so the next
- * call retries.
+ * document, page and normalized MediaBox origin, and every call returns fresh
+ * copies so callers can never mutate the cached data. A rejected load is
+ * dropped from the cache so the next call retries.
  */
 export async function loadPageAnnotations(
   pdfDoc: PDFDocumentProxy,
   pageNumber: number,
   mediaOrigin: { x: number; y: number },
 ): Promise<PdfAnnotation[]> {
-  if (!Number.isFinite(pageNumber) || pageNumber < 1) return [];
-  const page = Math.floor(pageNumber);
+  const page = normalizePageIndex(pageNumber);
+  if (page === null) return [];
 
+  return loadPageWithCache(pdfDoc, page, normalizeOrigin(mediaOrigin));
+}
+
+/**
+ * Index-time loader: read the page's own PDF.js view origin and normalize the
+ * annotations against it.
+ *
+ * `page.view` is `[x0, y0, x1, y1]` and is the frame PDF.js reports annotation
+ * rects in, so it is the only correct origin for a page the UI never activated.
+ * The `PDFPageProxy` is used for this one call and never cached; only the
+ * normalized `PdfAnnotation[]` is retained.
+ */
+export async function loadPageAnnotationsForIndex(
+  pdfDoc: PDFDocumentProxy,
+  pageNumber: number,
+): Promise<PdfAnnotation[]> {
+  const page = normalizePageIndex(pageNumber);
+  if (page === null) return [];
+
+  const pdfPage = await pdfDoc.getPage(page);
+  return loadPageWithCache(pdfDoc, page, pageViewOrigin(pdfPage), pdfPage);
+}
+
+/** An exact origin is part of the cache key, so it must be finite and stable. */
+function pageViewOrigin(pdfPage: PDFPageProxy): { x: number; y: number } {
+  const view = readArrayLike((pdfPage as { view?: unknown } | null)?.view);
+  if (view === null || view.length < 2) return { x: 0, y: 0 };
+
+  const [x0, y0] = view;
+  if (!isFiniteNumber(x0) || !isFiniteNumber(y0)) return { x: 0, y: 0 };
+  return { x: x0, y: y0 };
+}
+
+function normalizePageIndex(pageNumber: number): number | null {
+  if (!Number.isFinite(pageNumber) || pageNumber < 1) return null;
+  return Math.floor(pageNumber);
+}
+
+async function loadPageWithCache(
+  pdfDoc: PDFDocumentProxy,
+  page: number,
+  origin: { x: number; y: number },
+  providedPage?: PDFPageProxy,
+): Promise<PdfAnnotation[]> {
   const cache = getPageCache(pdfDoc);
-  let pending = cache.get(page);
+  const key = pageCacheKey(page, origin);
+  let pending = cache.get(key);
   if (pending === undefined) {
-    pending = fetchPageAnnotations(pdfDoc, page, mediaOrigin);
-    cache.set(page, pending);
+    pending = fetchPageAnnotations(pdfDoc, page, origin, providedPage);
+    cache.set(key, pending);
     // Never cache a failed load: `pending` still rejects for the caller, but the
     // derived handler keeps the rejection observed and clears the entry.
     pending.catch(() => {
-      if (cache.get(page) === pending) cache.delete(page);
+      if (cache.get(key) === pending) cache.delete(key);
     });
   }
 
@@ -286,7 +342,7 @@ export async function loadPageAnnotations(
   return cloneAnnotations(annotations);
 }
 
-function getPageCache(pdfDoc: PDFDocumentProxy): Map<number, Promise<PdfAnnotation[]>> {
+function getPageCache(pdfDoc: PDFDocumentProxy): Map<string, Promise<PdfAnnotation[]>> {
   let cache = pageAnnotationCache.get(pdfDoc);
   if (cache === undefined) {
     cache = new Map();
@@ -299,8 +355,9 @@ async function fetchPageAnnotations(
   pdfDoc: PDFDocumentProxy,
   page: number,
   mediaOrigin: { x: number; y: number },
+  providedPage?: PDFPageProxy,
 ): Promise<PdfAnnotation[]> {
-  const pdfPage = await pdfDoc.getPage(page);
+  const pdfPage = providedPage ?? (await pdfDoc.getPage(page));
   const rawAnnotations = (await pdfPage.getAnnotations({ intent: 'display' })) as unknown[];
   const annotations: PdfAnnotation[] = [];
   const seenIds = new Set<string>();

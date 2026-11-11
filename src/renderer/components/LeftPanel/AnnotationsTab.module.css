@@ -1,6 +1,7 @@
 /*
- * Current-page annotation list. The panel is 200–400px wide, so the summary and
- * the filters stack instead of forming a toolbar row; only the list scrolls.
+ * Current-page / whole-document annotation list. The panel is 200–400px wide,
+ * so the summary and the filters stack instead of forming a toolbar row; only
+ * the list scrolls.
  */
 .panel {
   display: flex;
@@ -9,6 +10,76 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+/* Segmented scope switch: two equal targets, no wrapping at 200px. */
+.modeSwitch {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--pi-border-muted);
+}
+
+.modeButton {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 3px 6px;
+  overflow: hidden;
+  color: var(--pi-text-subtle);
+  background: var(--pi-bg-app);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm);
+  font: inherit;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.modeButton:hover {
+  color: var(--pi-text-inverse);
+  background: var(--pi-bg-control-hover);
+}
+
+.modeButton:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
+/* The active scope is a state, not just a hover: keep it readable while the
+   pointer is elsewhere. */
+.modeButtonActive,
+.modeButtonActive:hover {
+  color: var(--pi-text-strong);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-accent);
+}
+
+/* Background index build: one label plus a thin progress bar. */
+.progress {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  color: var(--pi-text-subtle);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+.progressTrack {
+  height: 3px;
+  overflow: hidden;
+  background: var(--pi-bg-app);
+  border: 1px solid var(--pi-border-muted);
+  border-radius: 999px;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--pi-accent);
 }
 
 .emptyState {
@@ -74,6 +145,37 @@
   border-bottom: 1px solid var(--pi-border-muted);
 }
 
+/* Export action row: one right-aligned button, kept off the summary line so the
+ * status text stays a single ellipsised line at 200px. */
+.exportRow {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--pi-border-muted);
+}
+
+.exportButton {
+  padding: 1px 8px;
+  color: var(--pi-text-secondary);
+  background: var(--pi-bg-control-disabled);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.exportButton:hover {
+  color: var(--pi-text-inverse);
+  background: var(--pi-bg-control-hover);
+}
+
+.exportButton:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
 .checkLabel {
   display: inline-flex;
   align-items: center;
@@ -114,6 +216,28 @@
   outline-offset: 1px;
 }
 
+/* Search shares the filter row geometry so both modes line up. */
+.searchInput {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px 4px;
+  color: var(--pi-text-strong);
+  background: var(--pi-bg-app);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm);
+  font: inherit;
+  font-size: 10px;
+}
+
+.searchInput::placeholder {
+  color: var(--pi-text-faint);
+}
+
+.searchInput:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
 .list {
   flex: 1;
   min-height: 0;
@@ -126,6 +250,15 @@
 .item {
   display: flex;
   flex-direction: column;
+}
+
+/* Whole-document rows: a 1000-page document lists every annotation, so rows
+ * outside the scroll viewport are skipped by the browser instead of being laid
+ * out and painted. `contain-intrinsic-size` keeps the scrollbar honest for the
+ * skipped rows. */
+.documentItem {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 46px;
 }
 
 .row {
@@ -250,4 +383,164 @@
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Health check: one open `Issues` block and one collapsed `External links`
+ * block between the summary and the filters. Both stay inside a 200px panel, so
+ * nothing here may claim a minimum width; the lists scroll instead of pushing
+ * the annotation list out of the panel. */
+.issues {
+  flex: 0 0 auto;
+  min-width: 0;
+  border-bottom: 1px solid var(--pi-border-muted);
+}
+
+/* Plain inline text keeps the native disclosure marker: `display: flex` on a
+ * summary drops it in every engine. */
+.issueSummary {
+  padding: 4px 8px;
+  color: var(--pi-text-secondary);
+  font-size: 10px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.issueSummary:hover {
+  color: var(--pi-text-inverse);
+}
+
+.issueSummary:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: -2px;
+}
+
+.issueTitle {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* Small pill so the count never competes with the title. */
+.issueCount {
+  margin-left: 4px;
+  padding: 0 4px;
+  color: var(--pi-text-subtle);
+  background: var(--pi-bg-app);
+  border: 1px solid var(--pi-border-muted);
+  border-radius: 999px;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  line-height: 13px;
+}
+
+.issueEmpty {
+  padding: 0 8px 6px;
+  color: var(--pi-text-faint);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+/* A long issue list must not push the annotation rows off-screen. */
+.issueList {
+  max-height: 34vh;
+  margin: 0;
+  padding: 0 0 2px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.issueItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 4px 8px;
+  border-left: 2px solid transparent;
+}
+
+/* Amber for something to look at, blue for a neutral cross-page notice. */
+.issueWarning {
+  border-left-color: var(--pi-warning);
+}
+
+.issueInfo {
+  border-left-color: var(--pi-info-strong);
+}
+
+/* Wraps instead of widening: `conflicting-type` plus a page label plus a button
+ * is wider than 200px. */
+.issueHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.issueTarget {
+  min-width: 0;
+  color: var(--pi-text-secondary);
+  font-size: 10px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.issueMessage {
+  min-width: 0;
+  color: var(--pi-text-subtle);
+  font-size: 10px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.issueMeta {
+  color: var(--pi-text-faint);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A field can appear on many pages, so the label may shrink and wrap. */
+.issuePages {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  color: var(--pi-text-subtle);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.issueAction {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  color: var(--pi-info-strong);
+  background: transparent;
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm);
+  font: inherit;
+  font-size: 9px;
+  line-height: 15px;
+  cursor: pointer;
+}
+
+.issueAction:hover {
+  color: var(--pi-text-inverse);
+  background: var(--pi-bg-control-hover);
+}
+
+.issueAction:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
+/* Issue badges reuse the row badge geometry with health-check colours. */
+.badgeWarning {
+  color: var(--pi-warning);
+  background: rgba(224, 179, 106, 0.12);
+  border-color: rgba(224, 179, 106, 0.35);
+}
+
+.badgeInfo {
+  color: var(--pi-info-strong);
+  background: rgba(143, 184, 232, 0.12);
+  border-color: rgba(143, 184, 232, 0.32);
 }

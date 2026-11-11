@@ -42,6 +42,7 @@ describe('annotation-store', () => {
     expect(state.error).toBeNull();
     expect(state.selected).toBeNull();
     expect(state.hovered).toBeNull();
+    expect(state.pendingSelectionId).toBeNull();
     expect(state.kindFilter).toBe('all');
     expect(state.subtypeFilter).toBe('all');
     expect(state.showBoxes).toBe(true);
@@ -173,6 +174,7 @@ describe('annotation-store', () => {
     useAnnotationStore.getState().setPageData(1, [first]);
     useAnnotationStore.getState().setSelected(first);
     useAnnotationStore.getState().setHovered(first);
+    useAnnotationStore.getState().requestSelection('2:link-c');
 
     useAnnotationStore.getState().clear();
 
@@ -183,9 +185,66 @@ describe('annotation-store', () => {
     expect(state.hovered).toBeNull();
     expect(state.loading).toBe(false);
     expect(state.error).toBeNull();
+    // A pending request belongs to the document whose data was dropped.
+    expect(state.pendingSelectionId).toBeNull();
     // User preferences survive a document/page reset.
     expect(state.kindFilter).toBe('markup');
     expect(state.subtypeFilter).toBe('Highlight');
     expect(state.showBoxes).toBe(false);
+  });
+
+  // The whole-document list points at annotations on pages that are not loaded
+  // yet, so the id is remembered and applied by the page load that follows.
+  it('selects the pending annotation when its page loads', () => {
+    useAnnotationStore.getState().requestSelection('2:link-c');
+
+    useAnnotationStore.getState().setPageData(2, [pageTwo]);
+
+    const state = useAnnotationStore.getState();
+    expect(state.selected).toBe(pageTwo);
+    expect(state.hovered).toBeNull();
+    // The request is consumed, not left armed for a later load.
+    expect(state.pendingSelectionId).toBeNull();
+  });
+
+  it('drops a pending selection that the loaded page does not contain', () => {
+    useAnnotationStore.getState().requestSelection('2:missing');
+
+    useAnnotationStore.getState().setPageData(2, [pageTwo]);
+
+    expect(useAnnotationStore.getState().selected).toBeNull();
+    expect(useAnnotationStore.getState().pendingSelectionId).toBeNull();
+  });
+
+  it('prefers the pending annotation over a same-page reselect', () => {
+    useAnnotationStore.getState().setPageData(1, [first]);
+    useAnnotationStore.getState().setSelected(first);
+
+    useAnnotationStore.getState().requestSelection('1:widget-b');
+    useAnnotationStore.getState().setPageData(1, [first, second]);
+
+    expect(useAnnotationStore.getState().selected).toBe(second);
+    expect(useAnnotationStore.getState().pendingSelectionId).toBeNull();
+  });
+
+  it('lets an explicit selection cancel a pending request', () => {
+    useAnnotationStore.getState().setPageData(1, [first, second]);
+    useAnnotationStore.getState().requestSelection('2:link-c');
+
+    useAnnotationStore.getState().setSelected(second);
+
+    expect(useAnnotationStore.getState().pendingSelectionId).toBeNull();
+    expect(useAnnotationStore.getState().selected).toBe(second);
+  });
+
+  it('allows clearing a pending request without touching the selection', () => {
+    useAnnotationStore.getState().setPageData(1, [first]);
+    useAnnotationStore.getState().setSelected(first);
+    useAnnotationStore.getState().requestSelection('2:link-c');
+
+    useAnnotationStore.getState().requestSelection(null);
+
+    expect(useAnnotationStore.getState().pendingSelectionId).toBeNull();
+    expect(useAnnotationStore.getState().selected).toBe(first);
   });
 });

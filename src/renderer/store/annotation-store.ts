@@ -20,6 +20,16 @@ export interface AnnotationState {
   error: string | null;
   selected: PdfAnnotation | null;
   hovered: PdfAnnotation | null;
+  /**
+   * Annotation id to select as soon as its page finishes loading.
+   *
+   * The whole-document list can point at an annotation on a page that is not
+   * loaded yet, so the row click records the id here and navigates; the page
+   * loader then selects the matching annotation when it arrives. A request that
+   * matches nothing is dropped (best effort) rather than keeping the page in a
+   * half-selected state.
+   */
+  pendingSelectionId: string | null;
   kindFilter: AnnotationKindFilter;
   subtypeFilter: 'all' | string;
   showBoxes: boolean;
@@ -34,6 +44,11 @@ export interface AnnotationState {
   setError(error: string | null): void;
   setSelected(annotation: PdfAnnotation | null): void;
   setHovered(annotation: PdfAnnotation | null): void;
+  /**
+   * Ask for an annotation to be selected once its page loads. `null` drops the
+   * request; the next `setPageData` always consumes it either way.
+   */
+  requestSelection(id: string | null): void;
   setKindFilter(filter: AnnotationKindFilter): void;
   setSubtypeFilter(filter: 'all' | string): void;
   setShowBoxes(show: boolean): void;
@@ -68,29 +83,45 @@ export const useAnnotationStore = create<AnnotationState>((set) => ({
   error: null,
   selected: null,
   hovered: null,
+  pendingSelectionId: null,
   reloadKey: 0,
   ...DEFAULT_FILTERS,
 
   // Loading a page replaces its annotations and ends the request: `loading` and
   // `error` belong to the request, not to the data. A different page can never
   // inherit the previous page's selection or hover.
+  //
+  // A pending id (set by the whole-document list) is resolved here: the load
+  // that was asked for either contains the annotation — and then it becomes the
+  // selection — or it does not, in which case only the page change is kept. The
+  // request is consumed in both cases so it can never fire much later.
   setPageData: (page, annotations) =>
     set((state) => {
       const samePage = state.page === page;
+      const pendingId = state.pendingSelectionId;
+      const pending =
+        pendingId === null
+          ? null
+          : annotations.find((annotation) => annotation.id === pendingId) ?? null;
+
       return {
         page,
         annotations,
         loading: false,
         error: null,
-        selected: samePage ? reselect(state.selected, annotations) : null,
+        selected: samePage ? (pending ?? reselect(state.selected, annotations)) : pending,
         hovered: samePage ? reselect(state.hovered, annotations) : null,
+        pendingSelectionId: null,
       };
     }),
 
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
-  setSelected: (selected) => set({ selected }),
+  // Any explicit selection supersedes a document-mode request: the user (or the
+  // page reset) has already decided what should be selected.
+  setSelected: (selected) => set({ selected, pendingSelectionId: null }),
   setHovered: (hovered) => set({ hovered }),
+  requestSelection: (pendingSelectionId) => set({ pendingSelectionId }),
   setKindFilter: (kindFilter) => set({ kindFilter }),
   // A blank subtype is the list's "all" option; the store normalizes it so
   // callers never have to distinguish `''` from `'all'`.
@@ -103,7 +134,8 @@ export const useAnnotationStore = create<AnnotationState>((set) => ({
   requestReload: () => set((state) => ({ reloadKey: state.reloadKey + 1 })),
 
   // Dropping the page data must not reset the user's filters or the box toggle:
-  // open a new file while `Show boxes` is off and it stays off.
+  // open a new file while `Show boxes` is off and it stays off. A pending
+  // selection request belongs to the closed document, so it goes with the data.
   clear: () =>
     set({
       page: null,
@@ -112,5 +144,6 @@ export const useAnnotationStore = create<AnnotationState>((set) => ({
       error: null,
       selected: null,
       hovered: null,
+      pendingSelectionId: null,
     }),
 }));
