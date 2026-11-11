@@ -1,12 +1,14 @@
 # 大文档与多文档工作台
 
-PDF Inspector 的大文档工作分为两部分：先让 1000 页级文档的翻页、搜索与后台分析互不阻塞，再让桌面端在多个文档标签之间切换。本文记录 H1–H3 的实现边界、桌面标签页的快照语义、Web 端的单文档现状，以及 **H4（Web 多文档注册表）被显式延期的原因和后续设计要求**。
+PDF Inspector 的大文档工作分为三部分：先让 1000 页级文档的翻页、搜索与后台分析互不阻塞；再让桌面端与 Web 端都能在多个文档标签之间切换；最后把 Web 的文档注册表做成有界、可按 id 激活的多文档模型。本文记录 H1–H4 的实现边界、标签页的快照语义、Web 单 sidecar 的激活/关闭语义与验证记录。
 
 **结论：**
 
-- H1–H3 已实现：双通道 sidecar、搜索分批与进度、页面列表窗口化与跳页、桌面文档标签页。
-- **H4 未实现，Web 仍是单文档。** Web 端没有文档标签栏，也不会把第二次打开静默地当成新标签；H4 需要改服务端注册表与临时文件所有权，已记录为后续设计。
-- 桌面端最多两个 Python 进程（交互通道 + 懒启动的后台通道），且两个通道打开同一份文档；标签页只保存视图快照，不保存分析结果或第二份 PDF.js 文档。
+- H1–H4 已实现：双通道 sidecar、搜索分批与进度、页面列表窗口化与跳页、桌面与 Web 文档标签页。
+- Web 与桌面端都显示文档标签栏。Web 的文档由服务端按 `documentId` 登记；sidecar 中始终只有 **活动文档** 一份，切换 = 按 id 激活并重新 `open`，随后恢复标签快照。
+- Web 注册表上限为 8 份文档 / 总 512 MiB，超出时按最近最少激活淘汰非活动文档；关闭标签只删除该文档的临时副本，关闭最后一个标签时才清空活动文档。同一 `sourceUrl` 再次打开会去重并复用已保留的下载副本。
+- 标签是会话状态，不写入 localStorage；Web 多文档不改变原有认证边界（Web 端本来就没有认证）。
+- 桌面端最多两个 Python 进程（交互通道 + 懒启动的后台通道），且两个通道打开同一份活动文档；标签页只保存视图快照，不保存分析结果或第二份 PDF.js 文档。
 
 ## 双通道 sidecar
 
@@ -27,7 +29,7 @@ SidecarPool
 
 | 方法 | 通道 | 超时（主进程/后端） | 说明 |
 |---|---|---|---|
-| `open` | interactive | `OPEN_PDF_TIMEOUT_MS` = 120s | 打开文档并扫描字体资源；新文档替换旧文档 |
+| `open` | interactive | `OPEN_PDF_TIMEOUT_MS` = 120s | 打开文档并扫描字体资源；sidecar 同时只保留一份，切换即重新 `open` 目标文件 |
 | `extract_page` | interactive | `EXTRACT_PAGE_TIMEOUT_MS` = 120s | 当前页提取，正常远低于 1s |
 | `extract_metadata` | interactive | 默认 30s | 轻量元数据 |
 | `get_image_data` | interactive | 默认 30s | 图片对象预览 |
@@ -73,18 +75,22 @@ SidecarPool
 - **Go to page：** 面板顶部固定一个输入框和 `Go` 按钮，占位符显示 `1–1000`。输入必须是非负整数；空值、`3a`、负数被忽略并保留文本以便修正；超出范围会夹到 `1..pageCount`，然后走与 Prev/Next 相同的受保护导航。
 - **对象上限：** 当前页 Words 最多显示 50 条，Rects/Lines/Curves/Images/Tables 每组最多 200 条；超出时显示 `Showing first N of M …`，不会静默截断。选中对象仍按类型/页/BBox 映射回完整对象，命中测试不受截断影响。
 
-## 桌面文档标签页
+## 文档标签页（桌面与 Web）
 
-标签页只在桌面端出现：`supportsDocumentTabs()` 检查 `window.pdfInspector.openPdfPath` 是否存在，浏览器适配器故意不实现它，因此 Web 端保持单文档。
+标签栏在桌面端与 Web 端都出现：`supportsDocumentTabs()` 接受 `window.pdfInspector.openPdfPath`（桌面）或 `activatePdfDocument`（Web）中的任意一个；两者都没有时保持隐藏。两种构建的重新打开方式不同：
+
+- 桌面标签按本地路径 `openPdfPath` 或 URL `openPdfUrl` 重新打开文档；
+- Web 标签按服务端 `documentId` 调用 `activatePdfDocument`，由注册表在同一个 sidecar 中重新打开该文件，不重新上传或下载。
 
 ### 快照语义
 
 ```ts
 interface DocumentTab {
   id: string;
-  path: string;          // 本地路径，或 URL 文档的临时副本
+  path: string;          // 本地路径、URL 文档临时副本，或 Web 的 /doc/:id URL
   sourceUrl: string | null;
   name: string;          // 标签显示名（URL 或 basename）
+  documentId: string | null; // Web 服务端注册表 id；桌面为 null
   metadata: PdfMetadata;
   snapshot: {
     currentPage: number;
@@ -100,61 +106,117 @@ interface DocumentTab {
 快照只包含**视图状态**。切换时：
 
 1. `saveActiveSnapshot()` 把当前 `pdf-store` / `workspace-store` 的状态写回旧标签；
-2. 用 `openPdfPath`（本地文件）或 `openPdfUrl`（URL）无对话框地重新打开目标文档；
+2. 桌面端用 `openPdfPath`（本地文件）或 `openPdfUrl`（URL）无对话框地重新打开目标文档；Web 端用 `activatePdfDocument(documentId)` 让服务端激活已登记的同一份文档（不重新上传/下载）；
 3. `setFile()` 换入新文档，同时重置旧文档的字体/审计/Raw 结果与选中对象；
 4. `restoreViewSnapshot()` 恢复缩放、叠加层可见性、左右面板标签与查询字符串；
 5. `navigate(clampSnapshotPage(...))` 恢复页码，超出新文档页数时夹到有效范围，并重新提取该页。
 
-因此页面、缩放、叠加层和面板标签会保留；**字体分析、审计结果、Raw 展开状态不进入快照**，切回后需要重新运行。搜索查询会写回 store，但匹配结果与文本索引不跨文档保留，切换后搜索按当前文档重新建立。标签是会话状态，不写入 localStorage。
+因此页面、缩放、叠加层和面板标签会保留；**字体分析、审计结果、Raw 展开状态不进入快照**，切回后需要重新运行。搜索查询会写回 store，但匹配结果与文本索引不跨文档保留，切换后搜索按当前文档重新建立。标签是会话状态，不写入 localStorage。桌面与 Web 只有“如何重新打开”不同：桌面按路径/URL 重新打开（URL 会重新下载），Web 按 id 激活服务端保留的副本；快照字段与恢复顺序一致。
 
 ### 打开、切换与关闭
 
-- 打开本地文件或 URL 会新增标签；相同本地路径或相同 `sourceUrl` 再次打开时聚焦已有标签，不重复创建。
+- 打开本地文件或 URL 会新增标签；相同 `documentId`、相同 `sourceUrl` 或相同本地路径再次打开时聚焦已有标签，不重复创建。
 - 标签栏位于工作区顶部，关闭按钮独立于标签文字；标签过多时横向滚动。
-- 关闭活动标签会激活同位置的邻居（最后一个则前一个），关闭最后一个标签回到空状态并停止文档跟踪。
-- URL 标签的临时下载文件由“当前文档”持有：切换到另一个文档会删除上一个下载副本，因此重新激活 URL 标签会**重新下载**并得到新的临时路径与元数据，标签用新的路径/元数据更新，但 `sourceUrl` 保持不变。
+- 关闭非活动标签只移除该标签；Web 还会调用 `DELETE /api/documents/:id` 删除该文档的临时副本。关闭活动标签会先激活同位置的邻居（最后一个则前一个），再关闭旧标签；关闭最后一个标签回到空状态并停止文档跟踪。桌面关闭标签不会删除用户的本地文件。
+- 桌面 URL 标签的临时下载文件由“当前文档”持有：切换到另一个文档会删除上一个下载副本，因此重新激活桌面 URL 标签会**重新下载**并得到新的临时路径与元数据，标签用新的路径/元数据更新，但 `sourceUrl` 保持不变。Web 的 URL 文档由注册表保留，重新激活复用同一副本（见下文）。
 - Diff/Audit/Raw 工作区打开时标签栏隐藏，避免对不可见的 Inspect 文档执行切换。
-- 切换期间只接受最新一次请求，慢的旧打开结果不会覆盖新选择；关闭活动标签复用同一流程。
+- 切换期间只接受最新一次请求，慢的旧打开结果不会覆盖新选择；关闭活动标签复用同一流程。Web 激活或关闭失败时通常保留原标签并显示服务端错误；若服务端返回 404（文档已被 LRU 淘汰或已关闭），关闭操作会直接移除该陈旧标签，带 `sourceUrl` 的标签切换失败时会通过 URL 重新打开并自愈。
 
-## Web 模式与 H4 评估（延期）
+## Web 多文档（H4）
 
-### 当前实现：单文档注册表
+### 当前架构：有界注册表 + 单 sidecar
 
-`server/web-server.ts` 的 `DocumentRegistry` 只有一个 `current: OpenDocument | null` 槽位：
+`server/web-server.ts` 的 `DocumentRegistry` 现在保存 `Map<id, OpenDocument>`，并用 `activeDocumentId` 标记 sidecar 中当前打开的那一份：
 
-- `open(filePath, name, isTemp)` 调用 sidecar `open`；成功后生成新的 `id` 并替换 `current`。
-- `findById(id)` 只匹配当前文档，否则返回 `null`。
-- `/doc/:id/:name` 只负责按 Range 流式返回当前文档文件；它不是“切换文档”接口，也不会激活 sidecar 中的另一份文档。
-- `/api/open`（上传）和 `/api/open-url`（下载）都走同一个替换式 `open`。上传的临时文件先由 `uploadedTempFiles` 跟踪，打开成功后所有权转给注册表；被替换的旧临时文件在成功打开后删除。
-- `/api/rpc` 的白名单方法全部作用于 sidecar 当前打开的文档；没有按 id 激活、列举或关闭文档的接口。
-- Web 适配器 `src/web/ipc-adapter.ts` **故意省略** `openPdfPath`，因此 `supportsDocumentTabs()` 为 false；Web 不渲染文档标签栏，第二次打开会替换当前文档，而不是新增可切换标签。
-- Diff 的上传走独立的 `DiffUploadStore`，不替换当前文档；它的 token 存储有 16 份 / 512 MiB / 10 分钟上限，并逐份删除临时文件。
+```ts
+interface OpenDocument {
+  id: string;               // 服务端生成，用于 /doc/:id 与激活/关闭
+  filePath: string;
+  name: string;
+  isTemp: boolean;
+  size: number;
+  sourceUrl: string | null; // URL 打开时的原始地址；上传为 null
+  metadata: unknown;        // sidecar open 结果，重新激活时刷新
+  lastActiveAt: number;     // 单调递增的激活序号，用于 LRU
+}
+```
 
-### 为什么延期
+- sidecar 仍然只打开 **一份** 文档：`activeDocumentId` 指向它，其他条目只保存文件与元数据。切换 = 一次串行化的 `sidecar.open`，不是每文档 sidecar。
+- 所有 `open` / `activate` / `close` 都经过同一个 mutation 队列串行执行；`/api/rpc` 只读活动文档。并发打开同一批文档时，sidecar 中最多只有一个 `open` 在飞行。
+- 只有成功 `open` 后才修改 map：失败时保持原活动文档不变，并尽力重新打开它；若恢复也失败，则清空活动 id（`/api/rpc` 返回 409），但保留条目，`/doc/:id` 仍可读取。
+- `/doc/:id/:name` 按 id 查表，与“是否活动”解耦：未激活的文档仍然可被浏览器用 Range 读取，因此 PDF.js 的对象 URL 不会因为切换而失效。
+- 上传/下载文件按文档独立持有：每个 `OpenDocument` 的 `isTemp` 决定关闭/淘汰时是否删除；删除一个文档不会影响兄弟文档。服务关闭时 `cleanup()` 清空注册表并删除所有临时副本。
 
-H4 是**服务端设计变更**，不是给渲染层补一个标签栏：
+### API
 
-1. **sidecar 只有一份打开文档。** 两个通道都只打开一个文件；即使注册表保存两个 `OpenDocument`，`/api/rpc` 仍只能作用于 sidecar 当前打开的那一份。标签切换必须重新 `open`（串行化），或者改成每文档 sidecar，而后者是明确的非目标。
-2. **临时文件所有权是单槽的。** 注册表只在替换当前文档和关闭服务时删除临时文件；没有“按标签关闭只删除该文档副本”的所有权模型。直接加第二份文档会删除/泄漏错误文件。
-3. **`/doc/:id` 的可寻址性依赖 current。** 浏览器标签要保留 PDF.js 对象 URL，必须让旧 id 的文件在未激活时仍可读取；当前 `findById` 对旧 id 返回 404。
-4. **API 契约会扩散。** 需要新增按 id 激活/关闭/列举、错误语义、上传清理与并发串行化；`/api/open`、`/api/open-url`、`/api/rpc`、Web 适配器、标签 store 与现有 `web-open`/`web-pool` 测试都会受影响。
-5. **会威胁 H1–H3 的稳定性。** 当前单文档假设贯穿 Inspect、Diff/Audit/Raw 的当前文档、桌面标签的重新打开逻辑和 Web 单文档测试。H4 若在 H1–H3 刚稳定时强行修改注册表，容易把“打开失败恢复上一个文档”“临时文件清理”“后台通道同步”这些已验证路径一起改坏。
+| 端点 | 作用 |
+|---|---|
+| `GET /api/documents` | 返回 `{ activeDocumentId, documents: [{ id, name, size, sourceUrl, active }] }`；不暴露文件系统路径 |
+| `POST /api/documents/:id/activate` | 激活已登记文档，返回与打开相同的 `{ canceled, path: "/doc/:id/:name", metadata, name, sourceUrl?, documentId }`；重复激活活动文档直接返回缓存元数据，不调用 sidecar |
+| `DELETE /api/documents/:id` | 关闭文档并删除其临时副本，成功返回 `{ closed: true, activeDocumentId }` |
+| `POST /api/open` / `POST /api/open-url` | 新增文档并激活，返回同样的打开响应；URL 打开按 `sourceUrl` 去重 |
+| `POST /api/rpc` | 只作用于活动文档；没有活动文档时返回 409 `No active document` |
 
-计划本身把 H4 标为 conditional，并明确允许“时间或范围不足时显式延期，Web 保持单文档”。本阶段按此执行：**不实现 H4，不声称 Web 支持标签页，也不暴露半可用的切换入口。**
+错误语义：未知 id 返回 404；活动文档仍有兄弟时 `DELETE` 返回 409（提示先激活另一个文档）；单个文件超过总预算返回 413；畸形 id 转义返回 400。路径方面只暴露注册表 id 与 `/doc/:id/:name` 形式，不返回磁盘路径。
 
-### 下一版需要什么
+### 激活语义（单 sidecar）
 
-如果后续实现 H4，至少需要：
+- `/api/open` 与 `/api/open-url` 成功时把新文档设为活动文档；旧文档仍保留登记，不会被替换或删除。
+- `activate` 对非活动文档调用 `sidecar.open(filePath)`，成功后更新 `activeDocumentId`、`lastActiveAt` 与该文档的元数据；对活动文档是 no-op（不重复打开）。
+- 标签切换时前端先保存旧标签快照，再通过 `activatePdfDocument` 恢复目标文档，最后 `setFile` + `restoreViewSnapshot` + 受保护的页码导航。页码超出目标文档页数时夹到有效范围。
+- `/doc/:id` 与活动状态无关；切换失败时旧文档仍是活动文档，旧 id 的 URL 继续可用。
 
-- `DocumentRegistry` 从单槽改为 `Map<id, OpenDocument>`，带文档数上限（例如 8）与临时文件总字节上限；LRU/显式关闭时删除对应临时文件。
-- `/api/open` 与 `/api/open-url` 返回文档 id，但**不替换**其他文档；新增 `POST /api/documents/:id/activate`（或等价的选择接口）返回元数据并让 sidecar 打开该文档；新增 `DELETE /api/documents/:id` 关闭并清理该文档；可选 `GET /api/documents` 列举。
-- 注册表维护 `activeDocumentId`；`/api/rpc` 明确作用于活动文档；激活操作串行化，失败时恢复上一个活动文档，不能破坏交互通道。
-- `/doc/:id/:name` 按 id 服务文件，与活动状态解耦；浏览器标签的 PDF.js 对象 URL 在未激活时仍有效。
-- Web 适配器增加按 id 打开/关闭/列举能力，标签 store 才能把 `supportsDocumentTabs()` 打开；否则继续隐藏标签栏。
-- 每个文档独立的临时文件所有权、关闭标签只删自己的副本、服务关闭清理全部副本，并测试两文档可寻址、关闭不误删、数量/字节上限与 LRU 淘汰。
-- 明确内存/磁盘上限文档；本阶段不引入认证或多用户隔离。
+### 失败恢复
 
-在这些条件满足前，Web 多文档保持延期，Web 仍是单文档工作区。
+- 新上传/URL 打开失败：注册表不新增条目，重新打开上一个活动文档；上传/下载的新副本由调用方删除，不泄漏。
+- 激活失败：map 不变，重新打开之前活动的文档；标签保持原状并显示错误，不会把界面切到未成功打开的目标。
+- 恢复也失败：`activeDocumentId` 置空、sidecar 不持有文档，`/api/rpc` 返回 409；已有条目与 `/doc/:id` 仍保留。
+- 关闭失败：
+  - `404`（文档已被淘汰或关闭）：服务端已无该文档，前端静默移除陈旧标签，不再保留不可操作的状态。
+  - `409`、`5xx` 或网络错误：前端保留标签并显示服务端错误，不删除本地标签状态。
+
+### `/doc/:id` 可寻址性
+
+浏览器标签保留的是 `/doc/:id/:name` 对象 URL；服务端按 id 查找，未激活文档也继续以 Range 读取。关闭或 LRU 淘汰后该 id 返回 404；正常关闭成功后前端移除对应标签，若关闭时发现服务端已返回 404，也会把该标签当作陈旧条目移除。文件名只是展示用的最后一段，实际路径始终来自注册表。
+
+### 上限与 LRU
+
+- 默认最多 8 份文档（`MAX_DOCUMENTS = 8`），登记文件总大小不超过 512 MiB（`MAX_DOCUMENT_TOTAL_BYTES = 512 * 1024 * 1024`）。
+- 超过任一上限时，从 **非活动** 文档中按 `lastActiveAt` 最旧优先淘汰，并删除其临时副本；活动文档永远不会被淘汰。单个文件超过总预算时在进入 sidecar 前直接返回 413。
+- 淘汰只丢弃文件与元数据，不影响其他文档；被淘汰的 `/doc/:id` 返回 404，对应标签需重新打开或上传。
+
+### 关闭规则
+
+- 关闭非活动标签：直接 `DELETE /api/documents/:id`，只删除该文档的临时副本，不触碰 sidecar。
+- 关闭活动标签：必须先把邻居激活（或关闭最后一个文档）。服务端对“仍有兄弟的活动文档”返回 409，因此前端先切换邻居再删除旧 id；切换失败则保留旧标签与文档。
+- 关闭最后一个标签：服务端只剩这一份登记文档时，删除成功、注册表清空，`/api/rpc` 之后返回 409，前端回到空状态；若刷新后服务端仍留有其他已登记文档，`DELETE` 会返回 409，标签保留。
+- 桌面标签关闭不调用服务端删除，也不删除用户文件。
+
+### URL 去重与复用
+
+- `POST /api/open-url` 先按规范化后的 `sourceUrl` 查注册表；已存在则直接激活，不再下载，也不新增条目。
+- 并发打开同一 URL 时，下载完成后会再次查找；后到的请求删除自己的新下载并激活先注册的文档。
+- URL 文档的临时副本归注册表所有，重新激活不会重新下载；只有关闭、LRU 淘汰或服务关闭才删除。桌面 URL 标签仍按“当前文档持有副本”的语义重新下载，两者不要混淆。
+
+### 浏览器 E2E 验证记录
+
+在真实 Web 构建（`npm run build:web` + `npm run build:web-server`，Chrome，1440×900）中验证：
+
+| 操作 | 结果 |
+|---|---|
+| 上传 `basic.pdf`（4 页）再上传 `large.pdf`（120 页） | 顶部出现两个标签；第二个上传后 `large.pdf` 为活动标签，工具栏显示 `1 / 120` |
+| 点击 `basic.pdf` 标签 | 服务端按 id 激活；工具栏显示 `1 / 4`，两个标签都保留，该文档的 `/doc/:id` 路径不变 |
+| 点击 `basic.pdf` 标签后切回 `large.pdf` | 服务端按 documentId 激活；两个标签都保留，页码分别恢复为 `1 / 4` 与 `1 / 120` |
+| 关闭非活动的 `large.pdf` 标签 | 只删除 `large.pdf` 的临时副本；`basic.pdf` 继续显示且可翻页 |
+| 服务端已关闭某文档后点击其陈旧标签的关闭按钮 | 404 被识别为“文档已不存在”，标签被移除，相邻标签继续可用 |
+| 再次打开同一个 URL | 不新增文档、不重复下载，返回同一个 `documentId` |
+| 服务状态 | 验证期间 `/api/status` 保持 `{"running":true}` |
+
+截图（1440×900，真实 Web 构建）：
+
+![Web 双文档标签](images/web-tabs.png)
+
+两个标签 `basic.pdf` 与 `large.pdf` 同时保留，当前 `large.pdf` 显示 `1 / 120`；切换与关闭都按服务端 `documentId` 操作，标签快照按文档恢复。
 
 ## 清理与内存边界
 
@@ -162,12 +224,13 @@ H4 是**服务端设计变更**，不是给渲染层补一个标签栏：
 |---|---|
 | 交互 sidecar | 应用启动即创建，1 个进程；退出时优雅关闭后强制结束 |
 | 后台 sidecar | 第一次后台请求才创建，最多再 1 个进程；本阶段不做空闲自动退出，退出/重启统一处理 |
-| 打开文档 | 每个 sidecar 通道 1 份；切换即重新打开，不保留 N 份解析结果 |
+| 打开文档 | sidecar 每个通道同时 1 份；切换即重新打开，不保留 N 份解析结果 |
+| Web 文档注册表 | 最多 8 份、总 512 MiB；活动文档在 sidecar 中打开，其余只保存文件与元数据；超出时 LRU 淘汰非活动文档 |
 | PDF.js | 仍只保留当前活动文档；标签不持有第二份 PDF.js 文档 |
 | 标签快照 | 仅页码、缩放、叠加层、面板标签、查询字符串与元数据，不保存字体/审计/Raw/搜索索引 |
 | 搜索索引 | 当前文档每页一个文本字符串数组；文档切换/关闭/搜索取消时丢弃 |
-| 桌面 URL 临时文件 | 当前文档持有一个下载副本；替换文档或退出时删除；标签切回 URL 会重新下载 |
-| Web 上传/下载临时文件 | 系统临时目录 `pdf-inspector-web/uploads`、`downloads`；注册表当前文档持有，替换/关闭服务时删除 |
+| 桌面 URL 临时文件 | 桌面临时副本由当前文档持有；替换文档或退出时删除；标签切回 URL 会重新下载 |
+| Web 上传/下载临时文件 | 系统临时目录 `pdf-inspector-web/uploads`、`downloads`；每个文档独立持有，关闭该文档/LRU 淘汰/关闭服务时删除；URL 下载按 `sourceUrl` 复用 |
 | Web Diff 上传 | `pdf-inspector-web/diff`；最多 16 份、总计 512 MiB、10 分钟 TTL，token 单次使用并在 finally 删除 |
 | 异常退出 | 清理是尽力而为；崩溃或强杀可能残留系统临时目录文件，需要手动清理 |
 
@@ -187,7 +250,7 @@ npm run build:web-server
 本阶段记录（Linux，Node 22 / Python venv；Chrome 157 headless）：
 
 - `npx tsc -b`：通过；`npx tsc -p tsconfig.web.json`：通过。
-- `npx vitest run`：97 个测试文件、1276 个用例全部通过。
+- `npx vitest run`：99 个测试文件、1367 个用例全部通过。
 - `.venv/bin/python -m pytest sidecar/__tests__ -q`：489 个用例通过。
 - `npm run build:web`、`npm run build:web-server`：构建成功（Vite 仅提示既有 chunk > 500 kB）。
 - `git diff --check`：无空白错误。
@@ -219,6 +282,7 @@ npm run build:web-server
 | ![1000 页页面列表与 Go to page](images/large-doc-pages.png) | `/samples/huge.pdf` 跳到第 1000 页：工具栏 `1000 / 1000`，左侧页面列表末尾与 Go to page 输入框 |
 | ![大文档搜索索引进度](images/large-doc-search.png) | `huge marker 0999` 搜索期间 SearchBox 显示 `Indexing 100/1000…`，输入框、计数与上/下/关闭按钮全部可见，页面仍可查看 |
 | ![桌面双文档标签](images/large-doc-tabs.png) | Electron 桌面端通过 URL 打开两个文档后的真实标签栏；切回第一个文档后工具栏显示 `1 / 4` |
+| ![Web 双文档标签](images/web-tabs.png) | 真实 Web 构建上传 `basic.pdf` 与 `large.pdf` 后的标签栏；当前 `large.pdf` 显示 `1 / 120` |
 
 桌面标签截图由真实 Electron 28 + `xvfb` 驱动（通过 CDP 固定 1440×900 视口）：先打开 `http://localhost:8080/samples/basic.pdf`，再打开 `http://127.0.0.1:8080/samples/large.pdf`，随后点击第一个标签切回。两个标签都保留，切回后工具栏显示 `1 / 4`；页码、缩放与面板快照的恢复逻辑由 H3 单元测试覆盖。
 
@@ -226,11 +290,13 @@ npm run build:web-server
 
 ## 已知限制与后续
 
-- **Web 单文档：** H4 延期，Web 没有标签栏，第二次打开替换当前文档；这是明确行为，不是未完成的多标签。
-- **切换 URL 标签会重新下载：** 单个下载副本归当前文档所有；重新激活 URL 标签需要重新下载，可能比本地文件慢，并产生新的临时路径。
+- **Web 多文档是会话级、单 sidecar：** sidecar 中始终只有活动文档，切换是串行重新打开；不能同时分析多份文档，也没有每文档 sidecar。注册表最多 8 份 / 总 512 MiB，超出时按最近最少激活淘汰非活动文档，被淘汰的标签需重新打开。
+- **Web 没有认证或多用户隔离：** H4 不改变 Web 端的信任边界；部署仍需用 `HOST` 或反向代理限制访问。
+- **关闭 Web 活动标签需先激活邻居：** 服务端拒绝删除仍有兄弟的活动文档；激活失败会保留原标签与文档，关闭最后一个标签才清空活动文档。
+- **桌面 URL 标签切换会重新下载：** 桌面下载副本由当前文档持有；重新激活 URL 标签需要重新下载，可能比本地文件慢，并产生新的临时路径。Web URL 文档由注册表保留并按 `sourceUrl` 去重。
 - **分析结果不随标签保留：** 字体、审计、Raw 结果切换后重置/重新运行；搜索索引也不跨标签保留。
 - **后台通道不自动空闲退出：** 一旦使用过字体/审计/Raw/Diff，第二个 Python 进程会保留到退出或重启；这是当前阶段的简化。
 - **搜索索引没有字节上限：** 只保存文本，1000 页可接受；更大的文档仍依赖取消与文档切换释放。
 - **页面列表是 CSS 窗口化：** 1000 页仍有 1000 个行节点，只是减少绘制；更大数量若出现卡顿，再评估真正的虚拟列表。
 - **窄窗口搜索：** 搜索框展开时工具栏使用可收缩的 SearchBox；窗口宽度 ≤1280px 时隐藏文件名（不是控件），输入框、计数、上/下与关闭按钮保持可见；>1280px 时文件名继续显示。1280/1440/1600 实测均无横向溢出。
-- **标签是会话状态：** 不写入 localStorage，重启应用后不恢复标签或最近文件。
+- **标签是会话状态：** 桌面与 Web 都不写入 localStorage，刷新或重启后不恢复标签或最近文件。Web 刷新会丢失标签栏，但服务端已登记的文档会保留到关闭、LRU 淘汰或服务退出。
