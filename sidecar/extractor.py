@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Iterable, Optional
 import base64
 import hashlib
 import re
@@ -763,21 +763,44 @@ class PdfExtractor:
                             cell_spans[covered_row][covered_col] = None
         return cell_boxes, cell_spans
 
-    def extract_page(self, page_num: int) -> dict:
+    def extract_page(
+        self,
+        page_num: int,
+        include_types: Optional[Iterable[str]] = None,
+    ) -> dict:
+        """Extract one page's structured objects.
+
+        ``include_types`` narrows the object lists that are built.  ``None``
+        (the default) keeps the historical behaviour and returns every list, so
+        the UI, the audit and the CLI are unaffected.  Passing a set of
+        ``char``/``word``/``rect``/``line``/``curve``/``image``/``table`` names
+        lets the diff engine skip work for object types it was told to ignore:
+        an unrequested list comes back empty and its expensive source (word
+        grouping, table detection, image content hashing) is not touched.
+
+        Page geometry (``width``/``height``/``rotation``/``boxes``) is always
+        returned: the diff needs it for page pairing and for page-level size
+        changes even when every object type is ignored.
+        """
         page: Page = self._pdf.pages[page_num - 1]  # pdfplumber is 0-indexed
+        requested = None if include_types is None else set(include_types)
+
+        def wants(type_: str) -> bool:
+            return requested is None or type_ in requested
 
         chars = []
-        for c in page.chars:
-            chars.append({
-                'type': 'char',
-                'x0': float(c['x0']), 'y0': float(c['y0']),
-                'x1': float(c['x1']), 'y1': float(c['y1']),
-                'text': c.get('text', ''),
-                'fontname': c.get('fontname', ''),
-                'size': float(c.get('size', 0)),
-                'color': c.get('stroking_color', '#000000') or '#000000',
-                'page': page_num,
-            })
+        if wants('char'):
+            for c in page.chars:
+                chars.append({
+                    'type': 'char',
+                    'x0': float(c['x0']), 'y0': float(c['y0']),
+                    'x1': float(c['x1']), 'y1': float(c['y1']),
+                    'text': c.get('text', ''),
+                    'fontname': c.get('fontname', ''),
+                    'size': float(c.get('size', 0)),
+                    'color': c.get('stroking_color', '#000000') or '#000000',
+                    'page': page_num,
+                })
 
         page_height = float(page.height)
         mediabox = getattr(page, 'mediabox', None)
@@ -785,84 +808,93 @@ class PdfExtractor:
         geometry = self._page_geometry(page)
 
         words = []
-        # pdfplumber's word dicts do not include font attributes by default;
-        # extra_attrs makes the extractor aggregate them from the word's chars,
-        # so word objects can show/filter by font like chars do.
-        for w in page.extract_words(extra_attrs=['fontname', 'size']):
-            y0, y1 = self._word_y_range(w, page_height, mediabox_top)
-            words.append({
-                'type': 'word',
-                'x0': float(w['x0']), 'y0': y0,
-                'x1': float(w['x1']), 'y1': y1,
-                'text': w.get('text', ''),
-                'fontname': w.get('fontname', ''),
-                'size': float(w.get('size', 0)),
-                'page': page_num,
-            })
+        if wants('word'):
+            # pdfplumber's word dicts do not include font attributes by default;
+            # extra_attrs makes the extractor aggregate them from the word's chars,
+            # so word objects can show/filter by font like chars do.  extract_words
+            # reads page.chars internally, which is why a skipped 'char' list does
+            # not make word extraction cheaper — it only skips the dict building.
+            for w in page.extract_words(extra_attrs=['fontname', 'size']):
+                y0, y1 = self._word_y_range(w, page_height, mediabox_top)
+                words.append({
+                    'type': 'word',
+                    'x0': float(w['x0']), 'y0': y0,
+                    'x1': float(w['x1']), 'y1': y1,
+                    'text': w.get('text', ''),
+                    'fontname': w.get('fontname', ''),
+                    'size': float(w.get('size', 0)),
+                    'page': page_num,
+                })
 
         rects = []
-        for r in page.rects:
-            rects.append({
-                'type': 'rect',
-                'x0': float(r['x0']), 'y0': float(r['y0']),
-                'x1': float(r['x1']), 'y1': float(r['y1']),
-                'fill': r.get('non_stroking_color') is not None,
-                'stroke': r.get('stroking_color') is not None,
-                'color': str(r.get('stroking_color', '#000000')),
-                # pdfplumber names the line width 'linewidth'; older releases
-                # exposed 'stroke_width' as well, so accept either.
-                'width': float(r.get('linewidth', r.get('stroke_width', 1)) or 0),
-                'page': page_num,
-            })
+        if wants('rect'):
+            for r in page.rects:
+                rects.append({
+                    'type': 'rect',
+                    'x0': float(r['x0']), 'y0': float(r['y0']),
+                    'x1': float(r['x1']), 'y1': float(r['y1']),
+                    'fill': r.get('non_stroking_color') is not None,
+                    'stroke': r.get('stroking_color') is not None,
+                    'color': str(r.get('stroking_color', '#000000')),
+                    # pdfplumber names the line width 'linewidth'; older releases
+                    # exposed 'stroke_width' as well, so accept either.
+                    'width': float(r.get('linewidth', r.get('stroke_width', 1)) or 0),
+                    'page': page_num,
+                })
 
         lines = []
-        for ln in page.lines:
-            lines.append({
-                'type': 'line',
-                'x0': float(ln['x0']), 'y0': float(ln['y0']),
-                'x1': float(ln['x1']), 'y1': float(ln['y1']),
-                'stroke': ln.get('stroking_color') is not None,
-                'color': str(ln.get('stroking_color', '#000000')),
-                'width': float(ln.get('linewidth', ln.get('stroke_width', 1)) or 0),
-                'page': page_num,
-            })
+        if wants('line'):
+            for ln in page.lines:
+                lines.append({
+                    'type': 'line',
+                    'x0': float(ln['x0']), 'y0': float(ln['y0']),
+                    'x1': float(ln['x1']), 'y1': float(ln['y1']),
+                    'stroke': ln.get('stroking_color') is not None,
+                    'color': str(ln.get('stroking_color', '#000000')),
+                    'width': float(ln.get('linewidth', ln.get('stroke_width', 1)) or 0),
+                    'page': page_num,
+                })
 
         curves = []
-        for cv in page.curves:
-            # pdfplumber's curve/line records expose the path points as 'pts'.
-            raw_points = cv.get('pts')
-            if raw_points is None:
-                raw_points = cv.get('points', [])
-            curves.append({
-                'type': 'curve',
-                'x0': float(cv['x0']), 'y0': float(cv['y0']),
-                'x1': float(cv['x1']), 'y1': float(cv['y1']),
-                'points': [[float(p[0]), float(p[1])] for p in raw_points or ()],
-                'stroke': cv.get('stroking_color') is not None,
-                'page': page_num,
-            })
+        if wants('curve'):
+            for cv in page.curves:
+                # pdfplumber's curve/line records expose the path points as 'pts'.
+                raw_points = cv.get('pts')
+                if raw_points is None:
+                    raw_points = cv.get('points', [])
+                curves.append({
+                    'type': 'curve',
+                    'x0': float(cv['x0']), 'y0': float(cv['y0']),
+                    'x1': float(cv['x1']), 'y1': float(cv['y1']),
+                    'points': [[float(p[0]), float(p[1])] for p in raw_points or ()],
+                    'stroke': cv.get('stroking_color') is not None,
+                    'page': page_num,
+                })
 
         images = []
-        for idx, img in enumerate(page.images):
-            stream = img.get('stream')
-            image = {
-                'type': 'image',
-                'x0': float(img['x0']), 'y0': float(img['y0']),
-                'x1': float(img['x1']), 'y1': float(img['y1']),
-                'width': float(img.get('width', 0)),
-                'height': float(img.get('height', 0)),
-                'stream_id': f'p{page_num}_img_{idx}',
-                'format': 'unknown',
-                'page': page_num,
-                '_stream_data': stream,
-            }
-            content_hash = self._image_content_hash(stream)
-            if content_hash:
-                image['content_hash'] = content_hash
-            images.append(image)
+        if wants('image'):
+            for idx, img in enumerate(page.images):
+                stream = img.get('stream')
+                image = {
+                    'type': 'image',
+                    'x0': float(img['x0']), 'y0': float(img['y0']),
+                    'x1': float(img['x1']), 'y1': float(img['y1']),
+                    'width': float(img.get('width', 0)),
+                    'height': float(img.get('height', 0)),
+                    'stream_id': f'p{page_num}_img_{idx}',
+                    'format': 'unknown',
+                    'page': page_num,
+                    '_stream_data': stream,
+                }
+                # Hashing decodes the whole image stream: only do it for a caller
+                # that actually compares image content.
+                content_hash = self._image_content_hash(stream)
+                if content_hash:
+                    image['content_hash'] = content_hash
+                images.append(image)
 
         tables = []
-        for tbl in page.find_tables():
+        for tbl in (page.find_tables() if wants('table') else ()):
             # tbl.cells holds bbox tuples; tbl.extract() holds the actual text.
             extracted = tbl.extract() or []
             cells = [

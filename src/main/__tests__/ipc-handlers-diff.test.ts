@@ -30,11 +30,12 @@ vi.mock('node:fs/promises', () => ({ writeFile: vi.fn() }));
 
 import { DIFF_TIMEOUT_MS, IPC_CHANNELS, OPEN_PDF_TIMEOUT_MS } from '../../shared/constants';
 import type { DiffResult } from '../../shared/diff-types';
-import type { SidecarManager } from '../sidecar';
+import type { SidecarTransport } from '../sidecar-pool';
 
 interface SidecarStub {
   send: ReturnType<typeof vi.fn>;
   restart: ReturnType<typeof vi.fn>;
+  restartBackground: ReturnType<typeof vi.fn>;
   isRunning: ReturnType<typeof vi.fn>;
   setDocumentRestorer: ReturnType<typeof vi.fn>;
 }
@@ -62,7 +63,9 @@ const DIFF_RESULT = {
     objectsRemoved: 0,
     objectsMoved: 0,
     objectsModified: 0,
+    changesTruncated: false,
   },
+  truncated: false,
   pages: [],
 } satisfies DiffResult;
 
@@ -82,6 +85,7 @@ async function registerFresh(): Promise<void> {
   sidecar = {
     send: vi.fn(async () => DIFF_RESULT),
     restart: vi.fn(async () => undefined),
+    restartBackground: vi.fn(async () => undefined),
     isRunning: vi.fn(() => true),
     setDocumentRestorer: vi.fn((fn: (() => Promise<void>) | null) => {
       restorer = fn;
@@ -89,7 +93,7 @@ async function registerFresh(): Promise<void> {
   };
 
   const { registerIpcHandlers } = await import('../ipc-handlers');
-  registerIpcHandlers(sidecar as unknown as SidecarManager);
+  registerIpcHandlers(sidecar as unknown as SidecarTransport);
 }
 
 beforeEach(async () => {
@@ -196,6 +200,51 @@ describe('DIFF_PDFS handler', () => {
     await expect(
       invoke(IPC_CHANNELS.DIFF_PDFS, {}, '/docs/old.pdf', '/docs/new.pdf'),
     ).rejects.toThrow("Cannot read old PDF '/docs/old.pdf'");
+  });
+
+  it('restarts the background lane after a diff timeout and rethrows the timeout', async () => {
+    const error = new Error(
+      'Request "diff_documents" timed out after 300s without progress',
+    );
+    sidecar.send.mockRejectedValueOnce(error);
+
+    await expect(
+      invoke(IPC_CHANNELS.DIFF_PDFS, {}, '/docs/old.pdf', '/docs/new.pdf'),
+    ).rejects.toThrow('Request "diff_documents" timed out after 300s without progress');
+
+    // The abandoned computation lives in the background process: only that lane
+    // is replaced, and the renderer still sees the original timeout message.
+    expect(sidecar.restartBackground).toHaveBeenCalledTimes(1);
+    expect(sidecar.restart).not.toHaveBeenCalled();
+  });
+
+  it('reports the timeout even when the background restart fails', async () => {
+    sidecar.send.mockRejectedValueOnce(
+      new Error('Request "diff_documents" timed out after 300s without progress'),
+    );
+    sidecar.restartBackground.mockRejectedValueOnce(new Error('sidecar is stopping'));
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(
+      invoke(IPC_CHANNELS.DIFF_PDFS, {}, '/docs/old.pdf', '/docs/new.pdf'),
+    ).rejects.toThrow('Request "diff_documents" timed out after 300s without progress');
+    expect(sidecar.restartBackground).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not restart a lane for a non-timeout diff error', async () => {
+    sidecar.send.mockRejectedValueOnce(new Error('Cannot read old PDF \'/docs/old.pdf\''));
+    sidecar.send.mockRejectedValueOnce(
+      new Error('Request "open" timed out after 120s without progress'),
+    );
+
+    await expect(
+      invoke(IPC_CHANNELS.DIFF_PDFS, {}, '/docs/old.pdf', '/docs/new.pdf'),
+    ).rejects.toThrow("Cannot read old PDF '/docs/old.pdf'");
+    await expect(
+      invoke(IPC_CHANNELS.DIFF_PDFS, {}, '/docs/old.pdf', '/docs/new.pdf'),
+    ).rejects.toThrow('Request "open" timed out after 120s without progress');
+
+    expect(sidecar.restartBackground).not.toHaveBeenCalled();
   });
 });
 

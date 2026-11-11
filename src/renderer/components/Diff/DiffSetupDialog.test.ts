@@ -90,6 +90,81 @@ describe('DiffSetupDialog picking', () => {
   });
 });
 
+describe('DiffSetupDialog character-level changes', () => {
+  const characterToggle = (): HTMLInputElement =>
+    screen.getByRole('checkbox', { name: 'Character-level changes' }) as HTMLInputElement;
+
+  it('is unchecked by default and explains that word-level changes remain', () => {
+    render(React.createElement(DiffSetupDialog));
+    openDialog();
+
+    expect(characterToggle().checked).toBe(false);
+    expect(store().options.ignoreTypes).toEqual(['char']);
+    expect(
+      within(screen.getByRole('dialog')).getByText(/Word-level changes are always reported/),
+    ).toBeTruthy();
+  });
+
+  it('removes only char from ignoreTypes when checked', () => {
+    store().setOptions({ ignoreTypes: ['char', 'image'] });
+
+    render(React.createElement(DiffSetupDialog));
+    openDialog();
+    fireEvent.click(characterToggle());
+
+    expect(characterToggle().checked).toBe(true);
+    expect(store().options.ignoreTypes).toEqual(['image']);
+  });
+
+  it('adds char back without dropping the other ignored types when unchecked', () => {
+    store().setOptions({ ignoreTypes: ['char', 'table'] });
+
+    render(React.createElement(DiffSetupDialog));
+    openDialog();
+    fireEvent.click(characterToggle()); // on
+    expect(store().options.ignoreTypes).toEqual(['table']);
+
+    fireEvent.click(characterToggle()); // off again
+    expect(characterToggle().checked).toBe(false);
+    expect(store().options.ignoreTypes).toEqual(['table', 'char']);
+  });
+
+  it('sends an explicit ignoreTypes: [] when character-level changes are on', async () => {
+    store().setSource('old', '/docs/old.pdf', 'old.pdf');
+    store().setSource('new', '/docs/new.pdf', 'new.pdf');
+    diffPdfs.mockResolvedValueOnce(makeSampleResult());
+
+    render(React.createElement(DiffSetupDialog));
+    openDialog();
+    fireEvent.click(characterToggle());
+    fireEvent.click(compareButton());
+
+    await waitFor(() => expect(store().active).toBe(true));
+    expect(diffPdfs).toHaveBeenCalledWith(
+      '/docs/old.pdf',
+      '/docs/new.pdf',
+      expect.objectContaining({ ignoreTypes: [] }),
+    );
+  });
+
+  it('is disabled while a comparison is running', async () => {
+    store().setSource('old', '/docs/old.pdf', 'old.pdf');
+    store().setSource('new', '/docs/new.pdf', 'new.pdf');
+    let resolveDiff: (value: unknown) => void = () => {};
+    diffPdfs.mockReturnValueOnce(new Promise((resolve) => { resolveDiff = resolve; }));
+
+    render(React.createElement(DiffSetupDialog));
+    openDialog();
+    fireEvent.click(compareButton());
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Comparing'));
+    expect(characterToggle().disabled).toBe(true);
+
+    resolveDiff(makeSampleResult());
+    await waitFor(() => expect(store().active).toBe(true));
+  });
+});
+
 describe('DiffSetupDialog compare', () => {
   it('diffs the chosen sources with the dialog options and opens the workspace', async () => {
     store().setSource('old', '/docs/old.pdf', 'old.pdf');
@@ -112,7 +187,8 @@ describe('DiffSetupDialog compare', () => {
     expect(diffPdfs).toHaveBeenCalledWith('/docs/old.pdf', '/docs/new.pdf', {
       positionTolerance: 2.5,
       textTolerance: 'normalized',
-      ignoreTypes: [],
+      // Character-level changes stay off: the dialog's checkbox was not toggled.
+      ignoreTypes: ['char'],
       ignoreFonts: true,
       ignoreColors: true,
       ignoreImages: true,
@@ -174,5 +250,41 @@ describe('DiffSetupDialog compare', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(store().setupOpen).toBe(false);
     expect(diffPdfs).not.toHaveBeenCalled();
+  });
+});
+
+describe('DiffSetupDialog elapsed counter', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows elapsed seconds beside the loading label and resets them', () => {
+    vi.useFakeTimers();
+    store().setSource('old', '/docs/old.pdf', 'old.pdf');
+    store().setSource('new', '/docs/new.pdf', 'new.pdf');
+
+    render(React.createElement(DiffSetupDialog));
+    openDialog();
+
+    act(() => store().setLoading(true));
+    expect(screen.getByTestId('diff-elapsed').textContent).toBe('0s');
+
+    act(() => {
+      vi.advanceTimersByTime(42_000);
+    });
+    expect(screen.getByRole('status').textContent).toContain('Comparing documents… 42s');
+    expect(screen.getByTestId('diff-elapsed').textContent).toBe('42s');
+    // The large-file hint stays alongside the counter.
+    expect(screen.getByRole('status').textContent).toContain(
+      'Large PDFs can take several minutes',
+    );
+
+    // Leaving the loading state removes the counter...
+    act(() => store().setLoading(false));
+    expect(screen.queryByTestId('diff-elapsed')).toBeNull();
+
+    // ...and the next run starts from zero instead of resuming.
+    act(() => store().setLoading(true));
+    expect(screen.getByTestId('diff-elapsed').textContent).toBe('0s');
   });
 });

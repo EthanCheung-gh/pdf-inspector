@@ -638,6 +638,39 @@ describe('SidecarManager per-request timeouts', () => {
   });
 });
 
+describe('SidecarManager restart budget', () => {
+  it('bounds restart() by the stop budget when the sidecar never answers shutdown', async () => {
+    vi.useFakeTimers();
+    const sidecar = new SidecarManager();
+    // The old process is busy computing (a timed-out diff) and no longer reads
+    // stdin, so its `shutdown` is never answered.
+    spawnMock.mockImplementationOnce(() => {
+      const proc = new FakeChildProcess();
+      spawned.push(proc);
+      queueMicrotask(() => proc.emitReady());
+      return makeUnresponsive(proc);
+    });
+
+    try {
+      await sidecar.start();
+      expect(sidecar.isRunning()).toBe(true);
+
+      const restarting = sidecar.restart();
+      // One stop budget, not the generic 30s request budget: a diff rescue must
+      // not delay the original timeout error by half a minute.
+      await vi.advanceTimersByTimeAsync(DEFAULT_STOP_TIMEOUT_MS + 10);
+      await expect(restarting).resolves.toBeUndefined();
+
+      expect(spawnMock).toHaveBeenCalledTimes(2);
+      expect(sidecar.isRunning()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    await sidecar.stop();
+  });
+});
+
 describe('SidecarManager restart after stop', () => {
   it('does not spawn when restart() follows stop()', async () => {
     const sidecar = new SidecarManager();

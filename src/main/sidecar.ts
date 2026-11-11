@@ -628,7 +628,10 @@ export class SidecarManager {
 
       if (this.isRunning()) {
         try {
-          await this.writeRequest('shutdown', {});
+          // Bounded by the stop budget, not the generic request timeout: a
+          // restart must not wait 30s for a child that is busy computing (a diff
+          // that hit its no-progress budget is exactly that) before killing it.
+          await this.writeRequest('shutdown', {}, DEFAULT_STOP_TIMEOUT_MS);
         } catch {
           // The process may already be unhealthy; force it to stop below.
         }

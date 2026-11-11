@@ -57,7 +57,9 @@ const DIFF_RESULT: DiffResult = {
     objectsRemoved: 0,
     objectsMoved: 0,
     objectsModified: 1,
+    changesTruncated: false,
   },
+  truncated: false,
   pages: [],
 };
 

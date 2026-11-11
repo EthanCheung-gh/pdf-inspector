@@ -116,6 +116,14 @@
   accent-color: var(--pi-accent-border);
 }
 
+/* Muted second line under the character-level toggle. */
+.optionHint {
+  margin: 0;
+  color: var(--pi-text-subtle);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .errorArea {
   min-height: 16px;
   color: var(--pi-danger);
@@ -127,6 +135,11 @@
   margin-bottom: 6px;
   color: var(--pi-text-muted);
   font-size: 12px;
+}
+
+/* Elapsed seconds beside "Comparing documents…" (informational, not a %). */
+.elapsed {
+  font-variant-numeric: tabular-nums;
 }
 
 /* Muted second line: explains a long diff without implying a completion %. */

@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { DiffSide } from '../../../shared/diff-types';
 import { ipc } from '../../services/ipc-client';
-import { useDiffStore } from '../../store/diff-store';
+import { useElapsedSeconds } from '../../hooks/useElapsedSeconds';
+import { selectCharacterLevelChanges, useDiffStore } from '../../store/diff-store';
 import styles from './DiffSetupDialog.module.css';
 
 /**
@@ -20,10 +21,15 @@ export const DiffSetupDialog: React.FC = () => {
   const error = useDiffStore((s) => s.error);
   const setPositionTolerance = useDiffStore((s) => s.setPositionTolerance);
   const setOptions = useDiffStore((s) => s.setOptions);
+  const characterLevelChanges = useDiffStore(selectCharacterLevelChanges);
+  const setCharacterLevelChanges = useDiffStore((s) => s.setCharacterLevelChanges);
   const closeSetup = useDiffStore((s) => s.closeSetup);
 
   const [pickError, setPickError] = useState<string | null>(null);
   const [picking, setPicking] = useState<DiffSide | null>(null);
+  // Informational only: a diff has no trustworthy percentage, but how long it
+  // has been running is exact. Resets whenever loading turns off.
+  const elapsedSeconds = useElapsedSeconds(loading);
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const toleranceId = useId();
@@ -196,6 +202,24 @@ export const DiffSetupDialog: React.FC = () => {
             />
             Ignore images
           </label>
+          {/*
+            Character-level diffs are off by default: word-level changes already
+            report text edits, and comparing every glyph of a large text PDF can
+            produce millions of changes (minutes of work, unreadable list).
+          */}
+          <label className={styles.checkboxRow}>
+            <input
+              type="checkbox"
+              checked={characterLevelChanges}
+              disabled={loading}
+              onChange={(event) => setCharacterLevelChanges(event.target.checked)}
+            />
+            Character-level changes
+          </label>
+          <p className={styles.optionHint}>
+            Word-level changes are always reported. Character-level changes are optional
+            because a large text PDF can produce millions of one-glyph changes.
+          </p>
         </div>
 
         <div className={styles.errorArea} role="alert">
@@ -205,6 +229,10 @@ export const DiffSetupDialog: React.FC = () => {
         {loading && (
           <div className={styles.progress} role="status" aria-live="polite">
             Comparing documents…
+            {' '}
+            <span className={styles.elapsed} data-testid="diff-elapsed">
+              {elapsedSeconds}s
+            </span>
             {/*
               Reassurance, not a progress meter: the diff has no reliable
               percentage (page pairing is only known after the fingerprint

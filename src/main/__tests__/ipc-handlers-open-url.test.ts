@@ -43,7 +43,7 @@ vi.mock('../pdf-url', async (importOriginal) => {
 });
 
 import { IPC_CHANNELS, OPEN_PDF_TIMEOUT_MS } from '../../shared/constants';
-import type { SidecarManager } from '../sidecar';
+import type { SidecarTransport } from '../sidecar-pool';
 
 interface SidecarStub {
   send: ReturnType<typeof vi.fn>;
@@ -80,7 +80,7 @@ async function registerFresh(): Promise<void> {
   };
 
   const { registerIpcHandlers } = await import('../ipc-handlers');
-  registerIpcHandlers(sidecar as unknown as SidecarManager);
+  registerIpcHandlers(sidecar as unknown as SidecarTransport);
 }
 
 /** Open a local file through the dialog-driven OPEN_PDF handler. */

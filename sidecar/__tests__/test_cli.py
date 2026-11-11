@@ -43,6 +43,7 @@ SUMMARY_KEYS = {
     'objectsRemoved',
     'objectsMoved',
     'objectsModified',
+    'changesTruncated',
 }
 
 
@@ -169,11 +170,21 @@ def _json_result(docs, pair: str = 'changed', *args: str) -> dict:
 def test_json_output_matches_contract(docs):
     data = _json_result(docs, 'changed')
 
-    assert set(data) == {'schemaVersion', 'tool', 'options', 'old', 'new', 'summary', 'pages'}
+    assert set(data) == {
+        'schemaVersion',
+        'tool',
+        'options',
+        'old',
+        'new',
+        'summary',
+        'truncated',
+        'pages',
+    }
     assert data['schemaVersion'] == 1
     assert data['tool']['name'] == 'pdf-inspector'
     assert re.fullmatch(r'\d+\.\d+\.\d+', data['tool']['version'])
     assert set(data['summary']) == SUMMARY_KEYS
+    assert data['truncated'] is False
     assert data['summary']['objectsModified'] >= 1
     assert data['summary']['pagesReordered'] == 0
     assert data['old']['pages'] == 1 and data['new']['pages'] == 1

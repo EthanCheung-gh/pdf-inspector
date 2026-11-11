@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import json
+import threading
 import traceback
 from typing import Any, Callable, Mapping, Optional
 
@@ -14,6 +15,85 @@ from raw import RawError, raw_document, raw_object, raw_page_content
 
 class RpcError(Exception):
     """Protocol-level error: reported to the parent without a traceback."""
+
+
+# The parent's request budget is an INACTIVITY window rearmed by progress lines,
+# not a total time cap. One very large or complex page can run past that window
+# without ``diff_files`` reporting anything, so a diff also emits a heartbeat.
+HEARTBEAT_INTERVAL_SECONDS = 5.0
+
+# Only ``diff_documents`` runs long enough inside a single unit of work to need
+# a heartbeat. Every other method stays silent, so its budget keeps bounding
+# silence exactly as before.
+_HEARTBEAT_METHOD = 'diff_documents'
+
+# Progress lines, heartbeat lines and the final response all leave through this
+# lock: the heartbeat thread writes to stdout while the diff engine reports
+# per-page progress, and two interleaved write()+flush() pairs would produce a
+# line the parent cannot parse.
+_STDOUT_LOCK = threading.Lock()
+
+
+def _write_stdout_text(text: str) -> None:
+    """Write ``text`` to stdout and flush it, atomically w.r.t. other writers."""
+    with _STDOUT_LOCK:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+
+
+def _write_progress(request_id: int, payload: Mapping[str, Any]) -> None:
+    """Emit one ``{"id", "progress"}`` line for a request."""
+    _write_stdout_text(json.dumps({"id": request_id, "progress": payload}) + "\n")
+
+
+class _DiffHeartbeat:
+    """Keep a diff request's inactivity budget alive while one page is worked on.
+
+    Entering starts a daemon thread that emits
+    ``{"id": <request id>, "progress": {"stage": "heartbeat"}}`` every
+    :data:`HEARTBEAT_INTERVAL_SECONDS`; leaving stops and *joins* it, so no
+    heartbeat can outlive its request or trail the final response. The thread
+    only writes progress: it never touches the diff result, so a run with and
+    without heartbeats returns exactly the same dict.
+    """
+
+    def __init__(self, request_id: int):
+        self._request_id = request_id
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f'diff-heartbeat-{request_id}',
+            daemon=True,
+        )
+
+    def __enter__(self) -> '_DiffHeartbeat':
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc_info: Any) -> None:
+        self._stop.set()
+        self._thread.join()
+
+    def _run(self) -> None:
+        # Read the interval on every pass so tests can shorten it; the wait is
+        # what the stop event interrupts.
+        while not self._stop.wait(HEARTBEAT_INTERVAL_SECONDS):
+            _write_progress(self._request_id, {'stage': 'heartbeat'})
+
+
+def _handle_request(
+    session: 'SidecarSession',
+    method: str,
+    params: dict[str, Any],
+    request_id: int,
+    progress: Callable[[dict[str, Any]], None],
+) -> dict[str, Any]:
+    """Dispatch one request, heartbeating only while a diff runs."""
+    if method != _HEARTBEAT_METHOD:
+        return session.handle(method, params, request_id, progress)
+
+    with _DiffHeartbeat(request_id):
+        return session.handle(method, params, request_id, progress)
 
 
 # Diff options accepted over RPC. The wire format is snake_case; the TS side
@@ -277,17 +357,17 @@ def main():
         # flushed as soon as the work reports it: the parent uses it to keep the
         # request's inactivity timeout alive instead of capping the total time.
         def report_progress(payload: dict[str, Any], request_id: int = req.id) -> None:
-            sys.stdout.write(json.dumps({"id": request_id, "progress": payload}) + "\n")
-            sys.stdout.flush()
+            _write_progress(request_id, payload)
 
-        response = session.handle(req.method, req.params, req.id, report_progress)
+        # A diff also heartbeats while one page runs long; the thread is stopped
+        # and joined before the response below is written.
+        response = _handle_request(session, req.method, req.params, req.id, report_progress)
         resp = format_response(RpcResponse(
             id=response['id'],
             result=response.get('result'),
             error=response.get('error'),
         ))
-        sys.stdout.write(resp)
-        sys.stdout.flush()
+        _write_stdout_text(resp)
 
         if session.should_exit:
             break

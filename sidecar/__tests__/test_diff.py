@@ -204,7 +204,9 @@ def test_identical_documents_report_no_changes(tmp_path):
         'objectsRemoved': 0,
         'objectsMoved': 0,
         'objectsModified': 0,
+        'changesTruncated': False,
     }
+    assert result['truncated'] is False
     assert [page['status'] for page in result['pages']] == ['unchanged']
     assert result['pages'][0]['oldIndex'] == 1
     assert result['pages'][0]['newIndex'] == 1
@@ -746,6 +748,17 @@ def test_json_page_keys_are_exact(tmp_path):
         'objectsRemoved',
         'objectsMoved',
         'objectsModified',
+        'changesTruncated',
+    }
+    assert set(result) == {
+        'schemaVersion',
+        'tool',
+        'options',
+        'old',
+        'new',
+        'summary',
+        'truncated',
+        'pages',
     }
     for page in result['pages']:
         assert set(page) == PAGE_KEYS
@@ -1186,8 +1199,8 @@ def test_extractors_are_closed_on_success_and_error(tmp_path, monkeypatch):
         def _pdf(self):
             return self._inner._pdf
 
-        def extract_page(self, page_num):
-            return self._inner.extract_page(page_num)
+        def extract_page(self, page_num, include_types=None):
+            return self._inner.extract_page(page_num, include_types=include_types)
 
         def close(self):
             self.closed = True

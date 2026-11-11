@@ -28,7 +28,7 @@ vi.mock('electron', () => ({
 vi.mock('node:fs/promises', () => ({ writeFile: vi.fn() }));
 
 import { IPC_CHANNELS, RAW_RENDERER_TIMEOUT_MS, RAW_TIMEOUT_MS } from '../../shared/constants';
-import type { SidecarManager } from '../sidecar';
+import type { SidecarTransport } from '../sidecar-pool';
 
 interface SidecarStub {
   send: ReturnType<typeof vi.fn>;
@@ -80,7 +80,7 @@ async function registerFresh(): Promise<void> {
   };
 
   const { registerIpcHandlers } = await import('../ipc-handlers');
-  registerIpcHandlers(sidecar as unknown as SidecarManager);
+  registerIpcHandlers(sidecar as unknown as SidecarTransport);
 }
 
 beforeEach(async () => {

@@ -2,7 +2,7 @@ import { ipcMain, dialog, BrowserWindow, app, shell } from 'electron';
 import { writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { deleteDownloadedFile, downloadPdfToFile, parsePdfUrl } from './pdf-url';
-import type { SidecarTransport } from './sidecar-pool';
+import { isDiffTimeoutError, type SidecarTransport } from './sidecar-pool';
 import { IPC_CHANNELS, ANALYZE_FONTS_TIMEOUT_MS, AUDIT_TIMEOUT_MS, DIFF_TIMEOUT_MS, EXTRACT_PAGE_TIMEOUT_MS, OPEN_PDF_TIMEOUT_MS, RAW_TIMEOUT_MS } from '../shared/constants';
 import type { SaveFileRequest } from '../shared/constants';
 import { UNSAFE_EXTERNAL_URL_ERROR, toSafeExternalUrl } from '../shared/external-url';
@@ -281,15 +281,32 @@ export function registerIpcHandlers(sidecar: SidecarTransport): void {
         throw new Error('diffPdfs requires the new PDF file path');
       }
 
-      return sidecar.send(
-        'diff_documents',
-        {
-          old_path: oldPath,
-          new_path: newPath,
-          options: diffOptionsToRpc(options),
-        },
-        DIFF_TIMEOUT_MS,
-      );
+      try {
+        return await sidecar.send(
+          'diff_documents',
+          {
+            old_path: oldPath,
+            new_path: newPath,
+            options: diffOptionsToRpc(options),
+          },
+          DIFF_TIMEOUT_MS,
+        );
+      } catch (error) {
+        // A diff timeout means the sidecar stopped reporting progress, not that
+        // it stopped working: the abandoned computation may still be running in
+        // the background lane. Restart that lane (never the interactive one) so
+        // the orphan process is killed and a retry starts clean. Best effort —
+        // the renderer still gets the original timeout message.
+        if (isDiffTimeoutError(error)) {
+          await sidecar.restartBackground().catch((restartError) => {
+            console.error(
+              '[ipc] Background lane restart after diff timeout failed:',
+              restartError,
+            );
+          });
+        }
+        throw error;
+      }
     },
   );
 

@@ -54,7 +54,7 @@ import {
 } from '../src/shared/constants';
 import { diffOptionsToRpc } from '../src/shared/diff-types';
 import type { DiffSide } from '../src/shared/diff-types';
-import { laneForMethod } from '../src/main/sidecar-pool';
+import { isDiffTimeoutError, laneForMethod } from '../src/main/sidecar-pool';
 
 // ---------------------------------------------------------------------------
 // Layout / constants
@@ -958,6 +958,36 @@ export class SidecarPool {
       if (this.documentPath) this.backgroundOpenedPath = this.documentPath;
     } catch (error) {
       console.error('[web] Background sidecar restart failed:', toErrorMessage(error));
+    }
+  }
+
+  /**
+   * Restart the background lane only, after a diff timeout.
+   *
+   * The 300s budget is an inactivity window: when it expires the request is
+   * rejected but the Python process may still be diffing the abandoned pair.
+   * Replacing the background process frees that CPU/RAM and unblocks a retry;
+   * the interactive lane is never touched. Bounded by the manager's own
+   * shutdown (3s) and ready (15s) timeouts.
+   */
+  async restartBackground(): Promise<void> {
+    const background = this.background;
+    // No lane was ever created, so there is no orphan computation to kill.
+    if (!background) return;
+
+    // A document sync queued by an open must not race the restart; the stored
+    // tail swallows failures, so waiting cannot reject.
+    await this.backgroundSync.catch(() => undefined);
+    this.backgroundOpenedPath = null;
+
+    try {
+      await background.restart();
+      // The web manager re-opens the tracked document itself, so a successful
+      // restart leaves the lane on `documentPath`.
+      if (this.documentPath) this.backgroundOpenedPath = this.documentPath;
+    } catch (error) {
+      console.error('[web] Background sidecar restart failed:', toErrorMessage(error));
+      throw error;
     }
   }
 
@@ -2228,6 +2258,19 @@ async function handleDiff(
     // Sidecar errors here mean the uploaded PDFs (or the options) could not be
     // diffed; a timeout means the server gave up on a very large pair.
     const message = toErrorMessage(error);
+    if (isDiffTimeoutError(error)) {
+      // The abandoned computation may still be running in the background lane,
+      // so restart it (never the interactive lane) to kill the orphan before a
+      // retry. Best effort: the 504 reports the original timeout message.
+      await context.sidecar.restartBackground().catch((restartError) => {
+        console.error(
+          '[web] Background lane restart after diff timeout failed:',
+          toErrorMessage(restartError),
+        );
+      });
+    }
+    // Every other timeout (an `open` budget, for example) maps to 504 too, but
+    // no restart: only an abandoned diff leaves a computation behind.
     throw new HttpError(/timed out/i.test(message) ? 504 : 400, message);
   } finally {
     await context.diffUploads.release(...uploads);

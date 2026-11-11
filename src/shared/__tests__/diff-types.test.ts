@@ -164,6 +164,7 @@ describe('page match contract', () => {
     objectsRemoved: 0,
     objectsMoved: 0,
     objectsModified: 0,
+    changesTruncated: false,
   };
 
   it('keeps schemaVersion 1 and carries the additive page match fields', () => {
@@ -182,6 +183,7 @@ describe('page match contract', () => {
       old: { pages: 2, sha256: 'a'.repeat(64) },
       new: { pages: 2, sha256: 'b'.repeat(64) },
       summary,
+      truncated: false,
       pages: [paired, oneSided],
     };
 
@@ -189,6 +191,10 @@ describe('page match contract', () => {
     expect(result.pages[0].match).toEqual({ score: 1, reordered: true });
     expect(result.pages[1].match).toBeNull();
     expect(result.summary.pagesReordered).toBe(1);
+    // The change cap is additive and reported both on the summary and on the
+    // result, so a consumer can trust either place.
+    expect(result.truncated).toBe(false);
+    expect(result.summary.changesTruncated).toBe(false);
     // Ignore regions are echoed in the result's options for reproducibility.
     expect(result.options.ignoreRegions).toEqual([{ oldPage: 1, newPage: 1, bbox: BOX }]);
     // The additive fields survive a JSON round trip unchanged.
@@ -200,6 +206,37 @@ describe('page match contract', () => {
     expect(paired.match?.score).toBeLessThanOrEqual(1);
     expect(paired.match?.reordered).toBe(paired.oldIndex !== paired.newIndex);
     expect(oneSided.match).toBeNull();
+  });
+});
+
+describe('change cap contract', () => {
+  const summaryFixture: DiffSummary = {
+    pagesAdded: 0,
+    pagesRemoved: 0,
+    pagesChanged: 1,
+    pagesReordered: 0,
+    objectsAdded: 0,
+    objectsRemoved: 0,
+    objectsMoved: 0,
+    objectsModified: 1,
+    changesTruncated: false,
+  };
+
+  it('mirrors the truncation flag on the result and the summary', () => {
+    // Shape of a capped run: the engine sets both flags, and the renderer reads
+    // only `summary.changesTruncated`.
+    const capped: Pick<DiffResult, 'truncated' | 'summary'> = {
+      truncated: true,
+      summary: { ...summaryFixture, changesTruncated: true },
+    };
+
+    expect(capped.truncated).toBe(true);
+    expect(capped.summary.changesTruncated).toBe(true);
+    expect(JSON.parse(JSON.stringify(capped))).toEqual(capped);
+  });
+
+  it('is off for a complete run', () => {
+    expect(summaryFixture.changesTruncated).toBe(false);
   });
 });
 

@@ -14,8 +14,11 @@ from main import SidecarSession  # noqa: E402
 
 def _write_pdf(path: Path, words, pagesize=letter) -> str:
     canvas = rl_canvas.Canvas(str(path), pagesize=pagesize)
-    canvas.setFont("Helvetica", 12)
     for word in words:
+        # Set the font per page: setting it once before the loop makes the first
+        # page carry an extra text-object setup, so its content stream differs
+        # from the same text drawn on a later page of another document.
+        canvas.setFont("Helvetica", 12)
         canvas.drawString(72, 720, word)
         canvas.showPage()
     canvas.save()

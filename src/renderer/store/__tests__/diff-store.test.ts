@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { useDiffStore, selectDiffPage, selectDiffSelection } from '../diff-store';
+import {
+  DEFAULT_DIFF_OPTIONS,
+  useDiffStore,
+  selectCharacterLevelChanges,
+  selectDiffPage,
+  selectDiffSelection,
+} from '../diff-store';
 import { usePdfStore } from '../pdf-store';
 import { makeChange, makeSampleResult } from '../../services/__tests__/diff-fixtures';
 
@@ -60,6 +66,56 @@ describe('diff store sources', () => {
 
     store().setPositionTolerance(10_000);
     expect(store().options.positionTolerance).toBe(100);
+  });
+});
+
+describe('diff store character-level changes', () => {
+  it('ignores character-level changes by default', () => {
+    // Word-level changes already report text edits; a per-glyph diff of a large
+    // text PDF is the pathological case, so it is opt-in in the UI.
+    expect(DEFAULT_DIFF_OPTIONS.ignoreTypes).toEqual(['char']);
+    expect(store().options.ignoreTypes).toEqual(['char']);
+    expect(selectCharacterLevelChanges(store())).toBe(false);
+  });
+
+  it('removes only the char entry when character-level changes are turned on', () => {
+    store().setOptions({ ignoreTypes: ['char', 'image', 'table'] });
+
+    store().setCharacterLevelChanges(true);
+
+    expect(store().options.ignoreTypes).toEqual(['image', 'table']);
+    expect(selectCharacterLevelChanges(store())).toBe(true);
+    // Nothing else in the options changed.
+    expect(store().options.ignoreImages).toBe(false);
+    expect(store().options.positionTolerance).toBe(1);
+  });
+
+  it('adds char back when character-level changes are turned off again', () => {
+    store().setOptions({ ignoreTypes: ['image'] });
+
+    store().setCharacterLevelChanges(false);
+
+    expect(store().options.ignoreTypes).toEqual(['image', 'char']);
+    expect(selectCharacterLevelChanges(store())).toBe(false);
+  });
+
+  it('is idempotent and never duplicates the char entry', () => {
+    store().setCharacterLevelChanges(false);
+    store().setCharacterLevelChanges(false);
+    expect(store().options.ignoreTypes).toEqual(['char']);
+
+    store().setCharacterLevelChanges(true);
+    store().setCharacterLevelChanges(true);
+    expect(store().options.ignoreTypes).toEqual([]);
+  });
+
+  it('keeps the toggle working after a reset', () => {
+    store().setCharacterLevelChanges(true);
+    store().reset();
+
+    expect(selectCharacterLevelChanges(store())).toBe(false);
+    store().setCharacterLevelChanges(true);
+    expect(store().options.ignoreTypes).toEqual([]);
   });
 });
 
@@ -235,7 +291,7 @@ describe('diff store view state', () => {
     expect(state.viewMode).toBe('side-by-side');
     expect(state.zoom).toBe(1);
     expect(state.filter).toEqual({ kind: 'all', type: 'all' });
-    expect(state.options.ignoreTypes).toEqual([]);
+    expect(state.options.ignoreTypes).toEqual(['char']);
   });
 
   it('opens and closes the setup dialog', () => {

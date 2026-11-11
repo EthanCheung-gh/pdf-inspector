@@ -58,6 +58,7 @@ let sidecar: SidecarPool;
 let registry: DocumentRegistry;
 let diffUploads: DiffUploadStore;
 let send: MockInstance;
+let restartBackground: MockInstance;
 let baseUrl: string;
 
 async function startTestServer(): Promise<void> {
@@ -68,6 +69,7 @@ async function startTestServer(): Promise<void> {
   diffUploads = created.diffUploads;
 
   send = vi.spyOn(sidecar, 'send').mockResolvedValue(DIFF_RESULT);
+  restartBackground = vi.spyOn(sidecar, 'restartBackground').mockResolvedValue(undefined);
 
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as AddressInfo;
@@ -325,9 +327,12 @@ describe('POST /api/diff', () => {
       "Cannot open old PDF '/tmp/token.pdf'",
     );
     expect(await diffDirFiles()).toHaveLength(0);
+    // A parse/option error leaves both lanes alone: only a timeout can hide an
+    // abandoned computation.
+    expect(restartBackground).not.toHaveBeenCalled();
   });
 
-  it('maps a sidecar timeout to 504', async () => {
+  it('maps a sidecar timeout to 504 and restarts the background lane', async () => {
     const oldToken = await uploadSide('old');
     const newToken = await uploadSide('new');
     send.mockRejectedValueOnce(
@@ -337,7 +342,40 @@ describe('POST /api/diff', () => {
     const response = await postDiff({ oldToken, newToken });
 
     expect(response.status).toBe(504);
+    expect(((await response.json()) as { error: string }).error).toBe(
+      'Request "diff_documents" timed out after 300s without progress',
+    );
+    // The abandoned diff may still be running in the background process.
+    expect(restartBackground).toHaveBeenCalledTimes(1);
     expect(await diffDirFiles()).toHaveLength(0);
+  });
+
+  it('still answers 504 when the background restart itself fails', async () => {
+    const oldToken = await uploadSide('old');
+    const newToken = await uploadSide('new');
+    send.mockRejectedValueOnce(
+      new Error('Request "diff_documents" timed out after 300s without progress'),
+    );
+    restartBackground.mockRejectedValueOnce(new Error('Sidecar is stopping'));
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const response = await postDiff({ oldToken, newToken });
+
+    expect(response.status).toBe(504);
+    expect(restartBackground).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not restart the lane for a non-diff timeout', async () => {
+    const oldToken = await uploadSide('old');
+    const newToken = await uploadSide('new');
+    send.mockRejectedValueOnce(
+      new Error('Request "open" timed out after 120s without progress'),
+    );
+
+    const response = await postDiff({ oldToken, newToken });
+
+    expect(response.status).toBe(504);
+    expect(restartBackground).not.toHaveBeenCalled();
   });
 });
 

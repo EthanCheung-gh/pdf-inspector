@@ -46,7 +46,13 @@ export interface DiffOptions {
   positionTolerance: number;
   /** Text comparison mode. Default `normalized`. */
   textTolerance: DiffTextTolerance;
-  /** Object types to skip entirely. Default `[]`. */
+  /**
+   * Object types to skip entirely (default is `[]` in the engine/CLI).
+   *
+   * The renderer's default is `['char']`: word-level changes already cover
+   * text edits, and character-level diffs are opt-in there because a large text
+   * PDF can produce hundreds of thousands of glyph changes.
+   */
   ignoreTypes: DiffObjectType[];
   ignoreFonts: boolean;
   ignoreColors: boolean;
@@ -233,14 +239,21 @@ export interface DiffSummary {
   objectsRemoved: number;
   objectsMoved: number;
   objectsModified: number;
+  /**
+   * True when the engine hit its `MAX_DIFF_CHANGES` safety cap and the change
+   * lists are incomplete. The counts above then describe the changes that were
+   * kept, and `DiffResult.truncated` carries the same flag.
+   */
+  changesTruncated: boolean;
 }
 
 /**
  * Top-level diff payload.
  *
  * `schemaVersion` stays `1`: page match metadata (`DiffPage.match`,
- * `DiffSummary.pagesReordered`) is additive, so consumers that ignore the new
- * fields keep working unchanged.
+ * `DiffSummary.pagesReordered`) and the change cap (`DiffResult.truncated`,
+ * `DiffSummary.changesTruncated`) are additive, so consumers that ignore the
+ * new fields keep working unchanged.
  */
 export interface DiffResult {
   schemaVersion: 1;
@@ -249,6 +262,8 @@ export interface DiffResult {
   old: DiffDocumentInfo;
   new: DiffDocumentInfo;
   summary: DiffSummary;
+  /** Mirrors `summary.changesTruncated`; true when the change list was capped. */
+  truncated: boolean;
   pages: DiffPage[];
 }
 

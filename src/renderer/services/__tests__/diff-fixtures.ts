@@ -62,7 +62,9 @@ export function makeResult(pages: DiffPage[]): DiffResult {
       objectsRemoved: count('removed'),
       objectsMoved: count('moved'),
       objectsModified: count('modified'),
+      changesTruncated: false,
     },
+    truncated: false,
     pages,
   };
 }

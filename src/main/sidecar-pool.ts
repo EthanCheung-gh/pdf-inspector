@@ -46,6 +46,21 @@ export function laneForMethod(method: string): SidecarLane {
 }
 
 /**
+ * True when `error` is the sidecar manager's inactivity timeout for a
+ * `diff_documents` request (see `SidecarManager.writeRequest`).
+ *
+ * Only that failure means a Python process may still be computing the
+ * abandoned diff: the request stopped waiting but the child never stopped
+ * working. Callers use this to restart the background lane and kill the
+ * orphan; every other error leaves both lanes alone.
+ */
+export function isDiffTimeoutError(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  return /^Request "diff_documents" timed out\b/.test(message);
+}
+
+/**
  * The part of `SidecarManager` the IPC handlers rely on. Kept as an interface so
  * the handlers can be tested with a stub and so the pool is the only component
  * that has to know about lanes.
@@ -57,6 +72,14 @@ export interface SidecarTransport {
     timeoutMs?: number,
   ): Promise<unknown>;
   restart(): Promise<void>;
+  /**
+   * Restart only the background lane.
+   *
+   * Used after a `diff_documents` timeout: the abandoned computation is still
+   * running in the background process, so that process has to be replaced
+   * before the next diff can start. Never touches the interactive lane.
+   */
+  restartBackground(): Promise<void>;
   isRunning(): boolean;
   setDocumentRestorer(restorer: (() => Promise<void>) | null): void;
 }
@@ -284,6 +307,39 @@ export class SidecarPool implements SidecarTransport {
       await background.restart();
     } catch (err) {
       console.error('[sidecar-pool] Background lane restart failed:', err);
+    }
+  }
+
+  /**
+   * Restart the background lane only, after a diff timeout.
+   *
+   * The inactivity timeout rejects the request but cannot stop the Python
+   * process still diffing the abandoned pair; replacing that process is what
+   * actually frees the CPU/RAM and unblocks retries. Any queued background
+   * document sync is awaited first (its stored tail never rejects), and the
+   * restart is bounded by the lane's own stop and ready timeouts.
+   *
+   * Unlike `restart()`, the interactive lane is never touched. A failed restart
+   * is logged and rethrown: the caller already has the original timeout to
+   * report, but a rescue failure should still be visible.
+   */
+  async restartBackground(): Promise<void> {
+    const background = this.background;
+    // No lane was ever created, so there is no orphan computation to kill.
+    if (!background) return;
+
+    // A document sync queued by an interactive open must not race the restart.
+    await this.backgroundSync.catch(() => undefined);
+    this.backgroundOpenedPath = null;
+
+    try {
+      await background.restart();
+      // restart() runs the lane restorer, which re-opens `documentPath` and
+      // records it in `backgroundOpenedPath`. Leaving a failed open null makes
+      // the next background request retry instead of trusting a stale path.
+    } catch (err) {
+      console.error('[sidecar-pool] Background lane restart failed:', err);
+      throw err;
     }
   }
 

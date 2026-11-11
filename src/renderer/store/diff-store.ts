@@ -11,6 +11,7 @@ import { create } from 'zustand';
 import type {
   DiffChange,
   DiffIgnoreRegion,
+  DiffObjectType,
   DiffOptions,
   DiffPage,
   DiffResult,
@@ -32,11 +33,19 @@ import {
   type VisualDiffStyle,
 } from '../services/visual-diff';
 
-/** Engine defaults, mirrored so the dialog can show concrete values. */
+/**
+ * Engine defaults, mirrored so the dialog can show concrete values.
+ *
+ * One deliberate difference from `sidecar.diff.DiffOptions`: the UI ignores
+ * `char` objects by default. Word-level changes already report text edits, and
+ * a character-level diff of a large text PDF produces millions of one-glyph
+ * changes (minutes of CPU, a change list nothing can display), so it is opt-in
+ * through the dialog instead of the default.
+ */
 export const DEFAULT_DIFF_OPTIONS: DiffOptions = {
   positionTolerance: 1,
   textTolerance: 'normalized',
-  ignoreTypes: [],
+  ignoreTypes: ['char'],
   ignoreFonts: false,
   ignoreColors: false,
   ignoreImages: false,
@@ -46,7 +55,7 @@ export const DEFAULT_DIFF_OPTIONS: DiffOptions = {
 /** A copy of the defaults with its own arrays (see `reset`). */
 const freshOptions = (): DiffOptions => ({
   ...DEFAULT_DIFF_OPTIONS,
-  ignoreTypes: [],
+  ignoreTypes: [...DEFAULT_DIFF_OPTIONS.ignoreTypes],
   ignoreRegions: [],
 });
 
@@ -93,6 +102,12 @@ export interface DiffState {
   setSource: (side: DiffSide, source: DiffSource | null, name: string | null) => void;
   setOptions: (patch: Partial<DiffOptions>) => void;
   setPositionTolerance: (value: number) => void;
+  /**
+   * Turn character-level changes on or off. Off (the default) ignores `char`
+   * objects; on removes that one entry and leaves every other ignored type
+   * alone. Word-level changes are reported either way.
+   */
+  setCharacterLevelChanges: (enabled: boolean) => void;
 
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
@@ -156,6 +171,10 @@ const clampTolerance = (value: number): number => {
   return Math.min(100, Math.max(0, value));
 };
 
+/** True when `char` objects are ignored, i.e. character-level diffs are off. */
+const hasCharIgnore = (ignoreTypes: readonly DiffObjectType[]): boolean =>
+  ignoreTypes.includes('char');
+
 export const useDiffStore = create<DiffState>((set, get) => ({
   ...initialDiffState,
 
@@ -183,6 +202,20 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   setPositionTolerance: (value) =>
     set((state) => ({
       options: { ...state.options, positionTolerance: clampTolerance(value) },
+    })),
+
+  // Only `char` is added or removed: a user may also have ignored images or
+  // tables in the same session, and toggling characters must not re-enable them.
+  setCharacterLevelChanges: (enabled) =>
+    set((state) => ({
+      options: {
+        ...state.options,
+        ignoreTypes: enabled
+          ? state.options.ignoreTypes.filter((type) => type !== 'char')
+          : hasCharIgnore(state.options.ignoreTypes)
+            ? state.options.ignoreTypes
+            : [...state.options.ignoreTypes, 'char'],
+      },
     })),
 
   setLoading: (loading) => set({ loading }),
@@ -277,6 +310,15 @@ export const useDiffStore = create<DiffState>((set, get) => ({
 /** The page currently shown by both panes, or null before a diff exists. */
 export const selectDiffPage = (state: DiffState): DiffPage | null =>
   state.result?.pages[state.pageIndex] ?? null;
+
+/**
+ * True when character-level changes are compared.
+ *
+ * Off by default (see `DEFAULT_DIFF_OPTIONS`): the dialog's checkbox and this
+ * selector must always agree, so both read the store's `ignoreTypes`.
+ */
+export const selectCharacterLevelChanges = (state: DiffState): boolean =>
+  !hasCharIgnore(state.options.ignoreTypes);
 
 /** The selected change resolved against the current result. */
 export const selectDiffSelection = (

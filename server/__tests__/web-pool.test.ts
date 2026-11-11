@@ -215,6 +215,77 @@ describe('web restart, shutdown and health', () => {
     expect(pool.isBackgroundRunning()).toBe(true);
   });
 
+  it('restarts only the background lane on request', async () => {
+    const { pool, interactive, backgrounds } = createPool();
+    const background = await startBackgroundLane({ pool, interactive, backgrounds }, '/tmp/a.pdf');
+
+    await pool.restartBackground();
+
+    expect(background.restart).toHaveBeenCalledTimes(1);
+    expect(interactive.restart).not.toHaveBeenCalled();
+    // The restarted manager re-opens the tracked document itself.
+    expect(background.documentPath).toBe('/tmp/a.pdf');
+  });
+
+  it('does not create the lane just to restart it', async () => {
+    const { pool, interactive, backgrounds } = createPool();
+
+    await expect(pool.restartBackground()).resolves.toBeUndefined();
+
+    expect(backgrounds).toHaveLength(0);
+    expect(interactive.restart).not.toHaveBeenCalled();
+  });
+
+  it('waits for a queued background sync before restarting', async () => {
+    const interactive = new FakeLane();
+    interactive.running = true;
+    const background = new FakeLane();
+    const pool = new SidecarPool({
+      interactive: asManager(interactive),
+      createBackground: () => asManager(background),
+    });
+    pool.setDocumentPath('/tmp/a.pdf');
+    await pool.send('analyze_fonts');
+
+    const order: string[] = [];
+    let releaseOpen!: () => void;
+    const openGate = new Promise<void>((resolve) => {
+      releaseOpen = resolve;
+    });
+    background.send.mockImplementation(
+      async (method: string, params?: Record<string, unknown>) => {
+        if (method === 'open' && params?.path === '/tmp/b.pdf') {
+          order.push('sync:start');
+          await openGate;
+          order.push('sync:done');
+        }
+        return {};
+      },
+    );
+    background.restart.mockImplementation(async () => {
+      order.push('restart');
+      background.running = true;
+    });
+
+    pool.setDocumentPath('/tmp/b.pdf');
+    const restarting = pool.restartBackground();
+    releaseOpen();
+    await restarting;
+
+    expect(order).toEqual(['sync:start', 'sync:done', 'restart']);
+    expect(interactive.restart).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a failed background restart without touching the interactive lane', async () => {
+    const { pool, interactive, backgrounds } = createPool();
+    const background = await startBackgroundLane({ pool, interactive, backgrounds }, '/tmp/a.pdf');
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    background.restart.mockRejectedValueOnce(new Error('background restart failed'));
+
+    await expect(pool.restartBackground()).rejects.toThrow('background restart failed');
+    expect(interactive.restart).not.toHaveBeenCalled();
+  });
+
   it('stops both lanes and reports interactive health only', async () => {
     const { pool, interactive, backgrounds } = createPool();
     const background = await startBackgroundLane({ pool, interactive, backgrounds }, '/tmp/a.pdf');

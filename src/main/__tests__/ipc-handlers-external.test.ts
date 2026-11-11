@@ -33,7 +33,7 @@ vi.mock('node:fs/promises', () => ({ writeFile: vi.fn() }));
 
 import { IPC_CHANNELS } from '../../shared/constants';
 import { UNSAFE_EXTERNAL_URL_ERROR } from '../../shared/external-url';
-import type { SidecarManager } from '../sidecar';
+import type { SidecarTransport } from '../sidecar-pool';
 
 interface SidecarStub {
   send: ReturnType<typeof vi.fn>;
@@ -65,7 +65,7 @@ beforeEach(async () => {
 
   vi.resetModules();
   const { registerIpcHandlers } = await import('../ipc-handlers');
-  registerIpcHandlers(sidecar as unknown as SidecarManager);
+  registerIpcHandlers(sidecar as unknown as SidecarTransport);
 });
 
 describe('OPEN_EXTERNAL handler', () => {

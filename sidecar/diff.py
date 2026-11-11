@@ -6,9 +6,10 @@ every surface shares one deterministic implementation.
 
 Coordinates are the same MediaBox-relative PDF points the extractor reports;
 pages are paired with :class:`difflib.SequenceMatcher` on lightweight page
-fingerprints, and each object type is matched independently with a
-deterministic greedy minimum-cost matcher (stable sorting, no randomness, no
-timestamps).  File handles are always released, and unreadable PDFs raise
+fingerprints derived from a content signature (see :func:`_page_signature`),
+and each object type is matched independently with a deterministic
+greedy minimum-cost matcher (stable sorting, no randomness, no timestamps).
+File handles are always released, and unreadable PDFs raise
 :class:`DiffError` with a human readable message.
 
 Every paired page also carries a ``match`` object: a deterministic 0..1
@@ -20,6 +21,24 @@ ended up at a different ordinal position.  One-sided pages carry
 on a side intersects a region naming that side's page is filtered out after
 object matching (see :func:`change_is_ignored`).  Regions never change how
 objects are paired, so removing one restores exactly the masked changes.
+
+Two passes keep the work proportional to what changed:
+
+* the *signature* pass (:func:`_page_signature`) hashes a page's geometry, its
+  content streams and its resources straight from pdfminer objects — no
+  pdfplumber layout, no object extraction — and also yields the page size;
+* the *diff* pass extracts a page pair only when their signatures differ, and
+  asks ``PdfExtractor.extract_page`` only for the object types that are neither
+  ignored nor excluded.
+
+An unchanged page is therefore never fully extracted, and two byte-identical
+files short-circuit to "every page unchanged".
+
+A run stops growing at :data:`MAX_DIFF_CHANGES` changes.  The cap exists so a
+pathological pair (a whole page rewritten, character-level diffs of a long text
+PDF) cannot produce an unbounded JSON payload; the result then reports
+``truncated: true`` and ``summary.changesTruncated: true`` instead of silently
+looking complete.
 """
 
 from __future__ import annotations
@@ -32,6 +51,9 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
+
+from pdfminer.pdftypes import PDFObjRef, PDFStream
+from pdfminer.psparser import PSLiteral
 
 try:  # imported as ``sidecar.diff`` (namespace package)
     from .extractor import PdfExtractor
@@ -83,7 +105,45 @@ _PAGE_MATCH_WEIGHTS = (
 # Decimals kept in a reported page match score (JSON stays stable).
 _MATCH_SCORE_DECIMALS = 3
 
+# Constant table component of the diff-local fingerprint.  Fingerprints are now
+# derived from a page signature (see ``_page_signature``), which covers the
+# page's real content, so the table component is a constant for every page and
+# identical signatures still score exactly 1.0.
+_EMPTY_TABLE_HASH = hashlib.sha256(b'').hexdigest()
+
+# How deep the signature hasher follows indirect references.  Three levels reach
+# a page's resource dictionary, the font dictionaries inside it and their
+# descriptors; deeper objects (embedded font programs, big masks, …) stop at a
+# stable marker so their bytes never enter the digest.  A page's own content
+# streams are hashed in full regardless of depth.
+_SIGNATURE_MAX_DEPTH = 3
+
+# Signature shared by both sides when the two files are byte-identical: the page
+# bytes cannot differ, so hashing them again would be pure waste.
+_IDENTICAL_FILE_SIGNATURE = 'identical-file'
+
+# Prefix of the per-side marker used when a page cannot be signature-hashed at
+# all (broken page tree, undecodable content).  It differs between the old and
+# the new side on purpose: an unprovable page must always be fully compared.
+_UNHASHED_SIGNATURE_PREFIX = 'unhashed'
+
 _PACKAGE_JSON = Path(__file__).resolve().parent.parent / 'package.json'
+
+# Stable reference to the concrete extractor class.  Page-level helpers reuse
+# its static/class methods (``_resolve_pdf_value``, ``_page_rotation``), and
+# that must keep working when ``diff.PdfExtractor`` is replaced by a wrapper —
+# the module attribute is the extension point for opening documents, not for
+# PDF-value parsing.
+_EXTRACTOR_HELPERS = PdfExtractor
+
+# Hard ceiling on the number of changes a single diff reports.
+#
+# A page whose text was fully rewritten produces one change per character, so a
+# long text PDF pair can easily exceed what any consumer (or JSON payload) can
+# carry.  The cap bounds both the serialised result and the memory the change
+# list needs; ``DiffResult.truncated`` / ``DiffSummary.changesTruncated`` tell a
+# consumer that the list is incomplete rather than silently complete.
+MAX_DIFF_CHANGES = 50_000
 
 
 class DiffError(Exception):
@@ -458,6 +518,11 @@ def page_fingerprint(page: Mapping[str, Any]) -> tuple:
     level changes, not page identity.  Whitespace-normalised word text plus the
     per-type object counts and table cell text is enough to recognise an
     inserted or removed page without extracting object diffs.
+
+    :func:`diff_files` does not call this: it builds fingerprints from a page
+    signature (:func:`_signature_fingerprint`) so that an unchanged page is
+    recognised without any layout parse.  This function stays the reference
+    implementation for callers that already hold extracted page dicts.
     """
     width = round(_number(page.get('width')), 2)
     height = round(_number(page.get('height')), 2)
@@ -481,6 +546,372 @@ def page_fingerprint(page: Mapping[str, Any]) -> tuple:
     table_hash = hashlib.sha256('\x1d'.join(table_chunks).encode('utf-8')).hexdigest()
 
     return (width, height, rotation, text_hash, counts, table_hash)
+
+
+def _page_rotation(page: Any) -> int:
+    """Read ``/Rotate`` from a pdfplumber page exactly like ``_page_geometry``.
+
+    Kept in sync with :meth:`PdfExtractor._page_geometry` so the alignment key
+    (and the page geometry change reported for a paired page) sees the same
+    normalised rotation the extractor reports.
+    """
+    page_obj = getattr(page, 'page_obj', None)
+    attrs = _EXTRACTOR_HELPERS._resolve_pdf_value(getattr(page_obj, 'attrs', None))
+    if not isinstance(attrs, dict):
+        attrs = {}
+    return _EXTRACTOR_HELPERS._page_rotation(attrs)
+
+
+# --- page signatures --------------------------------------------------------
+
+
+class _PageSignatureHasher:
+    """Stable SHA-256 digest over one page's geometry, content and resources.
+
+    The digest is built from pdfminer objects only, so it never triggers a
+    pdfplumber layout or an object extraction.  Two pages produce the same digest
+    exactly when their drawing program, their page boxes/rotation and the
+    resources they reference are the same.
+
+    Stability rules (this digest is compared across two documents, not just
+    within one):
+
+    - numbers are normalised through ``float`` so ``0`` and ``0.0`` agree;
+    - mapping keys are hashed in sorted order, lists in their own order;
+    - indirect references contribute the *content they point at*, not their
+      object number: the same page copied into another file (or re-saved) gets
+      different object numbers but must still hash identically;
+    - a reference seen before in this page hashes as a stable revisit marker, so
+      shared resources and cyclic graphs terminate;
+    - references past :data:`_SIGNATURE_MAX_DEPTH` hash as a stable marker rather
+      than being followed, which keeps embedded font programs and large masks
+      out of the digest — and, crucially, keeps the digest independent of object
+      numbering.
+    """
+
+    def __init__(self, max_depth: int = _SIGNATURE_MAX_DEPTH) -> None:
+        self._digest = hashlib.sha256()
+        self._max_depth = max_depth
+        # ``id()`` of resolved reference targets / streams already hashed for
+        # this page.  Those come from pdfminer's document cache, so they stay
+        # alive (and their ids stable) while the page is being hashed.
+        self._seen: set[int] = set()
+
+    # -- writing helpers ----------------------------------------------------
+
+    def _tag(self, name: str) -> None:
+        """Write a structural marker so concatenations cannot collide."""
+        self._digest.update(b'\x1e')
+        self._digest.update(name.encode('ascii'))
+        self._digest.update(b'\x1f')
+
+    def _chunk(self, data: bytes) -> None:
+        """Write a length-prefixed payload (delimiters, no ambiguity)."""
+        self._digest.update(b'\x1d')
+        self._digest.update(str(len(data)).encode('ascii'))
+        self._digest.update(b':')
+        self._digest.update(data)
+
+    def hexdigest(self) -> str:
+        return self._digest.hexdigest()
+
+    # -- value traversal ----------------------------------------------------
+
+    @staticmethod
+    def _key_bytes(key: Any) -> bytes:
+        """Sort key for a mapping key (names, strings and raw bytes coexist)."""
+        if isinstance(key, PSLiteral):
+            return b'\x00' + str(key.name).encode('utf-8', 'replace')
+        if isinstance(key, str):
+            return b'\x01' + key.encode('utf-8', 'replace')
+        if isinstance(key, (bytes, bytearray, memoryview)):
+            return b'\x02' + bytes(key)
+        return b'\x03' + repr(key).encode('utf-8', 'replace')
+
+    def value(self, value: Any, depth: int = 0) -> None:
+        """Hash one PDF value; unknown objects contribute only their type name."""
+        if value is None:
+            self._tag('none')
+        elif isinstance(value, bool):
+            self._tag('true' if value else 'false')
+        elif isinstance(value, (int, float)):
+            # int/float are folded together: writers disagree on 0 vs 0.0.
+            self._tag('number')
+            self._chunk(repr(float(value)).encode('ascii', 'replace'))
+        elif isinstance(value, str):
+            self._tag('string')
+            self._chunk(value.encode('utf-8', 'replace'))
+        elif isinstance(value, (bytes, bytearray, memoryview)):
+            self._tag('bytes')
+            self._chunk(bytes(value))
+        elif isinstance(value, PSLiteral):
+            self._tag('name')
+            self._chunk(str(value.name).encode('utf-8', 'replace'))
+        elif isinstance(value, PDFObjRef):
+            self._reference(value, depth)
+        elif isinstance(value, PDFStream):
+            self._stream(value)
+        elif isinstance(value, Mapping):
+            self._mapping(value, depth)
+        elif isinstance(value, (list, tuple)):
+            self._sequence(value, depth)
+        else:
+            self._tag('object')
+            self._chunk(type(value).__name__.encode('ascii', 'replace'))
+
+    def _mapping(self, mapping: Mapping, depth: int) -> None:
+        # No revisit tracking here: PDF dictionaries cannot contain themselves
+        # without going through an indirect reference, and those are tracked by
+        # ``_reference``.  Tracking transient dicts by ``id()`` would be unsafe
+        # (ids get reused once a dict is collected).
+        self._tag('mapping')
+        self._chunk(str(len(mapping)).encode('ascii'))
+        for key in sorted(mapping, key=self._key_bytes):
+            self.value(key, depth)
+            self.value(mapping[key], depth)
+
+    def _sequence(self, sequence: Sequence, depth: int) -> None:
+        self._tag('sequence')
+        self._chunk(str(len(sequence)).encode('ascii'))
+        for item in sequence:
+            self.value(item, depth)
+
+    def _reference(self, ref: PDFObjRef, depth: int) -> None:
+        """Hash what an indirect reference points at, not its object number."""
+        if depth > self._max_depth:
+            # Stable marker: following the reference could pull an embedded font
+            # program (megabytes) into the digest, and hashing its object number
+            # would make the page identity depend on the file's object layout.
+            self._tag('reference-limit')
+            return
+
+        try:
+            target = ref.resolve()
+        except Exception:
+            self._tag('reference-broken')
+            return
+
+        if target is None:
+            self._tag('reference-empty')
+            return
+
+        # Resolved targets are pdfminer document objects, so their ``id()`` is
+        # stable while the page is hashed: revisits (shared resources, cycles)
+        # hash as a marker instead of being followed again.
+        if id(target) in self._seen:
+            self._tag('reference-revisit')
+            return
+        self._seen.add(id(target))
+
+        self._tag('reference')
+        self.value(target, depth + 1)
+
+    def _stream(self, stream: PDFStream) -> None:
+        """Hash a stream as its attributes plus its decoded bytes."""
+        if id(stream) in self._seen:
+            self._tag('stream-revisit')
+            return
+        self._seen.add(id(stream))
+        self._tag('stream')
+        self.value(getattr(stream, 'attrs', None))
+        try:
+            data = stream.get_data()
+        except Exception:
+            self._tag('stream-undecodable')
+            return
+        self._chunk(bytes(data))
+
+
+def _page_signature(
+    extractor: PdfExtractor,
+    page_num: int,
+    path: Path,
+    label: str,
+) -> tuple[str, float, float]:
+    """Content signature of one page, without any layout parse.
+
+    Returns ``(signature_hex, width, height)``.  The digest covers the
+    normalised MediaBox/CropBox, ``/Rotate``, every content stream (decoded, in
+    page order) and the page's resource dictionary — including the fonts and
+    images it references, which is what separates "same drawing program" from
+    "same appearance".  ```page.chars`` is never touched and ``extract_page`` is
+    never called, so a page costs a few milliseconds at most.
+
+    A page whose signature cannot be computed gets a per-side marker instead of
+    an exception: two markers never compare equal, which forces the full
+    comparison for that page rather than skipping it.
+    """
+    try:
+        page = extractor._pdf.pages[page_num - 1]  # pdfplumber is 0-indexed
+        page_obj = getattr(page, 'page_obj', None)
+        width = float(getattr(page, 'width', 0) or 0)
+        height = float(getattr(page, 'height', 0) or 0)
+    except Exception as exc:
+        raise DiffError(
+            f'Cannot read page {page_num} of {label} PDF {str(path)!r}: {exc}'
+        ) from exc
+
+    try:
+        attrs = _EXTRACTOR_HELPERS._resolve_pdf_value(getattr(page_obj, 'attrs', None))
+        if not isinstance(attrs, dict):
+            attrs = {}
+
+        hasher = _PageSignatureHasher()
+        hasher._tag('geometry')
+        for name in ('MediaBox', 'CropBox'):
+            hasher._tag(name)
+            hasher.value(_EXTRACTOR_HELPERS._normalize_box(attrs.get(name)))
+        hasher._tag('Rotate')
+        hasher.value(_EXTRACTOR_HELPERS._page_rotation(attrs))
+        hasher._tag('Contents')
+        hasher.value(getattr(page_obj, 'contents', None))
+        hasher._tag('Resources')
+        hasher.value(getattr(page_obj, 'resources', None))
+        signature = hasher.hexdigest()
+    except Exception:
+        # Unprovable page: a marker that can never equal the other side's.
+        signature = f'{_UNHASHED_SIGNATURE_PREFIX}:{label}:{page_num}'
+    finally:
+        _release_page_layout(extractor, page_num)
+
+    return (signature, width, height)
+
+
+def _identical_file_signature(
+    extractor: PdfExtractor,
+    page_num: int,
+    path: Path,
+    label: str,
+) -> tuple[str, float, float]:
+    """Signature for a page of two byte-identical files.
+
+    The bytes cannot differ, so hashing them again would be pure waste: only the
+    page size is read (a page-dictionary lookup, no layout).  Because the same
+    list is reused for both sides, every pair compares equal without hashing.
+    """
+    try:
+        page = extractor._pdf.pages[page_num - 1]
+        return (
+            _IDENTICAL_FILE_SIGNATURE,
+            float(getattr(page, 'width', 0) or 0),
+            float(getattr(page, 'height', 0) or 0),
+        )
+    except Exception as exc:
+        raise DiffError(
+            f'Cannot read page {page_num} of {label} PDF {str(path)!r}: {exc}'
+        ) from exc
+
+
+def _signature_size(signature: tuple[str, float, float]) -> dict[str, float]:
+    """``oldSize``/``newSize`` payload built from a signature."""
+    return {'width': _number(signature[1]), 'height': _number(signature[2])}
+
+
+# --- page alignment keys ----------------------------------------------------
+
+# String literals of a PDF content stream, i.e. the text a page draws.
+#
+# The alignment key below only needs a *coarse* page identity — "is this the same
+# page, possibly edited?" — while the signature answers the exact question.  A
+# page's drawn text is that coarse identity: it survives moving a word, changing
+# a font or a colour, which is exactly what should not stop two versions of a
+# page from being paired.
+def _content_literals(data: bytes) -> list[bytes]:
+    """Text literals of one decoded content stream, in stream order.
+
+    Handles ``( … )`` strings (nesting and ``\\`` escapes) and ``< … >`` hex
+    strings, which is where PDF text operators take their payload.  The result
+    feeds a hash, so a rare mis-split only costs a little alignment accuracy.
+    """
+    literals: list[bytes] = []
+    index, length = 0, len(data)
+    while index < length:
+        char = data[index]
+        if char == 0x28:  # '('
+            depth = 1
+            index += 1
+            start = index
+            while index < length and depth:
+                current = data[index]
+                if current == 0x5C:  # backslash escapes the next byte
+                    index += 2
+                    continue
+                if current == 0x28:
+                    depth += 1
+                elif current == 0x29:
+                    depth -= 1
+                    if depth == 0:
+                        break
+                index += 1
+            literals.append(bytes(data[start:index]))
+            index += 1
+            continue
+        if char == 0x3C and index + 1 < length and data[index + 1] != 0x3C:  # '<'
+            end = data.find(b'>', index + 1)
+            if end < 0:
+                break
+            literals.append(bytes(data[index + 1:end]))
+            index = end + 1
+            continue
+        index += 1
+    return literals
+
+
+def _page_alignment_key(
+    extractor: PdfExtractor,
+    page_num: int,
+    path: Path,
+    label: str,
+) -> tuple:
+    """Coarse page identity used only to align the two documents.
+
+    ``pair_pages`` needs "same page, possibly edited", not "byte-identical
+    page": a page that was reordered *and* had a word moved must still be paired
+    with its counterpart, otherwise it degrades into one removed and one added
+    page.  The key is therefore the page box/rotation plus the multiset of text
+    literals its content streams draw — no layout, no positions, no fonts.
+
+    Returns a hashable tuple; an unreadable page gets a unique key so it can
+    never be paired by accident.
+    """
+    try:
+        page = extractor._pdf.pages[page_num - 1]
+        page_obj = getattr(page, 'page_obj', None)
+        width = round(_number(getattr(page, 'width', 0)), 2)
+        height = round(_number(getattr(page, 'height', 0)), 2)
+        rotation = int(_number(_page_rotation(page))) % 360
+        contents = getattr(page_obj, 'contents', None) or []
+        literals: list[bytes] = []
+        for stream in contents if isinstance(contents, (list, tuple)) else [contents]:
+            literals.extend(_content_literals(bytes(stream.get_data())))
+    except Exception:
+        return ('unaligned', label, page_num)
+
+    # Sorted, so that moving a word on the page keeps the page aligned; the
+    # surrounding tuple keeps pages of a different size apart.
+    skeleton = hashlib.sha256(b'\x1f'.join(sorted(literals))).hexdigest()
+    return (width, height, rotation, skeleton)
+
+
+def _signature_fingerprint(signature: tuple[str, float, float]) -> tuple:
+    """Page fingerprint built from a page signature.
+
+    Same 6-tuple shape :func:`page_fingerprint` produces, but the "text hash"
+    slot carries the whole-page signature: two pages are considered the same
+    exactly when their signatures match, so ``page_match_score`` is 1.0 for an
+    unchanged pair and a constant 0.7 (size/rotation/counts still agree) for a
+    changed one.  ``/Rotate`` is already inside the signature, hence the 0 here.
+    """
+    signature_hash, width, height = signature
+    counts = tuple((type_, 0) for type_ in DIFF_TYPES)
+    return (
+        round(_number(width), 2),
+        round(_number(height), 2),
+        0,
+        signature_hash,
+        counts,
+        _EMPTY_TABLE_HASH,
+    )
 
 
 def _proportion_similarity(left: float, right: float) -> float:
@@ -976,7 +1407,14 @@ def _diff_text_objects(
     options: DiffOptions,
     old_page: int,
     new_page: int,
+    limit: Optional[int] = None,
 ) -> list[dict[str, Any]]:
+    """Text-level changes for one object type.
+
+    ``limit`` is the page's remaining change budget: once ``len(changes)``
+    reaches it, no further change is built, which keeps a pathological page from
+    allocating an unbounded list.  Matching itself still runs to completion.
+    """
     tolerance = options.position_tolerance
     mode = options.text_tolerance
     include_color = type_ == 'char'
@@ -1006,6 +1444,8 @@ def _diff_text_objects(
 
     changes: list[dict[str, Any]] = []
     for old_index, new_index in pairs:
+        if limit is not None and len(changes) >= limit:
+            return changes
         old_obj = old_objects[old_index]
         new_obj = new_objects[new_index]
         details = _text_style_details(old_obj, new_obj, options, include_color)
@@ -1043,6 +1483,8 @@ def _diff_text_objects(
     for index, obj in enumerate(old_objects):
         if index in matched_old:
             continue
+        if limit is not None and len(changes) >= limit:
+            return changes
         changes.append(
             _make_change(
                 'removed',
@@ -1056,6 +1498,8 @@ def _diff_text_objects(
     for index, obj in enumerate(new_objects):
         if index in matched_new:
             continue
+        if limit is not None and len(changes) >= limit:
+            return changes
         changes.append(
             _make_change(
                 'added',
@@ -1076,12 +1520,16 @@ def _diff_structural_objects(
     options: DiffOptions,
     old_page: int,
     new_page: int,
+    limit: Optional[int] = None,
 ) -> list[dict[str, Any]]:
     """Match rect/line/curve/image/table objects by place and by signature.
 
     Positional closeness yields unchanged/modified objects; identical
     signatures (size/angle/point count/content hash/cells) pair the leftovers so
     a relocated object is reported as moved instead of removed+added.
+
+    ``limit`` is the page's remaining change budget; matching still runs to
+    completion, only the change list stops growing.
     """
     tolerance = options.position_tolerance
 
@@ -1108,6 +1556,8 @@ def _diff_structural_objects(
 
     changes: list[dict[str, Any]] = []
     for old_index, new_index in pairs:
+        if limit is not None and len(changes) >= limit:
+            return changes
         old_obj = old_objects[old_index]
         new_obj = new_objects[new_index]
         if type_ == 'table':
@@ -1128,10 +1578,14 @@ def _diff_structural_objects(
     for index, obj in enumerate(old_objects):
         if index in matched_old:
             continue
+        if limit is not None and len(changes) >= limit:
+            return changes
         changes.append(_make_change('removed', type_, old_page, None, old_obj=obj))
     for index, obj in enumerate(new_objects):
         if index in matched_new:
             continue
+        if limit is not None and len(changes) >= limit:
+            return changes
         changes.append(_make_change('added', type_, None, new_page, new_obj=obj))
     return changes
 
@@ -1207,6 +1661,76 @@ def _page_geometry_change(
     )
 
 
+def _diff_pair_changes(
+    old_page: Mapping[str, Any],
+    new_page: Mapping[str, Any],
+    options: DiffOptions,
+    old_index: int,
+    new_index: int,
+    include_page_geometry: bool = True,
+    max_changes: Optional[int] = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """:func:`diff_pages` plus whether the change list was truncated.
+
+    ``max_changes`` is the number of changes this page may contribute; one more
+    than the budget is built so truncation is detectable without a second pass,
+    then the sorted list is sliced.  Matching always runs to completion, so the
+    kept changes are the same ones an uncapped run would report first.
+    """
+    changes: list[dict[str, Any]] = []
+    if include_page_geometry:
+        geometry_change = _page_geometry_change(old_page, new_page, old_index, new_index)
+        if geometry_change is not None:
+            changes.append(geometry_change)
+
+    # Build one change beyond the budget: that is what tells us the page had
+    # more to report than it was allowed to keep.
+    limit = None if max_changes is None else max(max_changes, 0) + 1
+
+    for type_ in DIFF_TYPES:
+        if _is_ignored(type_, options):
+            continue
+        if limit is not None and len(changes) >= limit:
+            break
+        old_objects = _page_objects(old_page, type_)
+        new_objects = _page_objects(new_page, type_)
+        if not old_objects and not new_objects:
+            continue
+        remaining = None if limit is None else max(0, limit - len(changes))
+        if type_ in TEXT_TYPES:
+            changes.extend(
+                _diff_text_objects(
+                    type_,
+                    old_objects,
+                    new_objects,
+                    options,
+                    old_index,
+                    new_index,
+                    limit=remaining,
+                )
+            )
+        else:
+            changes.extend(
+                _diff_structural_objects(
+                    type_,
+                    old_objects,
+                    new_objects,
+                    options,
+                    old_index,
+                    new_index,
+                    limit=remaining,
+                )
+            )
+    # Region masking runs on the matched changes, immediately before sorting:
+    # the object pairing never sees the regions, so removing a region restores
+    # exactly the changes it hid.
+    sorted_changes = _sort_changes(_without_ignored_changes(changes, options))
+    truncated = max_changes is not None and len(sorted_changes) > max_changes
+    if truncated:
+        sorted_changes = sorted_changes[:max_changes]
+    return sorted_changes, truncated
+
+
 def diff_pages(
     old_page: Mapping[str, Any],
     new_page: Mapping[str, Any],
@@ -1214,45 +1738,31 @@ def diff_pages(
     old_index: int = 1,
     new_index: int = 1,
     include_page_geometry: bool = True,
+    max_changes: Optional[int] = None,
 ) -> list[dict[str, Any]]:
     """Diff two extracted pages and return the sorted change list.
 
     Exposed for unit tests and for consumers that already hold page data; the
     page objects are the dicts returned by ``PdfExtractor.extract_page``.
+
+    ``max_changes`` caps the returned list (see :data:`MAX_DIFF_CHANGES`); the
+    truncated flag is exposed through :func:`_diff_pair_changes` for
+    :func:`diff_files`.
     """
     opts = options if options is not None else DiffOptions()
     if not isinstance(opts, DiffOptions):
         raise TypeError('options must be a DiffOptions instance')
 
-    changes: list[dict[str, Any]] = []
-    if include_page_geometry:
-        geometry_change = _page_geometry_change(old_page, new_page, old_index, new_index)
-        if geometry_change is not None:
-            changes.append(geometry_change)
-
-    for type_ in DIFF_TYPES:
-        if _is_ignored(type_, opts):
-            continue
-        old_objects = _page_objects(old_page, type_)
-        new_objects = _page_objects(new_page, type_)
-        if not old_objects and not new_objects:
-            continue
-        if type_ in TEXT_TYPES:
-            changes.extend(
-                _diff_text_objects(
-                    type_, old_objects, new_objects, opts, old_index, new_index
-                )
-            )
-        else:
-            changes.extend(
-                _diff_structural_objects(
-                    type_, old_objects, new_objects, opts, old_index, new_index
-                )
-            )
-    # Region masking runs on the matched changes, immediately before sorting:
-    # the object pairing never sees the regions, so removing a region restores
-    # exactly the changes it hid.
-    return _sort_changes(_without_ignored_changes(changes, opts))
+    changes, _truncated = _diff_pair_changes(
+        old_page,
+        new_page,
+        opts,
+        old_index,
+        new_index,
+        include_page_geometry=include_page_geometry,
+        max_changes=max_changes,
+    )
+    return changes
 
 
 def _one_sided_changes(
@@ -1260,13 +1770,23 @@ def _one_sided_changes(
     page_num: int,
     kind: str,
     options: DiffOptions,
-) -> list[dict[str, Any]]:
-    """Every object of an added/removed page becomes one added/removed change."""
+    max_changes: Optional[int] = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Every object of an added/removed page becomes one added/removed change.
+
+    ``max_changes`` is the run's remaining change budget, so a large inserted
+    page cannot push the result past :data:`MAX_DIFF_CHANGES` either.  Returns
+    ``(changes, truncated)`` like :func:`_diff_pair_changes`.
+    """
     changes: list[dict[str, Any]] = []
+    # See _diff_pair_changes: building one extra change makes truncation visible.
+    limit = None if max_changes is None else max(max_changes, 0) + 1
     for type_ in DIFF_TYPES:
         if _is_ignored(type_, options):
             continue
         for obj in _page_objects(page, type_):
+            if limit is not None and len(changes) >= limit:
+                break
             if kind == 'added':
                 changes.append(
                     _make_change(
@@ -1289,9 +1809,15 @@ def _one_sided_changes(
                         text_old=_object_text(obj),
                     )
                 )
+        if limit is not None and len(changes) >= limit:
+            break
     # A one-sided page only has one side's changes, so only that side's regions
     # can mask them (the other page number is null on every change).
-    return _sort_changes(_without_ignored_changes(changes, options))
+    sorted_changes = _sort_changes(_without_ignored_changes(changes, options))
+    truncated = max_changes is not None and len(sorted_changes) > max_changes
+    if truncated:
+        sorted_changes = sorted_changes[:max_changes]
+    return sorted_changes, truncated
 
 
 # --- file level API ---------------------------------------------------------
@@ -1374,9 +1900,28 @@ def _release_page_layout(extractor: PdfExtractor, page_num: int) -> None:
         pass
 
 
-def _extract_page(extractor: PdfExtractor, page_num: int, path: Path, label: str) -> dict:
+def _diff_include_types(options: DiffOptions) -> set[str]:
+    """Object types the diff pass must extract for these options.
+
+    Everything except the ignored types: ``ignore_images`` is the option-shaped
+    equivalent of adding ``"image"`` to ``ignore_types``, so it is folded in
+    here and both surfaces reach the extractor as one include set.
+    """
+    included = set(DIFF_TYPES) - set(options.ignore_types)
+    if options.ignore_images:
+        included.discard('image')
+    return included
+
+
+def _extract_page(
+    extractor: PdfExtractor,
+    page_num: int,
+    path: Path,
+    label: str,
+    include_types: Optional[Iterable[str]] = None,
+) -> dict:
     try:
-        page_data = extractor.extract_page(page_num)
+        page_data = extractor.extract_page(page_num, include_types=include_types)
     except Exception as exc:
         raise DiffError(
             f'Cannot extract page {page_num} of {label} PDF {str(path)!r}: {exc}'
@@ -1410,6 +1955,24 @@ def _emit_progress(
         progress(payload)
 
 
+def _page_still_differs(
+    old_fingerprints: Sequence[Any],
+    new_fingerprints: Sequence[Any],
+    old_index: Optional[int],
+    new_index: Optional[int],
+) -> bool:
+    """True when an uncompared page probably holds changes.
+
+    Used only after the change budget is spent: a one-sided page always has
+    objects to report, and a paired page whose fingerprints differ is not
+    identical.  Fingerprints are signature-derived, so equal fingerprints mean
+    equal page content.
+    """
+    if old_index is None or new_index is None:
+        return True
+    return old_fingerprints[old_index - 1] != new_fingerprints[new_index - 1]
+
+
 def diff_files(
     old_path: str | Path,
     new_path: str | Path,
@@ -1418,15 +1981,31 @@ def diff_files(
 ) -> dict[str, Any]:
     """Diff two PDF files and return a JSON-serialisable ``DiffResult``.
 
-    Pages are read one at a time: a fingerprint pass pairs the pages, the diff
-    pass extracts only the two pages of the current pair.  Both extractors are
-    closed whether the diff succeeds or fails.
+    Two passes, both page-at-a-time so memory stays flat:
+
+    1. a *signature* pass (:func:`_page_signature`) hashes each page's geometry,
+       content streams and resources straight from pdfminer objects — no layout,
+       no extraction — and reports the page size with it;
+    2. a *diff* pass that extracts a page pair **only when their signatures
+       differ**.  An unchanged pair is reported from the signature alone
+       (``status: "unchanged"``, ``match.score: 1.0``), so a page that did not
+       change never pays for pdfplumber layout or object extraction.
+
+    Byte-identical files short-circuit: the signature pass runs once and every
+    page is reported unchanged.
+
+    Both extractors are closed whether the diff succeeds or fails.
 
     ``progress`` (optional) is called with a deterministic payload as the work
     advances: ``start`` (page counts), one ``fingerprints`` report per page and
     side, one ``pages`` report per paired page and a final ``done`` summary.
     Transport layers use it to keep a long diff from looking like a hang; the
     returned dict is identical whether or not a callback is passed.
+
+    At most :data:`MAX_DIFF_CHANGES` changes are kept across the whole run; once
+    the budget is spent the remaining pages are still reported (with their
+    sizes and status), but they contribute no changes and the result carries
+    ``truncated: true`` plus ``summary.changesTruncated: true``.
     """
     opts = options if options is not None else DiffOptions()
     if not isinstance(opts, DiffOptions):
@@ -1452,12 +2031,25 @@ def diff_files(
             {'stage': 'start', 'oldPages': old_page_count, 'newPages': new_page_count},
         )
 
-        old_fingerprints = []
+        # Byte-identical files cannot have differing pages: hash one side and
+        # reuse the signatures (and sizes) for the other.
+        identical_files = (
+            old_sha256 == new_sha256 and old_page_count == new_page_count
+        )
+
+        old_signatures: list[tuple[str, float, float]] = []
+        old_alignment: list[Any] = []
         for page_num in range(1, old_page_count + 1):
-            old_fingerprints.append(
-                page_fingerprint(
-                    _extract_page(old_extractor, page_num, old_file, 'old')
-                )
+            old_signatures.append(
+                _page_signature(old_extractor, page_num, old_file, 'old')
+                if not identical_files
+                else _identical_file_signature(old_extractor, page_num, old_file, 'old')
+            )
+            # Identical bytes need no alignment keys: the pairing is the ordinal.
+            old_alignment.append(
+                None
+                if identical_files
+                else _page_alignment_key(old_extractor, page_num, old_file, 'old')
             )
             _emit_progress(
                 progress,
@@ -1469,25 +2061,61 @@ def diff_files(
                 },
             )
 
-        new_fingerprints = []
-        for page_num in range(1, new_page_count + 1):
-            new_fingerprints.append(
-                page_fingerprint(
-                    _extract_page(new_extractor, page_num, new_file, 'new')
+        if identical_files:
+            new_signatures = old_signatures
+            new_alignment = old_alignment
+            for page_num in range(1, new_page_count + 1):
+                _emit_progress(
+                    progress,
+                    {
+                        'stage': 'fingerprints',
+                        'side': 'new',
+                        'done': page_num,
+                        'total': new_page_count,
+                    },
                 )
-            )
-            _emit_progress(
-                progress,
-                {
-                    'stage': 'fingerprints',
-                    'side': 'new',
-                    'done': page_num,
-                    'total': new_page_count,
-                },
-            )
+        else:
+            new_signatures = []
+            new_alignment = []
+            for page_num in range(1, new_page_count + 1):
+                new_signatures.append(
+                    _page_signature(new_extractor, page_num, new_file, 'new')
+                )
+                new_alignment.append(
+                    _page_alignment_key(new_extractor, page_num, new_file, 'new')
+                )
+                _emit_progress(
+                    progress,
+                    {
+                        'stage': 'fingerprints',
+                        'side': 'new',
+                        'done': page_num,
+                        'total': new_page_count,
+                    },
+                )
 
-        pairs = pair_pages(old_fingerprints, new_fingerprints)
+        old_fingerprints = [_signature_fingerprint(sig) for sig in old_signatures]
+        new_fingerprints = (
+            old_fingerprints
+            if identical_files
+            else [_signature_fingerprint(sig) for sig in new_signatures]
+        )
+
+        if identical_files:
+            # Same bytes, same order: the pairing is known without the matcher.
+            pairs: list[tuple[Optional[int], Optional[int]]] = [
+                (page_num, page_num) for page_num in range(1, old_page_count + 1)
+            ]
+        else:
+            # Alignment runs on the coarse keys, so a page that moved (or moved
+            # and changed) is still paired; the signature then decides whether
+            # the pair is actually identical.
+            pairs = pair_pages(old_alignment, new_alignment)
         _emit_progress(progress, {'stage': 'pages', 'done': 0, 'total': len(pairs)})
+
+        include_types = _diff_include_types(opts)
+        budget = MAX_DIFF_CHANGES
+        truncated = False
 
         pages: list[dict[str, Any]] = []
         for index, (old_index, new_index) in enumerate(pairs):
@@ -1496,9 +2124,24 @@ def diff_files(
                     progress, {'stage': 'pages', 'done': index + 1, 'total': len(pairs)}
                 )
                 continue
+            # Once the change budget is spent, the remaining pages only need
+            # their geometry: sizes and status stay correct without building
+            # object lists that could never be reported.
+            page_types = include_types if budget > 0 else frozenset()
+            # The fast path: equal signatures mean equal pages, so there is
+            # nothing to extract and nothing to compare.
+            unchanged_pair = (
+                old_index is not None
+                and new_index is not None
+                and old_signatures[old_index - 1][0] == new_signatures[new_index - 1][0]
+            )
             if old_index is None:
-                page = _extract_page(new_extractor, new_index, new_file, 'new')
-                changes = _one_sided_changes(page, new_index, 'added', opts)
+                page = _extract_page(
+                    new_extractor, new_index, new_file, 'new', page_types
+                )
+                changes, page_truncated = _one_sided_changes(
+                    page, new_index, 'added', opts, budget
+                )
                 pages.append(
                     {
                         'oldIndex': None,
@@ -1514,8 +2157,12 @@ def diff_files(
                     }
                 )
             elif new_index is None:
-                page = _extract_page(old_extractor, old_index, old_file, 'old')
-                changes = _one_sided_changes(page, old_index, 'removed', opts)
+                page = _extract_page(
+                    old_extractor, old_index, old_file, 'old', page_types
+                )
+                changes, page_truncated = _one_sided_changes(
+                    page, old_index, 'removed', opts, budget
+                )
                 pages.append(
                     {
                         'oldIndex': old_index,
@@ -1530,10 +2177,32 @@ def diff_files(
                         'changes': changes,
                     }
                 )
+            elif unchanged_pair:
+                changes, page_truncated = [], False
+                pages.append(
+                    {
+                        'oldIndex': old_index,
+                        'newIndex': new_index,
+                        'status': 'unchanged',
+                        'oldSize': _signature_size(old_signatures[old_index - 1]),
+                        'newSize': _signature_size(new_signatures[new_index - 1]),
+                        'match': {
+                            'score': 1.0,
+                            'reordered': old_index != new_index,
+                        },
+                        'changes': [],
+                    }
+                )
             else:
-                old_page = _extract_page(old_extractor, old_index, old_file, 'old')
-                new_page = _extract_page(new_extractor, new_index, new_file, 'new')
-                changes = diff_pages(old_page, new_page, opts, old_index, new_index)
+                old_page = _extract_page(
+                    old_extractor, old_index, old_file, 'old', page_types
+                )
+                new_page = _extract_page(
+                    new_extractor, new_index, new_file, 'new', page_types
+                )
+                changes, page_truncated = _diff_pair_changes(
+                    old_page, new_page, opts, old_index, new_index, max_changes=budget
+                )
                 pages.append(
                     {
                         'oldIndex': old_index,
@@ -1558,6 +2227,18 @@ def diff_files(
                     }
                 )
 
+            budget = max(0, budget - len(changes))
+            if page_truncated:
+                truncated = True
+            elif not unchanged_pair and not page_types and _page_still_differs(
+                old_fingerprints, new_fingerprints, old_index, new_index
+            ):
+                # The budget was already spent when this page came up, so it was
+                # not compared.  Its fingerprint still says it differs (or it is
+                # one-sided), which means the report stops before real changes:
+                # flag the truncation instead of silently calling it unchanged.
+                truncated = True
+
             _emit_progress(
                 progress, {'stage': 'pages', 'done': index + 1, 'total': len(pairs)}
             )
@@ -1574,6 +2255,9 @@ def diff_files(
             'objectsRemoved': sum(1 for change in all_changes if change['kind'] == 'removed'),
             'objectsMoved': sum(1 for change in all_changes if change['kind'] == 'moved'),
             'objectsModified': sum(1 for change in all_changes if change['kind'] == 'modified'),
+            # True when the change lists above stop at MAX_DIFF_CHANGES, i.e.
+            # the report is complete for the pages but not for the documents.
+            'changesTruncated': truncated,
         }
 
         _emit_progress(
@@ -1593,6 +2277,9 @@ def diff_files(
             'old': {'pages': old_page_count, 'sha256': old_sha256},
             'new': {'pages': new_page_count, 'sha256': new_sha256},
             'summary': summary,
+            # Mirrors summary.changesTruncated; kept top level so a consumer that
+            # only looks at counts can still tell the run hit the safety cap.
+            'truncated': truncated,
             'pages': pages,
         }
     finally:
@@ -1604,6 +2291,7 @@ __all__ = [
     'DiffError',
     'DiffOptions',
     'DIFF_TYPES',
+    'MAX_DIFF_CHANGES',
     'SCHEMA_VERSION',
     'TOOL_NAME',
     'bbox_intersects',
