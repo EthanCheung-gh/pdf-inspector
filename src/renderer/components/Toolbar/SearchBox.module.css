@@ -1,5 +1,8 @@
 .searchBox {
   display: flex;
+  /* Positioning context for the results popover, which must hang below the
+   * toolbar without taking part in the single-row flex layout. */
+  position: relative;
   /*
    * Shrinkable: the toolbar is a single 1280px row with far more controls than
    * fit once search opens, so the search group has to give space back instead
@@ -82,4 +85,15 @@
   background: var(--pi-bg-control-disabled);
   border-color: var(--pi-border-disabled);
   cursor: not-allowed;
+}
+
+/* The Results button stays lit while its popover is open. */
+.buttonActive {
+  color: var(--pi-accent-text);
+  background: var(--pi-accent-soft);
+  border-color: var(--pi-accent-soft-border-strong);
+}
+
+.buttonActive:hover:not(:disabled) {
+  background: var(--pi-accent-soft);
 }

@@ -8,6 +8,7 @@ vi.mock('../usePageNavigation', () => ({
 
 import { usePdfSearch } from '../usePdfSearch';
 import { usePdfStore } from '../../store/pdf-store';
+import { DEFAULT_SEARCH_OPTIONS, MAX_SEARCH_MATCHES } from '../../services/pdf-search';
 
 type Progress = { done: number; total: number } | null;
 
@@ -148,7 +149,12 @@ describe('usePdfSearch index batching', () => {
     expect(usePdfStore.getState().searchIndexProgress).toBeNull();
     expect(usePdfStore.getState().searchMatches).toHaveLength(25);
     // "page 1 alpha": the query starts after "page 1 ".
-    expect(usePdfStore.getState().searchMatches[0]).toEqual({ page: 1, begin: 7, length: 5 });
+    expect(usePdfStore.getState().searchMatches[0]).toEqual({
+      page: 1,
+      begin: 7,
+      length: 5,
+      preview: 'page 1 alpha',
+    });
   });
 
   it('reuses the cached index for later queries on the same document', async () => {
@@ -172,7 +178,9 @@ describe('usePdfSearch index batching', () => {
     // No second index pass and no progress row for a cached index.
     expect(doc.getPage).toHaveBeenCalledTimes(25);
     expect(seen).toEqual([]);
-    expect(usePdfStore.getState().searchMatches).toEqual([{ page: 25, begin: 0, length: 13 }]);
+    expect(usePdfStore.getState().searchMatches).toEqual([
+      { page: 25, begin: 0, length: 13, preview: 'page 25 alpha' },
+    ]);
   });
 
   it('closing the search cancels a running build instead of finishing it', async () => {
@@ -297,7 +305,12 @@ describe('usePdfSearch index batching', () => {
     expect(state.searchQuery).toBe('beta');
     expect(state.searchMatches).toHaveLength(6);
     // "beta" starts 13 characters into "page N alpha beta" on page 1.
-    expect(state.searchMatches[0]).toEqual({ page: 1, begin: 13, length: 4 });
+    expect(state.searchMatches[0]).toEqual({
+      page: 1,
+      begin: 13,
+      length: 4,
+      preview: 'page 1 alpha beta',
+    });
   });
 
   it('keeps indexing when a single page cannot be read', async () => {
@@ -335,5 +348,257 @@ describe('usePdfSearch index batching', () => {
 
     expect(usePdfStore.getState().searchIndexProgress).toBeNull();
     expect(usePdfStore.getState().searchMatches).toEqual([]);
+  });
+});
+
+describe('usePdfSearch options, results and navigation', () => {
+  beforeEach(() => {
+    usePdfStore.setState({
+      filePath: '/tmp/options.pdf',
+      metadata,
+      pageCount: 4,
+      currentPage: 1,
+      pageData: null,
+      allObjects: [],
+      pdfDocRef: null,
+      searchQuery: '',
+      searchMatches: [],
+      currentMatchIndex: -1,
+      searchOpen: true,
+      searchIndexProgress: null,
+      searchOptions: { ...DEFAULT_SEARCH_OPTIONS },
+      searchResultsOpen: false,
+      searchTruncated: false,
+      searchError: null,
+    });
+  });
+
+  /** Matches of the given page texts, with the index build counted by `doc`. */
+  function setupDoc(pageTexts: string[]) {
+    const doc = instantDoc(pageTexts.map((text) => [text]));
+    usePdfStore.setState({ pdfDocRef: doc as never, pageCount: pageTexts.length });
+    const { result } = renderHook(() => usePdfSearch());
+    return { doc, result };
+  }
+
+  it('re-runs the query on an option change without rebuilding the index', async () => {
+    const { doc, result } = setupDoc(['Hello hello', 'nothing', 'HELLO hello']);
+
+    await act(async () => {
+      await result.current.setQuery('hello');
+    });
+    expect(usePdfStore.getState().searchMatches).toHaveLength(4);
+    expect(doc.getPage).toHaveBeenCalledTimes(3);
+
+    await act(async () => {
+      await result.current.setOptions({ caseSensitive: true });
+    });
+
+    const state = usePdfStore.getState();
+    expect(doc.getPage).toHaveBeenCalledTimes(3); // cached index reused
+    expect(state.searchIndexProgress).toBeNull();
+    expect(state.searchOptions.caseSensitive).toBe(true);
+    expect(state.searchMatches.map(({ page, begin }) => ({ page, begin }))).toEqual([
+      { page: 1, begin: 6 },
+      { page: 3, begin: 6 },
+    ]);
+  });
+
+  it('applies whole-word and regex option changes to the current query', async () => {
+    const { result } = setupDoc(['cover over', 'a1 b22']);
+
+    await act(async () => {
+      await result.current.setQuery('over');
+    });
+    // Literal mode: "cover" contains "over" too.
+    expect(usePdfStore.getState().searchMatches).toHaveLength(2);
+
+    await act(async () => {
+      await result.current.setOptions({ wholeWord: true });
+    });
+    expect(usePdfStore.getState().searchMatches).toHaveLength(1);
+
+    await act(async () => {
+      await result.current.setQuery('\\d+');
+    });
+    // Still literal: no page contains a literal backslash-digit sequence.
+    expect(usePdfStore.getState().searchMatches).toEqual([]);
+
+    await act(async () => {
+      await result.current.setOptions({ regex: true, wholeWord: false });
+    });
+    const state = usePdfStore.getState();
+    expect(state.searchError).toBeNull();
+    expect(state.searchMatches.map(({ page, begin, length }) => ({ page, begin, length }))).toEqual([
+      { page: 2, begin: 1, length: 1 },
+      { page: 2, begin: 4, length: 2 },
+    ]);
+  });
+
+  it('reports an invalid regex inline instead of throwing or navigating', async () => {
+    const { result } = setupDoc(['anything here']);
+
+    await act(async () => {
+      await result.current.setOptions({ regex: true });
+    });
+    await act(async () => {
+      await result.current.setQuery('(');
+    });
+
+    const state = usePdfStore.getState();
+    expect(state.searchError).toMatch(/^Invalid regular expression/);
+    expect(state.searchMatches).toEqual([]);
+    expect(state.currentMatchIndex).toBe(-1);
+    expect(state.searchResultsOpen).toBe(true);
+    expect(state.searchTruncated).toBe(false);
+  });
+
+  it('clears the error when the next query compiles', async () => {
+    const { result } = setupDoc(['anything here']);
+    await act(async () => {
+      await result.current.setOptions({ regex: true });
+    });
+    await act(async () => {
+      await result.current.setQuery('(');
+    });
+    await act(async () => {
+      await result.current.setQuery('any');
+    });
+
+    const state = usePdfStore.getState();
+    expect(state.searchError).toBeNull();
+    expect(state.searchMatches).toHaveLength(1);
+  });
+
+  it('auto-opens the results panel for a non-empty query with hits', async () => {
+    const { result } = setupDoc(['alpha', 'beta']);
+
+    await act(async () => {
+      await result.current.setQuery('alpha');
+    });
+    expect(usePdfStore.getState().searchResultsOpen).toBe(true);
+
+    await act(async () => {
+      await result.current.setQuery('');
+    });
+    const state = usePdfStore.getState();
+    expect(state.searchResultsOpen).toBe(false);
+    expect(state.searchMatches).toEqual([]);
+  });
+
+  it('leaves a closed panel closed when nothing matches', async () => {
+    const { result } = setupDoc(['alpha']);
+
+    await act(async () => {
+      await result.current.setQuery('zzz');
+    });
+
+    const state = usePdfStore.getState();
+    expect(state.searchMatches).toEqual([]);
+    expect(state.searchResultsOpen).toBe(false);
+    expect(state.searchError).toBeNull();
+  });
+
+  it('goToMatch moves the current hit and wraps out-of-range indexes', async () => {
+    const { result } = setupDoc(['alpha', 'alpha', 'alpha', 'alpha']);
+
+    await act(async () => {
+      await result.current.setQuery('alpha');
+    });
+    expect(usePdfStore.getState().currentMatchIndex).toBe(0);
+
+    act(() => result.current.goToMatch(2));
+    expect(usePdfStore.getState().currentMatchIndex).toBe(2);
+
+    act(() => result.current.goToMatch(-1));
+    expect(usePdfStore.getState().currentMatchIndex).toBe(3);
+
+    act(() => result.current.goToMatch(9));
+    expect(usePdfStore.getState().currentMatchIndex).toBe(1);
+  });
+
+  it('publishes truncation metadata for a capped result set', async () => {
+    const { result } = setupDoc(['a'.repeat(MAX_SEARCH_MATCHES + 100)]);
+
+    await act(async () => {
+      await result.current.setQuery('a');
+    });
+
+    const state = usePdfStore.getState();
+    expect(state.searchMatches).toHaveLength(MAX_SEARCH_MATCHES);
+    expect(state.searchTruncated).toBe(true);
+    expect(state.searchResultsOpen).toBe(true);
+  });
+
+  it('refresh re-runs the current query from the cached index', async () => {
+    const { doc, result } = setupDoc(['alpha alpha']);
+
+    await act(async () => {
+      await result.current.setQuery('alpha');
+    });
+    expect(usePdfStore.getState().searchMatches).toHaveLength(2);
+
+    act(() => {
+      usePdfStore.getState().setSearchMatches([]);
+    });
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(doc.getPage).toHaveBeenCalledTimes(1);
+    expect(usePdfStore.getState().searchMatches).toHaveLength(2);
+  });
+
+  it('a stale run for the same query cannot overwrite newer options', async () => {
+    const { doc, release, releaseAll } = gatedDoc([['Hello hello'], ['Hello hello']]);
+    usePdfStore.setState({ pdfDocRef: doc as never, pageCount: 2 });
+    const { result } = renderHook(() => usePdfSearch());
+
+    let first: Promise<void> = Promise.resolve();
+    let second: Promise<void> = Promise.resolve();
+    act(() => {
+      first = result.current.setQuery('hello');
+    });
+    await release(1);
+    // Same query, different options: this run is the one that must win.
+    act(() => {
+      second = result.current.setOptions({ caseSensitive: true });
+    });
+
+    await releaseAll();
+    await act(async () => {
+      await Promise.all([first, second]);
+    });
+
+    const state = usePdfStore.getState();
+    expect(state.searchOptions.caseSensitive).toBe(true);
+    // One build only, and the case-sensitive result of the newer run.
+    expect(doc.getPage).toHaveBeenCalledTimes(2);
+    expect(state.searchMatches.map(({ page, begin }) => ({ page, begin }))).toEqual([
+      { page: 1, begin: 6 },
+      { page: 2, begin: 6 },
+    ]);
+  });
+
+  it('keeps options across a document change but clears results', async () => {
+    const { result } = setupDoc(['alpha alpha']);
+    await act(async () => {
+      await result.current.setOptions({ wholeWord: true, caseSensitive: true });
+    });
+    await act(async () => {
+      await result.current.setQuery('alpha');
+    });
+    expect(usePdfStore.getState().searchMatches).toHaveLength(2);
+
+    act(() => {
+      usePdfStore.getState().setFile('/tmp/next.pdf', { ...metadata, pages: 2 });
+    });
+
+    const state = usePdfStore.getState();
+    expect(state.searchOptions).toEqual({ caseSensitive: true, wholeWord: true, regex: false });
+    expect(state.searchMatches).toEqual([]);
+    expect(state.searchResultsOpen).toBe(false);
+    expect(state.searchTruncated).toBe(false);
+    expect(state.searchError).toBeNull();
   });
 });

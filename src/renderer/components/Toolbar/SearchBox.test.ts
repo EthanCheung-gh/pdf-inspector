@@ -7,8 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const search = vi.hoisted(() => ({
   setQuery: vi.fn(async () => {}),
+  setOptions: vi.fn(async () => {}),
   next: vi.fn(),
   prev: vi.fn(),
+  goToMatch: vi.fn(),
+  refresh: vi.fn(async () => {}),
   clear: vi.fn(),
 }));
 
@@ -18,6 +21,7 @@ vi.mock('../../hooks/usePdfSearch', () => ({
 
 import { SearchBox } from './SearchBox';
 import { usePdfStore } from '../../store/pdf-store';
+import { DEFAULT_SEARCH_OPTIONS } from '../../services/pdf-search';
 
 const renderSearchBox = () => render(React.createElement(SearchBox));
 
@@ -47,6 +51,10 @@ describe('SearchBox', () => {
       searchMatches: [],
       currentMatchIndex: -1,
       searchIndexProgress: null,
+      searchResultsOpen: false,
+      searchTruncated: false,
+      searchError: null,
+      searchOptions: { ...DEFAULT_SEARCH_OPTIONS },
     });
   });
 
@@ -181,5 +189,158 @@ describe('SearchBox', () => {
     // Compact, fixed-size count slot and buttons: they must never shrink.
     expect(cssRule('.count')).toContain('flex: 0 0 auto');
     expect(cssRule('.button')).toContain('flex: 0 0 auto');
+  });
+
+  it('positions the results popover against the search box', () => {
+    // The popover hangs below the toolbar without widening the flex row.
+    expect(cssRule('.searchBox')).toContain('position: relative');
+  });
+});
+
+describe('SearchBox results panel', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    usePdfStore.setState({
+      pageCount: 120,
+      searchOpen: true,
+      searchQuery: 'hello',
+      searchMatches: [
+        { page: 1, begin: 0, length: 5, preview: 'Hello World' },
+        { page: 3, begin: 6, length: 5, preview: 'say hello again' },
+      ],
+      currentMatchIndex: 0,
+      searchIndexProgress: null,
+      searchResultsOpen: false,
+      searchTruncated: false,
+      searchError: null,
+      searchOptions: { ...DEFAULT_SEARCH_OPTIONS },
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  const resultsButton = () => screen.getByRole('button', { name: 'Search results' });
+  const panel = () => screen.queryByRole('dialog', { name: 'Search results' });
+
+  it('keeps the Results button disabled until there is a query', () => {
+    usePdfStore.setState({ searchQuery: '', searchMatches: [], currentMatchIndex: -1 });
+    renderSearchBox();
+
+    expect(resultsButton()).toHaveProperty('disabled', true);
+    expect(resultsButton().getAttribute('aria-expanded')).toBe('false');
+    expect(panel()).toBeNull();
+  });
+
+  it('opens and closes the results panel from the Results button', () => {
+    renderSearchBox();
+
+    expect(resultsButton()).toHaveProperty('disabled', false);
+    expect(resultsButton().getAttribute('aria-expanded')).toBe('false');
+    expect(panel()).toBeNull();
+
+    fireEvent.click(resultsButton());
+
+    expect(usePdfStore.getState().searchResultsOpen).toBe(true);
+    expect(resultsButton().getAttribute('aria-expanded')).toBe('true');
+    // aria-controls only points at an element that exists.
+    expect(resultsButton().getAttribute('aria-controls')).toBe('search-results-panel');
+    expect(panel()).toBeTruthy();
+    expect(screen.getByRole('button', { name: /p\.1/ })).toBeTruthy();
+
+    fireEvent.click(resultsButton());
+
+    expect(usePdfStore.getState().searchResultsOpen).toBe(false);
+    expect(panel()).toBeNull();
+    expect(resultsButton().getAttribute('aria-controls')).toBeNull();
+    // The search box stays open; only the popover was dismissed.
+    expect(usePdfStore.getState().searchOpen).toBe(true);
+  });
+
+  it('renders the panel only while the search box is open', () => {
+    renderSearchBox();
+    fireEvent.click(resultsButton());
+    expect(panel()).toBeTruthy();
+
+    act(() => {
+      usePdfStore.setState({ searchOpen: false });
+    });
+
+    expect(panel()).toBeNull();
+    expect(screen.getByRole('button', { name: 'Search' })).toBeTruthy();
+  });
+
+  it('closes the results panel on the first Escape and the search on the second', () => {
+    renderSearchBox();
+    fireEvent.click(resultsButton());
+    expect(panel()).toBeTruthy();
+
+    const input = screen.getByLabelText('Search document');
+
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(usePdfStore.getState().searchResultsOpen).toBe(false);
+    expect(usePdfStore.getState().searchOpen).toBe(true);
+    expect(search.clear).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(search.clear).toHaveBeenCalledTimes(1);
+    expect(usePdfStore.getState().searchOpen).toBe(false);
+  });
+
+  it('keeps the app-level Escape handler out of the search box', () => {
+    renderSearchBox();
+    const appEscape = vi.fn();
+    window.addEventListener('keydown', appEscape);
+
+    try {
+      fireEvent.keyDown(screen.getByLabelText('Search document'), { key: 'Escape' });
+    } finally {
+      window.removeEventListener('keydown', appEscape);
+    }
+
+    // Closing search must not also clear the document selection behind it.
+    expect(appEscape).not.toHaveBeenCalled();
+  });
+
+  it('closes the results panel together with the search box', () => {
+    renderSearchBox();
+    fireEvent.click(resultsButton());
+    expect(usePdfStore.getState().searchResultsOpen).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close search' }));
+
+    // clear() closes the popover through the store, so nothing is left behind.
+    expect(usePdfStore.getState().searchResultsOpen).toBe(false);
+    expect(panel()).toBeNull();
+  });
+
+  it('routes row picks to goToMatch and option toggles to setOptions', () => {
+    renderSearchBox();
+    fireEvent.click(resultsButton());
+
+    fireEvent.click(screen.getByRole('button', { name: /p\.3/ }));
+    expect(search.goToMatch).toHaveBeenCalledWith(1);
+    // Picking a hit closes the list but leaves the search box open.
+    expect(usePdfStore.getState().searchResultsOpen).toBe(false);
+    expect(usePdfStore.getState().searchOpen).toBe(true);
+
+    fireEvent.click(resultsButton());
+    fireEvent.click(screen.getByRole('button', { name: 'Whole word' }));
+    expect(search.setOptions).toHaveBeenCalledWith({ wholeWord: true });
+    expect(usePdfStore.getState().searchResultsOpen).toBe(true);
+  });
+
+  it('leaves Enter/Shift+Enter navigation untouched while results are open', () => {
+    renderSearchBox();
+    fireEvent.click(resultsButton());
+
+    const input = screen.getByLabelText('Search document');
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(search.next).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
+    expect(search.prev).toHaveBeenCalledTimes(1);
+    expect(usePdfStore.getState().searchResultsOpen).toBe(true);
   });
 });

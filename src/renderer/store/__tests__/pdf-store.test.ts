@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { usePdfStore } from '../pdf-store';
 import { filterByRegion } from '../../services/object-filter';
+import { DEFAULT_SEARCH_OPTIONS } from '../../services/pdf-search';
 import type { PdfChar, PdfTable, PageData } from '../../types/pdf-objects';
 
 const metadata = {
@@ -43,6 +44,15 @@ describe('pdf-store', () => {
       textSelectionMode: false,
       fontStats: null,
       fontProgress: null,
+      searchQuery: '',
+      searchMatches: [],
+      currentMatchIndex: -1,
+      searchOpen: false,
+      searchIndexProgress: null,
+      searchOptions: { ...DEFAULT_SEARCH_OPTIONS },
+      searchResultsOpen: false,
+      searchTruncated: false,
+      searchError: null,
     });
   });
 
@@ -213,6 +223,114 @@ describe('search state', () => {
     expect(after.searchMatches).toEqual([]);
     expect(after.currentMatchIndex).toBe(-1);
     expect(after.exportProgress).toBeNull();
+  });
+});
+
+describe('search options and result metadata', () => {
+  const newFile = () =>
+    usePdfStore.getState().setFile('/tmp/a.pdf', {
+      pages: 3, version: '1.7', encrypted: false, page_w: 612, page_h: 792,
+      title: '', author: '', producer: '', fonts: [],
+    });
+
+  it('defaults to the documented search options and hidden results', () => {
+    const state = usePdfStore.getInitialState();
+    expect(state.searchOptions).toEqual({ caseSensitive: false, wholeWord: false, regex: false });
+    expect(state.searchResultsOpen).toBe(false);
+    expect(state.searchTruncated).toBe(false);
+    expect(state.searchError).toBeNull();
+  });
+
+  it('setSearchOptions merges partial changes without dropping the others', () => {
+    usePdfStore.getState().setSearchOptions({ caseSensitive: true });
+    expect(usePdfStore.getState().searchOptions).toEqual({
+      caseSensitive: true, wholeWord: false, regex: false,
+    });
+
+    usePdfStore.getState().setSearchOptions({ wholeWord: true, regex: true });
+    expect(usePdfStore.getState().searchOptions).toEqual({
+      caseSensitive: true, wholeWord: true, regex: true,
+    });
+
+    usePdfStore.getState().setSearchOptions({ caseSensitive: false });
+    expect(usePdfStore.getState().searchOptions).toEqual({
+      caseSensitive: false, wholeWord: true, regex: true,
+    });
+  });
+
+  it('setSearchResultsOpen toggles the panel flag', () => {
+    usePdfStore.getState().setSearchResultsOpen(true);
+    expect(usePdfStore.getState().searchResultsOpen).toBe(true);
+    usePdfStore.getState().setSearchResultsOpen(false);
+    expect(usePdfStore.getState().searchResultsOpen).toBe(false);
+  });
+
+  it('setSearchResultMeta stores truncation and error together', () => {
+    usePdfStore.getState().setSearchResultMeta(true, 'Invalid regular expression: (');
+    const state = usePdfStore.getState();
+    expect(state.searchTruncated).toBe(true);
+    expect(state.searchError).toBe('Invalid regular expression: (');
+
+    usePdfStore.getState().setSearchResultMeta(false, null);
+    expect(usePdfStore.getState().searchTruncated).toBe(false);
+    expect(usePdfStore.getState().searchError).toBeNull();
+  });
+
+  it('clearSearch drops results, error and panel but keeps the options', () => {
+    const store = usePdfStore.getState();
+    store.setSearchOptions({ wholeWord: true });
+    store.setSearchQuery('needle');
+    store.setSearchMatches([{ page: 1, begin: 0, length: 6, preview: 'needle' }]);
+    store.setCurrentMatchIndex(0);
+    store.setSearchOpen(true);
+    store.setSearchResultsOpen(true);
+    store.setSearchResultMeta(true, 'boom');
+
+    store.clearSearch();
+
+    const after = usePdfStore.getState();
+    expect(after.searchQuery).toBe('');
+    expect(after.searchMatches).toEqual([]);
+    expect(after.currentMatchIndex).toBe(-1);
+    expect(after.searchOpen).toBe(false);
+    expect(after.searchResultsOpen).toBe(false);
+    expect(after.searchTruncated).toBe(false);
+    expect(after.searchError).toBeNull();
+    expect(after.searchOptions.wholeWord).toBe(true);
+  });
+
+  it('setFile clears results/error/panel but keeps the options', () => {
+    const store = usePdfStore.getState();
+    store.setSearchOptions({ regex: true });
+    store.setSearchMatches([{ page: 1, begin: 0, length: 1 }]);
+    store.setSearchResultsOpen(true);
+    store.setSearchResultMeta(true, 'boom');
+
+    newFile();
+
+    const after = usePdfStore.getState();
+    expect(after.searchMatches).toEqual([]);
+    expect(after.searchResultsOpen).toBe(false);
+    expect(after.searchTruncated).toBe(false);
+    expect(after.searchError).toBeNull();
+    expect(after.searchOptions.regex).toBe(true);
+  });
+
+  it('resetDocument clears results/error/panel but keeps the options', () => {
+    const store = usePdfStore.getState();
+    store.setSearchOptions({ caseSensitive: true });
+    store.setSearchMatches([{ page: 2, begin: 3, length: 5 }]);
+    store.setSearchResultsOpen(true);
+    store.setSearchResultMeta(true, 'boom');
+
+    store.resetDocument();
+
+    const after = usePdfStore.getState();
+    expect(after.searchMatches).toEqual([]);
+    expect(after.searchResultsOpen).toBe(false);
+    expect(after.searchTruncated).toBe(false);
+    expect(after.searchError).toBeNull();
+    expect(after.searchOptions.caseSensitive).toBe(true);
   });
 });
 
@@ -566,6 +684,10 @@ describe('resetDocument', () => {
       currentMatchIndex: 0,
       searchOpen: true,
       searchIndexProgress: { done: 10, total: 20 },
+      searchOptions: { caseSensitive: true, wholeWord: true, regex: false },
+      searchResultsOpen: true,
+      searchTruncated: true,
+      searchError: 'boom',
       exportProgress: { done: 1, total: 3 },
       fontStats: [
         { fontname: 'Helvetica', pages: [1], charCount: 9, sizeMin: 10, sizeMax: 14, colors: ['#000000'] },
@@ -601,6 +723,9 @@ describe('resetDocument', () => {
     expect(state.currentMatchIndex).toBe(-1);
     expect(state.searchOpen).toBe(false);
     expect(state.searchIndexProgress).toBeNull();
+    expect(state.searchResultsOpen).toBe(false);
+    expect(state.searchTruncated).toBe(false);
+    expect(state.searchError).toBeNull();
     expect(state.exportProgress).toBeNull();
     expect(state.fontStats).toBeNull();
     expect(state.fontProgress).toBeNull();
@@ -619,5 +744,7 @@ describe('resetDocument', () => {
     expect(state.overlayVisibility.word).toBe(false);
     expect(state.textSelectionMode).toBe(false);
     expect(state.regionMode).toBe(true);
+    // Search options are a user preference, not document state.
+    expect(state.searchOptions).toEqual({ caseSensitive: true, wholeWord: true, regex: false });
   });
 });

@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { PdfObject, PdfMetadata, PageData, PdfOutlineItem, PageBox } from '../types/pdf-objects';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import type { SearchMatch } from '../services/pdf-search';
+import type { SearchMatch, SearchOptions } from '../services/pdf-search';
+import { DEFAULT_SEARCH_OPTIONS } from '../services/pdf-search';
 import type { FontStat } from '../types/ipc-protocol';
 import type { FontBatchProgress } from '../services/font-stats';
 import { ObjectSubset, FilterCriteria, filterByProperties } from '../services/object-filter';
@@ -82,6 +83,17 @@ export interface PdfState {
    * `Indexing 40/120…` instead of a silent wait.
    */
   searchIndexProgress: { done: number; total: number } | null;
+  /**
+   * How the query is interpreted (case/whole word/regex). This is a user
+   * preference, so it survives document changes and `clearSearch`.
+   */
+  searchOptions: SearchOptions;
+  /** Whether the match dropdown is showing. */
+  searchResultsOpen: boolean;
+  /** True when the hit list stopped at the 5,000 match cap. */
+  searchTruncated: boolean;
+  /** Why the last search could not run (bad regex, oversized pattern), or null. */
+  searchError: string | null;
 
   // Export progress
   exportProgress: { done: number; total: number } | null;
@@ -121,6 +133,10 @@ export interface PdfState {
   setCurrentMatchIndex: (index: number) => void;
   setSearchOpen: (open: boolean) => void;
   setSearchIndexProgress: (progress: { done: number; total: number } | null) => void;
+  /** Merge option toggles (Aa / W / .*) into the current search preferences. */
+  setSearchOptions: (options: Partial<SearchOptions>) => void;
+  setSearchResultsOpen: (open: boolean) => void;
+  setSearchResultMeta: (truncated: boolean, error: string | null) => void;
   clearSearch: () => void;
   setExportProgress: (progress: { done: number; total: number } | null) => void;
   fontStats: FontStat[] | null;
@@ -181,6 +197,10 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   currentMatchIndex: -1,
   searchOpen: false,
   searchIndexProgress: null,
+  searchOptions: { ...DEFAULT_SEARCH_OPTIONS },
+  searchResultsOpen: false,
+  searchTruncated: false,
+  searchError: null,
   exportProgress: null,
   fontStats: null,
   fontProgress: null,
@@ -215,6 +235,10 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       currentMatchIndex: -1,
       searchOpen: false,
       searchIndexProgress: null,
+      // Search results belong to the old document; the option toggles do not.
+      searchResultsOpen: false,
+      searchTruncated: false,
+      searchError: null,
       exportProgress: null,
       fontStats: null,
       fontProgress: null,
@@ -308,8 +332,14 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   setCurrentMatchIndex: (index) => set({ currentMatchIndex: index }),
   setSearchOpen: (open) => set({ searchOpen: open }),
   setSearchIndexProgress: (progress) => set({ searchIndexProgress: progress }),
+  setSearchOptions: (options) =>
+    set((state) => ({ searchOptions: { ...state.searchOptions, ...options } })),
+  setSearchResultsOpen: (open) => set({ searchResultsOpen: open }),
+  setSearchResultMeta: (truncated, error) =>
+    set({ searchTruncated: truncated, searchError: error }),
   // Closing search also drops the progress row: the hook cancels the build, so
-  // a stale `Indexing…` label can never outlive the search box.
+  // a stale `Indexing…` label can never outlive the search box. Options are a
+  // user preference and deliberately survive.
   clearSearch: () =>
     set({
       searchQuery: '',
@@ -317,6 +347,9 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       currentMatchIndex: -1,
       searchOpen: false,
       searchIndexProgress: null,
+      searchResultsOpen: false,
+      searchTruncated: false,
+      searchError: null,
     }),
   setExportProgress: (progress) => set({ exportProgress: progress }),
   setFontStats: (stats) => set({ fontStats: stats }),
@@ -374,6 +407,9 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       currentMatchIndex: -1,
       searchOpen: false,
       searchIndexProgress: null,
+      searchResultsOpen: false,
+      searchTruncated: false,
+      searchError: null,
       exportProgress: null,
       fontStats: null,
       fontProgress: null,

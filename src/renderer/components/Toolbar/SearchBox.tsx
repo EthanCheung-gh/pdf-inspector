@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { usePdfSearch } from '../../hooks/usePdfSearch';
+import type { SearchOptions } from '../../services/pdf-search';
 import { usePdfStore } from '../../store/pdf-store';
+import { SEARCH_RESULTS_PANEL_ID, SearchResultsPanel } from './SearchResultsPanel';
 import styles from './SearchBox.module.css';
 
 const DEBOUNCE_MS = 300;
@@ -11,8 +13,11 @@ export const SearchBox: React.FC = () => {
   const searchMatches = usePdfStore((s) => s.searchMatches);
   const currentMatchIndex = usePdfStore((s) => s.currentMatchIndex);
   const searchIndexProgress = usePdfStore((s) => s.searchIndexProgress);
+  const searchQuery = usePdfStore((s) => s.searchQuery);
+  const searchResultsOpen = usePdfStore((s) => s.searchResultsOpen);
+  const setSearchResultsOpen = usePdfStore((s) => s.setSearchResultsOpen);
   const pageCount = usePdfStore((s) => s.pageCount);
-  const { setQuery, next, prev, clear } = usePdfSearch();
+  const { setQuery, setOptions, next, prev, goToMatch, clear } = usePdfSearch();
 
   const [draft, setDraft] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -36,9 +41,19 @@ export const SearchBox: React.FC = () => {
   const handleClose = useCallback(() => {
     window.clearTimeout(debounceRef.current);
     setDraft('');
+    // Dropping the popover is part of closing: `clear()` also resets it through
+    // the store, but the box must never leave a stray list behind on its own.
+    setSearchResultsOpen(false);
     clear();
     setSearchOpen(false);
-  }, [clear, setSearchOpen]);
+  }, [clear, setSearchOpen, setSearchResultsOpen]);
+
+  const handleSetOptions = useCallback(
+    (options: Partial<SearchOptions>) => {
+      void setOptions(options);
+    },
+    [setOptions],
+  );
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
@@ -48,11 +63,21 @@ export const SearchBox: React.FC = () => {
         } else {
           next();
         }
-      } else if (event.key === 'Escape') {
+        return;
+      }
+      if (event.key === 'Escape') {
+        // Escape peels one layer at a time: results first, then the search box.
+        // Stopping here also keeps the app-level Escape from clearing the
+        // document selection behind the layer that just closed.
+        event.stopPropagation();
+        if (searchResultsOpen) {
+          setSearchResultsOpen(false);
+          return;
+        }
         handleClose();
       }
     },
-    [next, prev, handleClose],
+    [next, prev, handleClose, searchResultsOpen, setSearchResultsOpen],
   );
 
   if (!searchOpen) {
@@ -95,6 +120,19 @@ export const SearchBox: React.FC = () => {
         {statusLabel}
       </span>
       <button
+        className={`${styles.button}${searchResultsOpen ? ` ${styles.buttonActive}` : ''}`}
+        type="button"
+        onClick={() => setSearchResultsOpen(!searchResultsOpen)}
+        // Nothing to list until a query exists; matches drive the open state.
+        disabled={searchQuery.trim().length === 0}
+        aria-label="Search results"
+        aria-expanded={searchResultsOpen}
+        aria-controls={searchResultsOpen ? SEARCH_RESULTS_PANEL_ID : undefined}
+        title="Results list"
+      >
+        ≡
+      </button>
+      <button
         className={styles.button}
         type="button"
         onClick={prev}
@@ -123,6 +161,13 @@ export const SearchBox: React.FC = () => {
       >
         ✕
       </button>
+      {searchResultsOpen && (
+        <SearchResultsPanel
+          onSelect={goToMatch}
+          onClose={() => setSearchResultsOpen(false)}
+          onSetOptions={handleSetOptions}
+        />
+      )}
     </div>
   );
 };
