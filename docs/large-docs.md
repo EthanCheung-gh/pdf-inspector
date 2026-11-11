@@ -39,9 +39,13 @@ SidecarPool
 | `diff_documents` | background | `DIFF_TIMEOUT_MS` = 300s（**无进展**预算） | 同时提取两份文档；每页指纹/配对完成后上报进度并重置该预算，因此总时长可以超过 300s |
 | 未知方法 | interactive | 默认 30s | 保持引入双通道前的行为 |
 
-所有预算都是**空闲（no-progress）预算**，不是总时长上限：sidecar 在处理过程中会为当前请求写独立的 stdout 行 `{"id": <request id>, "progress": {...}}`，主进程与 Web 后端的管理器收到后只重置该请求的计时器，既不 resolve 也不 reject，并保留 pending 条目。目前只有 `diff_documents` 会上报进度（`start` → 每页 `fingerprints` → 配对后 `pages` 0/N → 每页结果后 `pages` i/N → `done`），其他方法不产生进度行，行为与以前一致。超时文案统一为 `Request "<method>" timed out after <budget> without progress`。
+所有预算都是**空闲（no-progress）预算**，不是总时长上限：sidecar 在处理过程中会为当前请求写独立的 stdout 行 `{"id": <request id>, "progress": {...}}`，主进程与 Web 后端的管理器收到后只重置该请求的计时器，既不 resolve 也不 reject，并保留 pending 条目。目前只有 `diff_documents` 会上报进度（`start` → 每页 `fingerprints` → 配对后 `pages` 0/N → 每页结果后 `pages` i/N → `done`），并在执行期间每 **5s** 额外发送一次 `{"stage": "heartbeat"}`：单页再慢也不会因为长时间没有“页完成”事件而被误判为空闲。心跳与逐页进度共用同一把 stdout 锁；请求结束（含出错）时心跳线程会被停止并 join，不会在响应之后继续输出，其他方法不产生心跳。超时文案统一为 `Request "<method>" timed out after <budget> without progress`。
+
+超时只说明父进程停止等待，Python 进程可能仍在计算被放弃的 diff。`Request "diff_documents"` 超时后，桌面端 `src/main/ipc-handlers.ts` 与 Web 端 `server/web-server.ts` 会调用 `restartBackground()` **只重启后台通道**（绝不触碰交互通道），以杀掉遗留计算并让重试拿到干净进程；重启是尽力而为、受 sidecar 自身 stop/ready 超时约束，失败只记录日志，调用方仍收到原始超时错误（Web 为 504）。这不是让病态页面变快的手段：某一页始终算不完时，最终仍会在 300s 无进展后放弃。
 
 渲染层在 IPC 之外还有一层计时器，统一比主进程预算多 5s（例如 `ANALYZE_FONTS_RENDERER_TIMEOUT_MS = 125s`）。这样主进程能先返回清晰的 `Request "…" timed out after …`，而不会先触发渲染层的 “Sidecar timeout” 重启。**Diff 是例外**：`diffPdfs` 不再经过渲染层计时器（也没有 `DIFF_RENDERER_TIMEOUT_MS`），因为固定的总时长会在合法的长时间 diff 上误判失败并重启健康的 sidecar；Diff 的超时完全由主进程/Web 后端的、可被进度续期的 300s 空闲预算决定。
+
+等待期间 `DiffSetupDialog` 与 `DiffWorkspace` 在 `Comparing documents…` 旁显示已用秒数（如 `Comparing documents… 42s`），`loading` 结束时归零。它只是信息展示，不提供取消按钮，也不是百分比：页配对要等指纹阶段结束才会有可靠的进度数字。
 
 ### 懒启动与文档同步
 
