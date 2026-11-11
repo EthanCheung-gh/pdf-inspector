@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { usePdfStore } from '../../store/pdf-store';
+import { listCommands } from '../../services/command-registry';
 import type { SaveFileRequest } from '../../types/ipc-protocol';
 import type { PageData, PdfMetadata } from '../../types/pdf-objects';
 
@@ -364,5 +365,54 @@ describe('ExportDialog', () => {
     expect(checkboxes).toHaveLength(7);
     checkboxes.forEach((box) => expect((box as HTMLInputElement).checked).toBe(true));
     expect(exportButton(dialog).disabled).toBe(false);
+  });
+});
+
+describe('ExportDialog command registration', () => {
+  const exportCommand = () => listCommands().find((command) => command.id === 'export.objects');
+
+  beforeEach(() => {
+    usePdfStore.setState({
+      filePath: '/tmp/doc.pdf',
+      pageData: pageOne,
+      isLoading: false,
+      exportProgress: null,
+    });
+  });
+
+  afterEach(cleanup);
+
+  it('registers an enabled export command that opens the dialog', () => {
+    render(React.createElement(ExportDialog));
+
+    const command = exportCommand();
+    expect(command).toBeTruthy();
+    expect(command?.isEnabled?.()).toBe(true);
+
+    act(() => {
+      command?.run();
+    });
+
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Export' })).toBeTruthy();
+  });
+
+  it('is disabled while page data is missing or the document is loading', () => {
+    usePdfStore.setState({ pageData: null });
+    render(React.createElement(ExportDialog));
+    expect(exportCommand()?.isEnabled?.()).toBe(false);
+
+    act(() => {
+      usePdfStore.setState({ pageData: pageOne, isLoading: true });
+    });
+    expect(exportCommand()?.isEnabled?.()).toBe(false);
+  });
+
+  it('unregisters the command on unmount', () => {
+    const view = render(React.createElement(ExportDialog));
+    expect(exportCommand()).toBeTruthy();
+
+    view.unmount();
+    expect(exportCommand()).toBeUndefined();
   });
 });

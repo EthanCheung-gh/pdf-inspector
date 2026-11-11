@@ -9,6 +9,7 @@ import { usePdfStore } from './store/pdf-store';
 import { useRawStore } from './store/raw-store';
 import { useThemeStore } from './store/theme-store';
 import { useWorkspaceStore } from './store/workspace-store';
+import { listCommands } from './services/command-registry';
 import type { PdfMetadata, PdfWord } from './types/pdf-objects';
 import type { RawDocument } from './types/raw-pdf';
 import { makeSampleResult } from './services/__tests__/diff-fixtures';
@@ -122,6 +123,28 @@ describe('App workspace mode', () => {
     });
 
     expect(document.documentElement.dataset.theme).toBe('dark');
+  });
+
+  it('registers shell commands and opens the palette with Ctrl+K', () => {
+    render(React.createElement(App));
+
+    const appCommandIds = listCommands()
+      .map((command) => command.id)
+      .filter((id) => id.startsWith('view.') || id === 'navigate.open-search');
+    expect(appCommandIds).toEqual(
+      expect.arrayContaining([
+        'view.toggle-theme',
+        'view.toggle-focus',
+        'view.toggle-left-panel',
+        'view.toggle-right-panel',
+        'view.clear-selection',
+        'navigate.open-search',
+      ]),
+    );
+
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull();
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    expect(screen.getByRole('dialog', { name: 'Command palette' })).toBeTruthy();
   });
 
   it('replaces the Inspect panes with the Diff workspace and keeps the shell usable', () => {
@@ -239,6 +262,54 @@ describe('App workspace mode', () => {
     // Ctrl+F must not open the Inspect search over the diff workspace either.
     expect(pdf.searchOpen).toBe(false);
     expect(useWorkspaceStore.getState().focusMode).toBe(false);
+  });
+});
+
+describe('App search results escape ordering', () => {
+  const selectedWord: PdfWord = {
+    type: 'word',
+    page: 2,
+    x0: 10,
+    y0: 20,
+    x1: 30,
+    y1: 32,
+    text: 'Hello',
+    fontname: 'Helvetica',
+    size: 11,
+  };
+
+  it('closes the search results panel before clearing the document selection', () => {
+    usePdfStore.setState({
+      selectedObject: selectedWord,
+      filterCriteria: { types: ['word'] },
+      searchOpen: true,
+      searchQuery: 'hello',
+      searchMatches: [{ page: 2, begin: 0, length: 5, preview: 'Hello world' }],
+      currentMatchIndex: 0,
+      searchResultsOpen: true,
+      searchError: null,
+      searchTruncated: false,
+    });
+
+    render(React.createElement(App));
+    expect(screen.getByRole('dialog', { name: 'Search results' })).toBeTruthy();
+
+    // Focus can sit outside the input (a toolbar control), so the app-level
+    // handler has to honour the popover order too.
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    let pdf = usePdfStore.getState();
+    expect(pdf.searchResultsOpen).toBe(false);
+    expect(pdf.selectedObject).toBe(selectedWord);
+    expect(pdf.filterCriteria).toEqual({ types: ['word'] });
+    expect(screen.queryByRole('dialog', { name: 'Search results' })).toBeNull();
+
+    // With the popover gone, Escape behaves as before.
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    pdf = usePdfStore.getState();
+    expect(pdf.selectedObject).toBeNull();
+    expect(pdf.filterCriteria).toEqual({});
   });
 });
 

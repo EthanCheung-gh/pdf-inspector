@@ -1,0 +1,210 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh 16px 16px;
+  background: rgba(8, 10, 13, 0.55);
+}
+
+.palette {
+  display: flex;
+  flex-direction: column;
+  width: 560px;
+  max-width: 100%;
+  max-height: 70vh;
+  overflow: hidden;
+  padding: 10px;
+  color: var(--pi-text);
+  background: var(--pi-bg-panel);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-lg);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  font-size: 12px;
+}
+
+.title {
+  margin: 0;
+  padding: 2px 6px 8px;
+  color: var(--pi-text-heading);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.search,
+.pageInput {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 9px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.search::placeholder,
+.pageInput::placeholder {
+  color: var(--pi-text-disabled);
+}
+
+.search:focus,
+.pageInput:focus {
+  border-color: var(--pi-accent);
+  box-shadow: 0 0 0 2px rgba(91, 156, 255, 0.25);
+}
+
+.list {
+  flex: 1;
+  min-height: 0;
+  margin-top: 8px;
+  overflow-y: auto;
+  border-top: 1px solid var(--pi-border-subtle);
+}
+
+.group {
+  padding-top: 4px;
+}
+
+.groupLabel {
+  padding: 7px 8px 3px;
+  color: var(--pi-text-subtle);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 6px 9px;
+  color: var(--pi-text-secondary);
+  border-radius: var(--pi-radius-sm);
+  cursor: pointer;
+}
+
+.optionActive {
+  color: var(--pi-text-inverse);
+  background: var(--pi-accent-strong);
+}
+
+.optionDisabled {
+  color: var(--pi-text-disabled);
+  cursor: not-allowed;
+}
+
+.optionActive.optionDisabled {
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+}
+
+.optionTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shortcut {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--pi-radius-sm);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+.empty {
+  margin: 0;
+  padding: 18px 8px;
+  color: var(--pi-text-faint);
+  text-align: center;
+}
+
+.hint {
+  margin: 8px 0 0;
+  padding: 0 6px 2px;
+  color: var(--pi-text-faint);
+  font-size: 10.5px;
+}
+
+.backButton {
+  align-self: flex-start;
+  padding: 3px 6px;
+  color: var(--pi-text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--pi-radius-sm);
+  font: inherit;
+  cursor: pointer;
+}
+
+.backButton:hover {
+  color: var(--pi-text);
+  background: var(--pi-bg-hover);
+}
+
+.backButton:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
+.pageForm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.pageLabel {
+  flex: 0 0 auto;
+  color: var(--pi-text-muted);
+}
+
+.pageInput {
+  flex: 1;
+}
+
+.goButton {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  color: var(--pi-text-inverse);
+  background: var(--pi-accent-strong);
+  border: 1px solid var(--pi-accent-border);
+  border-radius: var(--pi-radius-md);
+  font: inherit;
+  cursor: pointer;
+}
+
+.goButton:hover:not(:disabled) {
+  background: var(--pi-accent-strong-hover);
+}
+
+.goButton:disabled {
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
+  cursor: not-allowed;
+}
+
+.goButton:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
+:global(html[data-theme='islands']) .palette {
+  border-color: var(--pi-island-border-color);
+  box-shadow: var(--pi-island-shadow), 0 24px 64px rgba(0, 0, 0, 0.55);
+}

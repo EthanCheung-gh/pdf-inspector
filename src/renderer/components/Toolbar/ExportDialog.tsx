@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   EXPORT_OBJECT_TYPES,
   pagesToCsv,
@@ -8,6 +8,8 @@ import {
   swapExportFormatExtension,
 } from '../../services/export-data';
 import { ipc } from '../../services/ipc-client';
+import { useRegisterCommands } from '../../hooks/useRegisterCommands';
+import type { CommandDefinition } from '../../services/command-registry';
 import { usePdfStore } from '../../store/pdf-store';
 import type { PageData, PdfObjectType } from '../../types/pdf-objects';
 import { ExportTypeSelector } from '../ExportTypeSelector';
@@ -190,6 +192,24 @@ export const ExportDialog: React.FC = () => {
 
   const triggerDisabled = isLoading || busy || !pageData;
   const exportDisabled = busy || types.length === 0;
+
+  const commands = useMemo<CommandDefinition[]>(
+    () => [
+      {
+        id: 'export.objects',
+        title: 'Export objects…',
+        group: 'Export',
+        keywords: ['export', 'save', 'json', 'csv', 'objects'],
+        isEnabled: () => {
+          const store = usePdfStore.getState();
+          return Boolean(store.pageData) && !store.isLoading && !busy;
+        },
+        run: () => setOpen(true),
+      },
+    ],
+    [busy],
+  );
+  useRegisterCommands('export-dialog', commands);
 
   return (
     <div className={styles.container}>

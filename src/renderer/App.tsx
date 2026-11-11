@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { AuditWorkspace } from './components/Audit/AuditWorkspace';
+import { CommandPalette } from './components/CommandPalette/CommandPalette';
 import { DiffSetupDialog } from './components/Diff/DiffSetupDialog';
 import { DiffWorkspace } from './components/Diff/DiffWorkspace';
 import { InspectorPanel } from './components/InspectorPanel/InspectorPanel';
@@ -11,7 +12,9 @@ import { Toolbar } from './components/Toolbar/Toolbar';
 import { PanelRail } from './components/Workspace/PanelRail';
 import { PanelSplitter } from './components/Workspace/PanelSplitter';
 import { DocumentTabs } from './components/Workspace/DocumentTabs';
+import { useRegisterCommands } from './hooks/useRegisterCommands';
 import { ipc } from './services/ipc-client';
+import type { CommandDefinition } from './services/command-registry';
 import { useAuditStore } from './store/audit-store';
 import { useDiffStore } from './store/diff-store';
 import { usePdfStore } from './store/pdf-store';
@@ -57,6 +60,78 @@ const App = (): JSX.Element => {
   // Fonts analysis) survives collapsing and focus mode.
   const leftPaneVisible = !leftCollapsed && !focusMode;
   const rightPaneVisible = !rightCollapsed && !focusMode;
+
+  // Shell-level commands. They read the stores through `getState` so the list
+  // identity stays stable for the palette; enabled state is evaluated when the
+  // palette renders/opens, not frozen here.
+  const appCommands = useMemo<CommandDefinition[]>(
+    () => [
+      {
+        id: 'view.toggle-theme',
+        title: 'Toggle theme (Dark / Islands)',
+        group: 'View',
+        keywords: ['theme', 'dark', 'islands', 'appearance'],
+        run: () => useThemeStore.getState().toggleTheme(),
+      },
+      {
+        id: 'view.toggle-focus',
+        title: 'Toggle focus mode',
+        group: 'View',
+        keywords: ['focus', 'panels', 'zen'],
+        run: () => useWorkspaceStore.getState().toggleFocusMode(),
+      },
+      {
+        id: 'view.toggle-left-panel',
+        title: 'Toggle left panel',
+        group: 'View',
+        keywords: ['left', 'objects', 'panel', 'collapse'],
+        run: () => {
+          const store = useWorkspaceStore.getState();
+          const visible = !store.leftCollapsed && !store.focusMode;
+          if (visible) {
+            store.setLeftCollapsed(true);
+            return;
+          }
+          store.setLeftCollapsed(false);
+          store.setFocusMode(false);
+        },
+      },
+      {
+        id: 'view.toggle-right-panel',
+        title: 'Toggle right panel',
+        group: 'View',
+        keywords: ['right', 'inspector', 'panel', 'collapse'],
+        run: () => {
+          const store = useWorkspaceStore.getState();
+          const visible = !store.rightCollapsed && !store.focusMode;
+          if (visible) {
+            store.setRightCollapsed(true);
+            return;
+          }
+          store.setRightCollapsed(false);
+          store.setFocusMode(false);
+        },
+      },
+      {
+        id: 'navigate.open-search',
+        title: 'Search document…',
+        group: 'Navigate',
+        keywords: ['find', 'search', 'text'],
+        shortcut: 'Ctrl+F',
+        isEnabled: () => usePdfStore.getState().pageCount > 0,
+        run: () => usePdfStore.getState().setSearchOpen(true),
+      },
+      {
+        id: 'view.clear-selection',
+        title: 'Clear selection',
+        group: 'View',
+        keywords: ['clear', 'selection', 'deselect', 'escape'],
+        run: () => usePdfStore.getState().clearSelection(),
+      },
+    ],
+    [],
+  );
+  useRegisterCommands('app', appCommands);
 
   // The store also applies the theme on `setTheme`; this effect covers the
   // first mount (including tests and embeds that skip the entry point) and
@@ -146,6 +221,17 @@ const App = (): JSX.Element => {
       // form controls such as the Filter dropdowns.
       const target = event.target;
       if (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select'))) {
+        return;
+      }
+      // The search results popover is the topmost layer: Escape closes it first
+      // and leaves the document selection alone. The panel and the search input
+      // handle their own Escape, but focus can also be on a toolbar control.
+      if (
+        event.key === 'Escape' &&
+        usePdfStore.getState().searchOpen &&
+        usePdfStore.getState().searchResultsOpen
+      ) {
+        usePdfStore.getState().setSearchResultsOpen(false);
         return;
       }
       if ((event.key === 'f' || event.key === 'F') && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -258,6 +344,7 @@ const App = (): JSX.Element => {
         {!diffActive && !rawActive && auditActive && <AuditWorkspace />}
       </main>
       <StatusBar />
+      <CommandPalette />
       {/* Mounted once at app level: the toolbar entry and the workspace's
           "Change files…" both open this same dialog through the diff store. */}
       <DiffSetupDialog />

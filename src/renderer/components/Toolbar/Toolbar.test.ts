@@ -10,6 +10,7 @@ import { useDiffStore } from '../../store/diff-store';
 import { useDocumentTabsStore } from '../../store/document-tabs-store';
 import { useRawStore } from '../../store/raw-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
+import { listCommands } from '../../services/command-registry';
 import type { PdfMetadata } from '../../types/pdf-objects';
 
 const { navigate, openPdf, openPdfUrl, auditDocument, auditPages, rawDocument, rawObject, rawPageContent } =
@@ -958,5 +959,129 @@ describe('Toolbar layout with search open', () => {
       expect(block).not.toMatch(/\.button\s*\{[\s\S]*display:\s*none/);
       expect(block).not.toMatch(/\.searchBox[\s\S]*display:\s*none/);
     }
+  });
+});
+
+describe('Toolbar command registrations', () => {
+  const toolbarCommandIds = [
+    'file.open',
+    'file.open-url',
+    'analyze.compare',
+    'analyze.audit',
+    'analyze.raw',
+    'view.layers',
+  ];
+
+  const findCommand = (id: string) => listCommands().find((command) => command.id === id);
+
+  beforeEach(() => {
+    openPdf.mockReset();
+    openPdfUrl.mockReset();
+    useRawStore.getState().reset();
+    useDiffStore.getState().reset();
+    usePdfStore.setState({
+      filePath: null,
+      sourceUrl: null,
+      metadata: null,
+      pageCount: 0,
+      currentPage: 1,
+      isLoading: false,
+      error: null,
+      pageData: null,
+      allObjects: [],
+      searchOpen: false,
+    });
+    useWorkspaceStore.setState({
+      leftTab: 'objects',
+      leftCollapsed: false,
+      rightCollapsed: false,
+      focusMode: false,
+    });
+  });
+
+  afterEach(cleanup);
+
+  it('registers the toolbar commands and unregisters them on unmount', () => {
+    const view = render(React.createElement(Toolbar));
+
+    const registered = listCommands()
+      .map((command) => command.id)
+      .filter((id) => toolbarCommandIds.includes(id));
+    expect(registered.sort()).toEqual([...toolbarCommandIds].sort());
+
+    view.unmount();
+    const afterUnmount = listCommands()
+      .map((command) => command.id)
+      .filter((id) => toolbarCommandIds.includes(id));
+    expect(afterUnmount).toEqual([]);
+  });
+
+  it('derives enabled state from the stores', () => {
+    render(React.createElement(Toolbar));
+
+    expect(findCommand('file.open')?.isEnabled?.()).toBe(true);
+    expect(findCommand('file.open-url')?.isEnabled?.()).toBe(true);
+    expect(findCommand('analyze.compare')?.isEnabled?.()).toBe(true);
+    expect(findCommand('analyze.audit')?.isEnabled?.()).toBe(false);
+    expect(findCommand('analyze.raw')?.isEnabled?.()).toBe(false);
+
+    act(() => {
+      usePdfStore.setState({ filePath: '/tmp/doc.pdf' });
+    });
+    expect(findCommand('analyze.audit')?.isEnabled?.()).toBe(true);
+    expect(findCommand('analyze.raw')?.isEnabled?.()).toBe(true);
+
+    act(() => {
+      useDiffStore.setState({ active: true });
+    });
+    expect(findCommand('analyze.audit')?.isEnabled?.()).toBe(false);
+    expect(findCommand('analyze.raw')?.isEnabled?.()).toBe(false);
+    expect(findCommand('view.layers')?.isEnabled?.()).toBe(false);
+
+    act(() => {
+      usePdfStore.setState({ isLoading: true });
+    });
+    expect(findCommand('file.open')?.isEnabled?.()).toBe(false);
+    expect(findCommand('file.open-url')?.isEnabled?.()).toBe(false);
+  });
+
+  it('runs Open through the same handler as the toolbar button', async () => {
+    openPdf.mockResolvedValue({ canceled: true });
+    render(React.createElement(Toolbar));
+
+    await act(async () => {
+      await findCommand('file.open')?.run();
+    });
+
+    expect(openPdf).toHaveBeenCalledTimes(1);
+    expect(usePdfStore.getState().isLoading).toBe(false);
+  });
+
+  it('opens the URL dialog and the Diff setup through their commands', () => {
+    render(React.createElement(Toolbar));
+
+    act(() => {
+      findCommand('file.open-url')?.run();
+    });
+    expect(screen.getByRole('dialog')).toBeTruthy();
+
+    act(() => {
+      findCommand('analyze.compare')?.run();
+    });
+    expect(useDiffStore.getState().setupOpen).toBe(true);
+  });
+
+  it('opens the Layers tab through the View command', () => {
+    useWorkspaceStore.setState({ leftTab: 'objects', leftCollapsed: true, focusMode: true });
+    render(React.createElement(Toolbar));
+
+    act(() => {
+      findCommand('view.layers')?.run();
+    });
+
+    const state = useWorkspaceStore.getState();
+    expect(state.leftTab).toBe('layers');
+    expect(state.leftCollapsed).toBe(false);
+    expect(state.focusMode).toBe(false);
   });
 });

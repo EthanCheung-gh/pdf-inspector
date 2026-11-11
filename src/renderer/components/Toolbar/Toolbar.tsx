@@ -1,7 +1,9 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { ipc } from '../../services/ipc-client';
 import { OVERLAY_LAYER_TOTAL, overlayVisibleCount } from '../../services/overlay-style';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
+import { useRegisterCommands } from '../../hooks/useRegisterCommands';
+import type { CommandDefinition } from '../../services/command-registry';
 import { useAuditStore } from '../../store/audit-store';
 import { useDiffStore } from '../../store/diff-store';
 import { supportsDocumentTabs, useDocumentTabsStore } from '../../store/document-tabs-store';
@@ -200,6 +202,79 @@ export const Toolbar: React.FC = () => {
     if (useAuditStore.getState().active) useAuditStore.getState().close();
     useRawStore.getState().open(filePath, documentName ?? filePath);
   }, [documentName, filePath]);
+
+  // Toolbar commands reuse the exact handlers behind the buttons, so the
+  // palette and the toolbar can never disagree about an action or its
+  // enablement. Enabled state is evaluated lazily from the stores.
+  const commands = useMemo<CommandDefinition[]>(
+    () => [
+      {
+        id: 'file.open',
+        title: 'Open PDF…',
+        group: 'File',
+        keywords: ['open', 'file', 'pdf', 'local'],
+        isEnabled: () => !usePdfStore.getState().isLoading,
+        run: () => {
+          void handleOpen();
+        },
+      },
+      {
+        id: 'file.open-url',
+        title: 'Open URL…',
+        group: 'File',
+        keywords: ['open', 'url', 'http', 'remote'],
+        isEnabled: () => !usePdfStore.getState().isLoading,
+        run: () => setUrlDialogOpen(true),
+      },
+      {
+        id: 'analyze.compare',
+        title: 'Compare PDFs…',
+        group: 'Analyze',
+        keywords: ['diff', 'compare', 'old', 'new'],
+        isEnabled: () => true,
+        run: () => openDiffSetup(),
+      },
+      {
+        id: 'analyze.audit',
+        title: 'Audit document…',
+        group: 'Analyze',
+        keywords: ['audit', 'inspect', 'check', 'fonts', 'security'],
+        isEnabled: () => {
+          const pdf = usePdfStore.getState();
+          return Boolean(pdf.filePath) && !useDiffStore.getState().active;
+        },
+        run: () => handleAudit(),
+      },
+      {
+        id: 'analyze.raw',
+        title: 'Browse raw objects…',
+        group: 'Analyze',
+        keywords: ['raw', 'objects', 'stream', 'content', 'debug'],
+        isEnabled: () => {
+          const pdf = usePdfStore.getState();
+          return (
+            Boolean(pdf.filePath) &&
+            !useDiffStore.getState().active &&
+            !useAuditStore.getState().active
+          );
+        },
+        run: () => handleRaw(),
+      },
+      {
+        id: 'view.layers',
+        title: 'Show layers panel',
+        group: 'View',
+        keywords: ['layers', 'overlay', 'objects', 'visibility'],
+        isEnabled: () =>
+          !useDiffStore.getState().active &&
+          !useAuditStore.getState().active &&
+          !useRawStore.getState().active,
+        run: () => handleLayers(),
+      },
+    ],
+    [handleAudit, handleLayers, handleOpen, handleRaw, openDiffSetup],
+  );
+  useRegisterCommands('toolbar', commands);
 
   return (
     <header className={`${styles.toolbar} ${searchActive ? styles.searchOpen : ''}`}>
