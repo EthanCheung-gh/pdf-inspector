@@ -22,7 +22,9 @@
 | ![页面重排：页面列表显示 Old 2 → New 1、Old 3 → New 2 等对齐结果与新页 5 为 added](docs/images/diff-reordered.png) | **页面对齐与重排**<br>页面按内容指纹配对，列表与页面栏显示 `Old 2 → New 1` 等旧/新页码；插入/删除页保持单侧，`--fail-on reordered` 可把这些配对作为 CI 门禁。 |
 | ![文档体检工作区：严重级别汇总、筛选器、发现列表与右侧选中发现详情](docs/images/audit-workspace.png) | **文档体检**<br>跨字体、页面、图片、元数据、结构与安全的整档审计；按严重级别汇总，可按严重级别/类别筛选，选中条目查看证据与修复建议，并可跳转到对应页面。 |
 | ![PDF 审计 HTML 报告：文档信息、严重级别汇总与逐条发现](docs/images/audit-report.png) | **审计报告（HTML）**<br>CLI `audit --format html` 生成单文件报告：文档信息、严重级别汇总与逐条发现（证据、建议）；内联 CSS、无脚本、无外部资源。 |
-| ![注释、链接与表单：Annots 列表、画布框选与 Inspector 只读表单详情](docs/images/annotations.png) | **注释、链接与表单**<br>`Annots` 标签页列出当前页的链接、表单字段、标记与注释；画布同步绘制只读框，选中后在 Inspector 查看字段值、选项与链接目标。 |
+| ![注释、链接与表单：Annots 列表、画布框选与 Inspector 只读表单详情](docs/images/annotations.png) | **注释、链接与表单（当前页）**<br>`Annots` 的 `Current page` 模式列出当前页的链接、表单字段、标记与注释；画布同步绘制只读框，选中后在 Inspector 查看字段值、选项与链接目标。 |
+| ![整档注释索引：Whole document 模式下列出全部注释、Issues 与 External links 清单](docs/images/annotations-index.png) | **整档注释索引**<br>切到 `Whole document` 后按 10 页一批读取整份文档：顶部汇总 `7 annotations · 1 page · 2 links · 3 form fields`；`Issues` 默认展开、`External links` 折叠，列表按页定位并支持搜索与全局过滤。 |
+| ![导出注释对话框：Export annotations、JSON 选中与可编辑文件名](docs/images/annotations-export.png) | **注释导出**<br>索引完成后 `Export` 打开对话框，可选 JSON/CSV 并修改文件名；JSON 包含文档信息、summary、按页注释、链接/表单问题与合并字段，且不写入本地绝对路径。 |
 | ![Raw 对象树：Catalog → Pages → Page → Resources 逐层展开，右侧显示图片 XObject 的流元数据](docs/images/raw-object-tree.png) | **原始对象树**<br>工具栏 `Raw` 打开只读工作区；左侧从 trailer 根开始按引用懒加载，展开 `Pages`、页面与 `Resources` 后选中对象，右侧显示字典、数组与流元数据。 |
 | ![内容流：第 1 页解码后的操作符与操作数，包含 BT、Tf、Tj、Do](docs/images/raw-content-stream.png) | **内容流**<br>`Content stream` 标签页按页解码内容流，逐条列出 offset、操作符与操作数；`BT` / `Tf` / `Tj` / `Do` 等操作符只读取、不执行。 |
 | ![1000 页页面列表与 Go to page：工具栏显示 1000 / 1000，左侧列表末尾为 Page 1000](docs/images/large-doc-pages.png) | **大文档页面列表与跳页**<br>打开 1000 页示例，左侧页面树使用 CSS 窗口化；Go to page 把输入夹到 `1..pageCount`，只展开当前页对象。 |
@@ -30,7 +32,7 @@
 | ![桌面文档标签栏：两个通过 URL 打开的文档标签，切换到 basic.pdf 后工具栏显示 1 / 4](docs/images/large-doc-tabs.png) | **桌面文档标签**<br>桌面端可同时保留多个文档标签，切换时恢复页码、缩放、叠加层与面板标签；Web 端通过服务端 `documentId` 激活标签。 |
 | ![Web 文档标签栏：basic.pdf 与 large.pdf 两个标签，当前 large.pdf 显示 1 / 120](docs/images/web-tabs.png) | **Web 文档标签**<br>Web 与桌面端都显示文档标签栏；切换按 `documentId` 激活并恢复视图快照，未激活文档的 `/doc/:id` 仍可读取，关闭标签只删除该文档的临时副本。 |
 
-*截图来自 Web 构建与真实 Electron 桌面构建；页面列表/搜索、主题与 Diff/Audit/Raw 为 1440×900，桌面标签为 Electron + xvfb 实测（CDP 1440×900 视口）。详见 [docs/large-docs.md](docs/large-docs.md)。*
+*截图来自 Web 构建与真实 Electron 桌面构建；页面列表/搜索、注释整档索引/导出、主题与 Diff/Audit/Raw 为 1440×900，桌面标签为 Electron + xvfb 实测（CDP 1440×900 视口）。详见 [docs/large-docs.md](docs/large-docs.md) 与 [docs/annotations.md](docs/annotations.md)。*
 
 ## 功能特性
 
@@ -43,7 +45,7 @@
 
 ### 导航与结构
 
-- 左侧面板包含五个标签页：`Objects`（按页展示全部对象）、`Outline`（PDF 书签）、`Fonts`（字体统计）、`Layers`（叠加层控制）与 `Annots`（当前页注释、链接与表单字段）。
+- 左侧面板包含五个标签页：`Objects`（按页展示全部对象）、`Outline`（PDF 书签）、`Fonts`（字体统计）、`Layers`（叠加层控制）与 `Annots`（当前页或整档的注释、链接与表单字段）。
 - `Objects` 标签页的对象树按页展示全部对象，页面节点可折叠/展开。
 - `Outline` 标签页读取 PDF 书签（outline），点击条目直接跳转到对应页面。
 - 当前页码显示与上一页/下一页导航，并实时显示缩放比例。
@@ -70,6 +72,7 @@
 - 导出当前页或整份文档，格式为 JSON 或 CSV；导出时可勾选要包含的元素类型（char / word / line / curve / rect / table / image）。桌面端使用原生保存对话框，Web 端触发浏览器下载。
 - CSV 按对象类型分段，便于在表格工具中继续分析。
 - JSON 导出新增可选字段：`metadata.fontInfo`（字体嵌入详情）、每页的 `page.boxes` / `page.rotation`、表格的 `table.cellBoxes` / `table.cellSpans`，以及图片的 `content_hash`（可读取时的 SHA-256）；CSV 各段的列定义保持不变。
+- 注释、链接与表单有独立的整档导出：在 `Annots → Whole document` 中点 `Export` 选择 JSON/CSV，不改变上面的对象导出 schema。
 
 ### 大文档与多文档
 
@@ -114,13 +117,19 @@
 
 ### 注释、链接与表单
 
-- **当前页注释列表**：左侧 `Annots` 标签页列出当前页由 PDF.js 解析出的注释（Link、Widget、Text、Highlight 等），顶部显示 `N annotations · L links · F form fields` 汇总；可按 Kind 与 Subtype 过滤，`Show boxes` 控制画布框的显示。
-- **画布框与选中**：注释按类型着色——链接蓝、表单紫、标记黄、注释橙、图章青、其他灰；悬停加亮，选中使用金色描边。点击注释框会选中该注释并切换到 Inspector，点击对象则清除注释选中，两者不会同时高亮。
+- **两种范围**：`Annots` 顶部在 `Current page` 与 `Whole document` 之间切换。默认 `Current page`，保留原有的页级列表、画布框与 Inspector 行为；`Whole document` 列出整份文档的全部注释、链接与表单字段。
+- **整档索引**：首次切到 `Whole document` 时由渲染层用 PDF.js 读取注释，按 10 页一批、批间让出事件循环，面板显示 `Indexing annotations 40/120…` 与进度条；索引期间翻页、缩放与当前页 Inspect 仍可用。切回 `Current page` 不会取消或丢弃已完成的索引，再切回直接复用。
+- **汇总、搜索与过滤**：文档模式汇总为 `7 annotations · 1 page · 2 links · 3 form fields`；搜索覆盖页码、subtype/kind、标题与内容、链接目标、字段名/类型/值/选项，Kind 与 Subtype 过滤是全局的，可与搜索叠加。
+- **定位与选中**：点击文档模式的行会跳到该注释所在页，并请求选中该注释；目标页加载完成后按注释 id 选中并切到 Inspector。id 不存在（或与当前页数据不一致）时只跳页，不强行选中。
+- **链接健康**：`unresolved`（既无安全外部 URL、也无解析出的内部页码）与 `unsafe`（`mailto:` / `file:` / `data:` / `javascript:` 等非 `http(s)` 目标）计入 `Issues`；可打开的 `http(s)` 目标列在默认折叠的 `External links` 清单里，只作为信息，不算错误，也不会被自动打开或探测。
+- **表单健康**：无名 Widget 与同名字段类型冲突计为 warning；同名字段出现在多个页面是 PDF 表单的常见用法，作为 info 展示，不默认判错。每条链接/表单问题都带页码，可 `Go to page` 跳转。
+- **导出**：索引完成后 `Export` 打开对话框，可选 JSON/CSV 并修改文件名。JSON 含 `schemaVersion`、文档信息、summary、按页注释、链接/表单问题与合并后的表单字段；CSV 分 `# annotations` / `# links` / `# form_fields` 三段，带 BOM 与 RFC 4180 转义，不写入本地绝对路径。
+- **画布框与选中**：注释按类型着色——链接蓝、表单紫、标记黄、注释橙、图章青、其他灰；悬停加亮，选中使用金色描边。点击注释框会选中该注释并切换到 Inspector，点击对象则清除注释选中，两者不会同时高亮。`Show boxes` 只作用于当前页。
 - **Inspector 详情**：`Inspect` 显示 subtype / kind / 页码 / Rect、标题与内容、修改时间、颜色与不透明度；链接额外显示目标与 `Open link` / `Go to page N`，表单字段显示字段名、类型、值、默认值、Flags 与选项。
 - **内部与外部链接**：外部链接只在用户显式点击 `Open link` 时打开，且仅允许 `http(s)`；PDF.js 的原始 `unsafeUrl` 只用于显示，不安全目标会禁用按钮并提示“仅支持 http(s)”。渲染层、桌面主进程与 Web 适配器都会再次校验 URL，打开失败不会影响文档状态。内部目标解析为页码后，使用与 Prev/Next 相同的翻页导航。
 - **表单只读**：字段值、默认值、Flags 与选项全部以文本呈现，没有输入框、没有重置/提交按钮，也没有写回 PDF 的路径；签名字段只作为字段显示并标注未验证。
 - **隐藏与弹出注释**：Popup 注释不单独列出（改为显示父注释的内容）；隐藏注释在列表中带 `Hidden` 标记，但默认不绘制画布框。
-- **范围**：只处理当前页，翻页时重新加载并清除上一页的选中；这是纯读取功能，不修改 PDF。数据来源、链接策略与非目标详见 [docs/annotations.md](docs/annotations.md)。
+- **只读与数据来源**：当前页与整档索引都是纯读取功能，不修改 PDF，也不新增侧车注释 RPC；整档导出只序列化已建立的索引，不重新解析页面。索引批次、origin 缓存、JSON/CSV schema、健康检查语义与非目标详见 [docs/annotations.md](docs/annotations.md)。
 
 ### 原始 PDF 对象树与内容流
 
@@ -265,7 +274,7 @@ Diff 的示例文件成对生成，可在对比对话框中分别选择 Old/New�
 8. **搜索与导出**：`Ctrl/Cmd+F` 搜索；通过 Export 选择当前页/整档、JSON/CSV 与要包含的元素类型。
 9. **比较版本**：点击工具栏 `Diff` 选择 Old/New 两份 PDF，按需设置位置容差与忽略项后 Compare；在左侧变更列表选择条目查看详情，或在 Side by side / Overlay / Visual 间切换（Visual 可切 Blend/Heatmap/Boxes 并查看像素统计），`Ignore region` 可拖框屏蔽区域后再 `Apply & re-run`；`Export JSON` 保存结果。
 10. **文档体检**：点击工具栏 `Audit` 对当前文档执行整档审计，查看严重级别汇总，按严重级别/类别筛选，选中发现查看证据与建议；需要时点击 `Open page` 跳转到对应页面，或用 `Export JSON` 保存完整报告。
-11. **检查注释与表单**：切换到左侧 `Annots` 标签页查看当前页的注释、链接与表单字段，按 Kind/Subtype 过滤；点击列表行或画布上的注释框，在 Inspector 的 `Inspect` 中查看只读详情。外部链接需点击 `Open link` 才会打开，内部链接使用 `Go to page N` 跳转；表单字段不能编辑或提交。
+11. **检查注释、链接与表单**：切换到左侧 `Annots`，默认 `Current page` 查看当前页；切到 `Whole document` 建立整档索引（显示 `Indexing annotations N/M…`），用搜索与全局 Kind/Subtype 过滤定位条目，点击行跳页并尽力选中。`Issues` 区汇总断链与表单问题，`External links` 列出可打开的 `http(s)` 目标；`Export` 可把整档索引导出为 JSON/CSV。外部链接需点击 `Open link` 才会打开，内部链接使用 `Go to page N` 跳转；表单字段不能编辑或提交。
 12. **查看原始对象与内容流**：点击工具栏 `Raw` 打开只读工作区，在左侧对象树展开 `Catalog` → `Pages` → 页面 → `Resources`，点击引用在右侧查看对象值；切换到 `Content stream` 按页查看解码后的操作符与操作数。`Back to Inspect` 返回原文档，页码与缩放保持不变。
 13. **处理大文档与多文档**：打开 `/samples/huge.pdf` 后，用左侧 Go to page 输入页码（越界会夹取），页面列表只展开当前页；`Ctrl/Cmd+F` 搜索时 SearchBox 显示 `Indexing N/1000…`，可关闭搜索取消。桌面端与 Web 端都可再打开其他文件或用 Open URL 打开远程文档，通过顶部标签切换；Web 标签按服务端 `documentId` 激活并恢复视图快照，关闭标签只删除该文档的临时副本。
 
@@ -470,7 +479,7 @@ pdf-inspector/
 │   └── freeze-sidecar.sh
 ├── docs/
 │   ├── audit.md           # 文档体检：检查项、AuditReport schema、CLI 与 action
-│   ├── annotations.md     # 注释、链接与表单：数据来源、只读策略与限制
+│   ├── annotations.md     # 注释、链接与表单：整档索引、健康检查、JSON/CSV 导出与只读限制
 │   ├── raw.md             # 原始对象树与内容流：序列化语义、上限与安全边界
 │   ├── large-docs.md      # 大文档：双通道、搜索分批、页面列表、桌面/Web 文档标签与边界
 │   ├── diff.md            # Diff 2.0：页面对齐、视觉模式、忽略区域与阈值
@@ -544,10 +553,12 @@ npm run dist:linux       # Linux
 - 文档体检不做 OCR，也不识别扫描页中的文字；扫描页只能得到“有图片但无可提取文本”的提示。
 - 旋转页或 CropBox 偏移页上的审计发现只到页面级，无法给出对象级高亮；带页码的发现仍可跳转到对应页面。
 - 文档体检按 10 页一批串行执行（与字体分析相同），超大文档需要较长时间；页面提取失败是当前唯一的 `error` 来源。CLI 与 action 同样需要 Python 3.10+ 与 sidecar 依赖，且只接受本地路径，打包后的桌面应用不包含 CLI。
-- 注释、链接与表单只覆盖当前页：翻页后重新加载，不提供整档注释索引、跨页搜索或批量浏览；大文档需逐页查看。
-- 注释与表单是只读的：不能新建、编辑或删除注释，不能填写、重置或提交表单，也不导入 XFA 数据；签名字段只显示为字段，不做数字签名验证。
-- 注释与表单不参与导出、Diff、Audit 或 CLI：导出、比较与审计仍只处理对象层，不包含注释、链接与表单字段。
-- 外部链接只在用户点击 `Open link` 时打开，且仅支持 `http(s)`；`mailto:`、`file:`、`data:`、`javascript:` 等目标只显示、不打开。内部链接只跳转到解析出的页码，不恢复滚动位置，未解析的目标保持只读展示。
+- 注释、链接与表单的整档索引按 10 页一批顺序读取，超大文档需要较长时间；单页读取失败会中止整次索引并显示该页错误，`Retry` 从头重建，没有断点续建或部分结果。索引期间翻页与当前页检查仍可用。
+- 文档模式不承诺为未激活页绘制注释框：`Show boxes` 只在 `Current page` 生效，点击列表行跳页后由当前页正常加载并尽力选中（无 id 或 id 不一致时只跳页）。
+- 注释、链接与表单只读：不能新建、编辑或删除注释，不能填写、重置或提交表单，也不导入 XFA 数据；签名字段只显示为字段，不做数字签名验证。
+- 注释、链接与表单只在 `Annots → Whole document` 中导出，不写入对象导出的 JSON/CSV，也不参与 Diff、Audit 或 CLI；Pipeline 中如需这些信息需要另行读取 PDF。
+- 外部链接只在用户点击 `Open link` 时打开，且仅支持 `http(s)`；`mailto:`、`file:`、`data:`、`javascript:` 等目标只显示、不打开。整档索引只对目标分类，不会自动打开、探测或批量请求外部 URL。内部链接只跳转到解析出的页码，不恢复滚动位置，未解析的目标保持只读展示。
+- 注释健康检查是启发式的：`Issues` 依据 PDF.js 解析出的链接与表单数据给出提示，不做 PDF 合规认证；未命名 Widget 与同名字段类型冲突是 warning，跨页同名只是 info。单个链接目标解析失败只影响该条记录。
 - 旋转页（`/Rotate` 为 90/180/270）只提供注释列表与详情，不绘制画布框与命中测试；CropBox 与 MediaBox 不一致的页面，注释框以 MediaBox 为基准，可能整体偏移（与对象叠加层一致）。
 - 原始对象视图是只读的：不能编辑对象、重写流、解密或执行内容流，也不提供 raw diff、导出或 CLI；需要修改 PDF 时请使用其他工具。
 - 原始对象视图只返回有界数据：嵌套、条目、字符串、操作符与内容流数量都有上限，超限标记 `truncated` 并在界面提示；二进制流只显示长度、过滤器与 Subtype 等元数据，不提供字节预览。
