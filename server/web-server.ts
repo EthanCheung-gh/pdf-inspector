@@ -6,8 +6,9 @@
  * renderer can run in a normal browser:
  *
  *   - manages the Python JSON-RPC sidecar (spawn, timeouts, restart, cleanup);
- *   - keeps one "current document" (uploaded, downloaded or local) and streams
- *     it back with Range support for pdf.js;
+ *   - keeps a bounded registry of open documents (uploaded, downloaded or
+ *     local), of which exactly one is active in the sidecar, and streams any
+ *     registered document back with Range support for pdf.js;
  *   - proxies the whitelisted sidecar methods;
  *   - serves the built renderer from dist-web and demo PDFs from web-samples.
  *
@@ -184,6 +185,16 @@ function formatTimeout(timeoutMs: number): string {
   return timeoutMs % 1000 === 0 ? `${timeoutMs / 1000}s` : `${timeoutMs}ms`;
 }
 
+/** Human-readable byte size for limits in error messages (512 MiB, 1.5 MiB, ...). */
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) {
+    const mib = bytes / (1024 * 1024);
+    return `${Number.isInteger(mib) ? mib : mib.toFixed(1)} MiB`;
+  }
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KiB`;
+  return `${bytes} bytes`;
+}
+
 /** Resolve the Python used to launch sidecar/main.py. */
 function resolvePythonCommand(): string {
   const override = process.env.PDF_INSPECTOR_PYTHON?.trim();
@@ -199,13 +210,22 @@ function resolvePythonCommand(): string {
   return 'python3';
 }
 
-async function removeTempFile(filePath: string): Promise<void> {
+/**
+ * Delete a temporary file, best effort; `false` means it is still on disk.
+ *
+ * Windows cannot unlink a file another process has open, which is exactly what
+ * the sidecar does with the document it currently extracted. Callers that own a
+ * file the sidecar may still hold must keep it (see `DocumentRegistry`'s
+ * pending deletions) instead of treating the failure as "already gone".
+ */
+async function removeTempFile(filePath: string): Promise<boolean> {
   try {
     await unlink(filePath);
+    return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.error(`[web] Failed to delete temporary file ${filePath}:`, error);
-    }
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
+    console.error(`[web] Failed to delete temporary file ${filePath}:`, error);
+    return false;
   }
 }
 
@@ -954,14 +974,30 @@ export class SidecarPool {
 }
 
 // ---------------------------------------------------------------------------
-// Current-document registry
+// Document registry (bounded multi-document)
 // ---------------------------------------------------------------------------
+
+/** At most this many documents may be registered at once. */
+export const MAX_DOCUMENTS = 8;
+/** Total bytes of registered documents; the least recent inactive one goes first. */
+export const MAX_DOCUMENT_TOTAL_BYTES = 512 * 1024 * 1024;
 
 export interface OpenDocument {
   id: string;
   filePath: string;
   name: string;
   isTemp: boolean;
+  size: number;
+  /** Original URL for a downloaded document; `null` for uploads/local files. */
+  sourceUrl: string | null;
+  /** Sidecar `open` result, reused when the document is re-activated. */
+  metadata: unknown;
+  /**
+   * Recency of the last activation. A monotonic counter (not wall clock), so
+   * LRU eviction cannot be skewed by clock jumps and stays deterministic in
+   * tests; only relative order matters.
+   */
+  lastActiveAt: number;
 }
 
 export interface OpenedDocument {
@@ -969,78 +1005,440 @@ export interface OpenedDocument {
   doc: OpenDocument;
 }
 
+/** Result of `DocumentRegistry.openDeduped`. */
+export interface DedupedOpenResult {
+  /** The document that became (or already was) active. */
+  opened: OpenedDocument;
+  /**
+   * True when the incoming `filePath` was NOT adopted: another registered
+   * document already carried the same `sourceUrl`. The caller still owns that
+   * file and has to delete it; `opened.doc.filePath` is the existing copy.
+   */
+  deduped: boolean;
+}
+
+export interface DocumentRegistryOptions {
+  /** Bounds for tests; production uses MAX_DOCUMENTS / MAX_DOCUMENT_TOTAL_BYTES. */
+  maxDocuments?: number;
+  maxTotalBytes?: number;
+}
+
+export type DocumentRegistryErrorCode = 'not_found' | 'conflict' | 'too_large';
+
 /**
- * Tracks the single document visible to the browser. The sidecar closes the
- * previous document before opening the next one, so a failed open is healed by
- * re-opening the previous file; only temp files owned by this server are
- * deleted when they are replaced.
+ * Typed registry failure. The registry is transport-agnostic on purpose: HTTP
+ * handlers map `code` to a status (404/409/413) instead of the registry
+ * importing HTTP types.
+ */
+export class DocumentRegistryError extends Error {
+  constructor(
+    readonly code: DocumentRegistryErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'DocumentRegistryError';
+  }
+}
+
+/**
+ * Keeps the open documents the browser can address by id.
+ *
+ * The sidecar still holds exactly ONE document: `activeDocumentId` is the one
+ * currently opened there, and switching = one serialized `sidecar.open` of the
+ * target file. Everything else is file + metadata ownership.
+ *
+ * Invariants:
+ * - every mutation runs through `enqueue`, so two opens/activates can never
+ *   race the sidecar into an inconsistent state (`/api/rpc` only reads);
+ * - the map is only touched after a successful sidecar open, so a failed
+ *   operation leaves the previous active document addressable;
+ * - a temp file is deleted only by the operation that owns it (close, LRU
+ *   eviction, cleanup) — never by a sibling's open;
+ * - a temp file whose unlink fails while the sidecar still holds it is queued
+ *   in `pendingDeletions` and retried after the next successful open/activate
+ *   (and again on cleanup), so Windows cannot leak it silently;
+ * - the active document is never evicted; the registry evicts the least
+ *   recently activated inactive document instead.
  */
 export class DocumentRegistry {
-  private current: OpenDocument | null = null;
+  private readonly documents = new Map<string, OpenDocument>();
+  private activeDocumentId: string | null = null;
+  private recency = 0;
+  private readonly maxDocuments: number;
+  private readonly maxTotalBytes: number;
+  /** Serializes every mutation; the tail never rejects. */
+  private mutationQueue: Promise<void> = Promise.resolve();
+  /**
+   * Temp files this registry owns but could not unlink yet. Only the file's
+   * extractor in the sidecar keeps them alive on Windows; once the next
+   * open/activate replaces that extractor the retry succeeds.
+   */
+  private readonly pendingDeletions = new Set<string>();
 
-  constructor(private readonly sidecar: SidecarPool) {}
+  constructor(
+    private readonly sidecar: SidecarPool,
+    options: DocumentRegistryOptions = {},
+  ) {
+    this.maxDocuments = Math.max(1, options.maxDocuments ?? MAX_DOCUMENTS);
+    this.maxTotalBytes = Math.max(1, options.maxTotalBytes ?? MAX_DOCUMENT_TOTAL_BYTES);
+  }
 
+  getActiveId(): string | null {
+    return this.activeDocumentId;
+  }
+
+  getActive(): OpenDocument | null {
+    const id = this.activeDocumentId;
+    if (id === null) return null;
+    return this.documents.get(id) ?? null;
+  }
+
+  /** @deprecated Use `getActive()`; kept while single-document callers migrate. */
   getCurrent(): OpenDocument | null {
-    return this.current;
+    return this.getActive();
+  }
+
+  /** Registered documents, most recently activated first. Treat as read-only. */
+  list(): OpenDocument[] {
+    return [...this.documents.values()].sort(
+      (left, right) => right.lastActiveAt - left.lastActiveAt,
+    );
   }
 
   findById(id: string): OpenDocument | null {
-    return this.current !== null && this.current.id === id ? this.current : null;
+    return this.documents.get(id) ?? null;
+  }
+
+  findBySourceUrl(url: string): OpenDocument | null {
+    for (const doc of this.documents.values()) {
+      if (doc.sourceUrl === url) return doc;
+    }
+    return null;
   }
 
   urlFor(doc: OpenDocument): string {
     return `/doc/${doc.id}/${encodeURIComponent(doc.name)}`;
   }
 
-  async open(filePath: string, name: string, isTemp: boolean): Promise<OpenedDocument> {
-    const previous = this.current;
+  /**
+   * Open and activate a document, registering it on success.
+   *
+   * The caller owns `filePath` until this resolves: a rejected open leaves the
+   * file untouched (the caller deletes its own garbage copy) and leaves the
+   * registry exactly as it was, with the previous active document re-opened in
+   * the sidecar when possible.
+   */
+  open(
+    filePath: string,
+    name: string,
+    isTemp: boolean,
+    size: number,
+    sourceUrl: string | null = null,
+  ): Promise<OpenedDocument> {
+    return this.enqueue(() => this.performOpen(filePath, name, isTemp, size, sourceUrl));
+  }
+
+  /**
+   * Open a document, de-duplicating by `sourceUrl` INSIDE the mutation queue.
+   *
+   * A URL handler cannot decide this before downloading: two requests for the
+   * same URL both find an empty registry, both download, and both would then
+   * register a document. The authoritative check therefore runs here, where it
+   * is serialized with every other mutation, so at most one document per
+   * `sourceUrl` can ever be registered.
+   *
+   * When a registered document already carries `sourceUrl`, `filePath` is
+   * neither opened nor registered: the existing document is activated instead
+   * (same semantics and failure recovery as `activate`) and `deduped` is true.
+   * The caller keeps ownership of `filePath` and must delete it in both the
+   * deduped and the rejected case.
+   */
+  openDeduped(
+    filePath: string,
+    name: string,
+    isTemp: boolean,
+    size: number,
+    sourceUrl: string | null,
+  ): Promise<DedupedOpenResult> {
+    return this.enqueue(async () => {
+      if (sourceUrl !== null) {
+        const existing = this.findBySourceUrl(sourceUrl);
+        if (existing) {
+          return { opened: await this.performActivate(existing.id), deduped: true };
+        }
+      }
+
+      return {
+        opened: await this.performOpen(filePath, name, isTemp, size, sourceUrl),
+        deduped: false,
+      };
+    });
+  }
+
+  /**
+   * Make an already registered document the active one.
+   *
+   * Re-activating the active document returns its cached metadata and does not
+   * touch the sidecar; switching opens the target file with the open budget.
+   */
+  activate(id: string): Promise<OpenedDocument> {
+    return this.enqueue(() => this.performActivate(id));
+  }
+
+  /**
+   * Close a document and delete its temporary copy.
+   *
+   * The active document can only be closed when it is the last one: the browser
+   * must activate a neighbour first, which is what the `conflict` error is for.
+   */
+  close(id: string): Promise<{ closed: OpenDocument; activeDocumentId: string | null }> {
+    return this.enqueue(() => this.performClose(id));
+  }
+
+  /**
+   * Temp files whose unlink failed and that wait for a retry. Exposed for tests
+   * and diagnostics: an empty set after the sidecar released its extractor means
+   * every document this registry owned is gone from disk.
+   */
+  pendingDeletionPaths(): string[] {
+    return [...this.pendingDeletions];
+  }
+
+  /** Delete every temporary document and clear the registry (server shutdown). */
+  cleanup(): Promise<void> {
+    return this.enqueue(async () => {
+      const docs = [...this.documents.values()];
+      this.documents.clear();
+      this.activeDocumentId = null;
+      this.sidecar.setDocumentPath(null);
+
+      // Registered temp copies PLUS everything an earlier unlink could not
+      // remove (a file the sidecar still held). Best effort: one undeletable
+      // file must not keep the others alive, and a failure stays queued for the
+      // next cleanup/shutdown attempt instead of being forgotten.
+      const files = new Set<string>(this.pendingDeletions);
+      for (const doc of docs) {
+        if (doc.isTemp) files.add(doc.filePath);
+      }
+      await Promise.all([...files].map((file) => this.removeQueued(file)));
+    });
+  }
+
+  // --- unlocked helpers (never take the queue themselves) -------------------
+
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.mutationQueue.then(() => operation());
+    this.mutationQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private touch(doc: OpenDocument): void {
+    this.recency += 1;
+    doc.lastActiveAt = this.recency;
+  }
+
+  /**
+   * Delete a temporary file this registry owns; queue it for a later retry when
+   * the unlink fails (on Windows the sidecar may still hold the extractor).
+   */
+  private async removeQueued(filePath: string): Promise<void> {
+    if (await removeTempFile(filePath)) {
+      this.pendingDeletions.delete(filePath);
+      return;
+    }
+    this.pendingDeletions.add(filePath);
+  }
+
+  /**
+   * Retry every queued deletion. Called after a successful open/activate,
+   * which released the extractor that kept the previous file alive.
+   */
+  private async retryPendingDeletions(): Promise<void> {
+    if (this.pendingDeletions.size === 0) return;
+    await Promise.all([...this.pendingDeletions].map((file) => this.removeQueued(file)));
+  }
+
+  /** `open` parses the document and scans its fonts, so it gets its own budget. */
+  private sendOpen(filePath: string): Promise<unknown> {
+    return this.sidecar.send('open', { path: filePath }, OPEN_PDF_TIMEOUT_MS);
+  }
+
+  /**
+   * Best-effort restore of the document that was active before a failed
+   * open/activate. A restore failure means the sidecar holds no document at
+   * all, so the registry must stop claiming one is active (`/api/rpc` can then
+   * answer "no active document" instead of forwarding to a stale path).
+   * The map itself is untouched either way.
+   */
+  private async restoreActive(previous: OpenDocument | null): Promise<void> {
+    if (!previous) {
+      this.sidecar.setDocumentPath(null);
+      return;
+    }
+
+    try {
+      await this.sendOpen(previous.filePath);
+      this.sidecar.setDocumentPath(previous.filePath);
+    } catch (restoreError) {
+      console.error('[web] Failed to re-open previous document:', toErrorMessage(restoreError));
+      this.sidecar.setDocumentPath(null);
+      if (this.activeDocumentId === previous.id) this.activeDocumentId = null;
+    }
+  }
+
+  private async performOpen(
+    filePath: string,
+    name: string,
+    isTemp: boolean,
+    size: number,
+    sourceUrl: string | null,
+  ): Promise<OpenedDocument> {
+    // Reject before touching the sidecar: the caller deletes its own copy and
+    // the current view never flickers.
+    if (size > this.maxTotalBytes) {
+      throw new DocumentRegistryError(
+        'too_large',
+        `The PDF is larger than the ${formatBytes(this.maxTotalBytes)} document limit`,
+      );
+    }
+
+    const previous = this.getActive();
 
     let metadata: unknown;
     try {
-      // Opening parses the document and scans its font resources, so a large or
-      // damaged PDF can exceed the 30s default; the open gets its own budget.
-      metadata = await this.sidecar.send('open', { path: filePath }, OPEN_PDF_TIMEOUT_MS);
+      metadata = await this.sendOpen(filePath);
     } catch (error) {
-      // The sidecar dropped the old document before failing the new one. Put
-      // the previous document back so the browser's current view stays valid,
-      // then propagate the original error unchanged.
-      if (previous) {
-        try {
-          // Restoring is the same full open, so it needs the same budget.
-          await this.sidecar.send(
-            'open',
-            { path: previous.filePath },
-            OPEN_PDF_TIMEOUT_MS,
-          );
-          this.sidecar.setDocumentPath(previous.filePath);
-        } catch (restoreError) {
-          console.error(
-            '[web] Failed to re-open previous document:',
-            toErrorMessage(restoreError),
-          );
-          this.sidecar.setDocumentPath(null);
-        }
-      }
+      await this.restoreActive(previous);
       throw error;
     }
 
-    const doc: OpenDocument = { id: randomUUID(), filePath, name, isTemp };
-    this.current = doc;
+    const doc: OpenDocument = {
+      id: randomUUID(),
+      filePath,
+      name,
+      isTemp,
+      size,
+      sourceUrl,
+      metadata,
+      lastActiveAt: 0,
+    };
+    this.documents.set(doc.id, doc);
+    this.activeDocumentId = doc.id;
+    this.touch(doc);
     this.sidecar.setDocumentPath(filePath);
 
-    if (previous && previous.isTemp && previous.filePath !== filePath) {
-      await removeTempFile(previous.filePath);
-    }
+    await this.evictOverflow();
+    // The open above replaced the sidecar's extractor, so files queued by an
+    // earlier failed unlink are deletable now.
+    await this.retryPendingDeletions();
 
     return { metadata, doc };
   }
 
-  /** Delete the current temp document when the server shuts down. */
-  async cleanup(): Promise<void> {
-    const doc = this.current;
-    this.current = null;
-    this.sidecar.setDocumentPath(null);
-    if (doc?.isTemp) await removeTempFile(doc.filePath);
+  private async performActivate(id: string): Promise<OpenedDocument> {
+    const target = this.documents.get(id);
+    if (!target) {
+      throw new DocumentRegistryError('not_found', 'Document not found');
+    }
+
+    if (this.activeDocumentId === id) {
+      this.touch(target);
+      return { metadata: target.metadata, doc: target };
+    }
+
+    const previous = this.getActive();
+
+    let metadata: unknown;
+    try {
+      metadata = await this.sendOpen(target.filePath);
+    } catch (error) {
+      await this.restoreActive(previous);
+      throw error;
+    }
+
+    target.metadata = metadata;
+    this.touch(target);
+    this.activeDocumentId = id;
+    this.sidecar.setDocumentPath(target.filePath);
+
+    await this.evictOverflow();
+    await this.retryPendingDeletions();
+
+    return { metadata, doc: target };
+  }
+
+  private async performClose(
+    id: string,
+  ): Promise<{ closed: OpenDocument; activeDocumentId: string | null }> {
+    const doc = this.documents.get(id);
+    if (!doc) {
+      throw new DocumentRegistryError('not_found', 'Document not found');
+    }
+
+    const isActive = this.activeDocumentId === id;
+    if (isActive && this.documents.size > 1) {
+      throw new DocumentRegistryError(
+        'conflict',
+        'Activate another document before closing the active one',
+      );
+    }
+
+    this.documents.delete(id);
+    if (isActive) {
+      // Closing the last document is allowed; the API layer turns the missing
+      // active document into a 409 for `/api/rpc`.
+      this.activeDocumentId = null;
+      this.sidecar.setDocumentPath(null);
+    }
+
+    if (doc.isTemp) {
+      // The last active document is still open in the sidecar's extractor, so
+      // unlink can fail on Windows. Queue it instead of losing the path; the
+      // next successful open/activate (or cleanup) retries.
+      await this.removeQueued(doc.filePath);
+    }
+
+    return { closed: doc, activeDocumentId: this.activeDocumentId };
+  }
+
+  private totalBytes(): number {
+    let total = 0;
+    for (const doc of this.documents.values()) total += doc.size;
+    return total;
+  }
+
+  /**
+   * Evict least-recently-active INACTIVE documents until both bounds hold.
+   * A bounded loop: every pass removes one entry, and the active document is
+   * never a candidate, so the loop cannot spin when only the active doc is
+   * oversized.
+   */
+  private async evictOverflow(): Promise<void> {
+    while (
+      this.documents.size > this.maxDocuments ||
+      this.totalBytes() > this.maxTotalBytes
+    ) {
+      const victim = this.leastRecentlyActiveInactive();
+      if (!victim) break;
+
+      this.documents.delete(victim.id);
+      console.log(
+        `[web] Evicted document "${victim.name}" (${victim.id}) to stay within the open-document limits`,
+      );
+      if (victim.isTemp) await this.removeQueued(victim.filePath);
+    }
+  }
+
+  private leastRecentlyActiveInactive(): OpenDocument | null {
+    let victim: OpenDocument | null = null;
+    for (const doc of this.documents.values()) {
+      if (doc.id === this.activeDocumentId) continue;
+      if (!victim || doc.lastActiveAt < victim.lastActiveAt) victim = doc;
+    }
+    return victim;
   }
 }
 
@@ -1070,8 +1468,8 @@ export interface DiffUploadStoreOptions {
  * Short-lived storage for the two temporary PDFs of a browser diff.
  *
  * Deliberately separate from `DocumentRegistry`: uploading a diff side must
- * neither become nor replace the current document, and the registry's single
- * slot is exactly what the Inspect view depends on. Tokens are single-use,
+ * neither become nor replace the active document, and that document is exactly
+ * what the Inspect view depends on. Tokens are single-use,
  * expire after `DIFF_UPLOAD_TTL_MS`, are capped in number AND total bytes
  * (oldest evicted) and every removal unlinks the temporary file.
  */
@@ -1586,6 +1984,100 @@ interface ApiContext {
   diffUploads: DiffUploadStore;
 }
 
+/** `POST /api/open`, `/api/open-url` and activate share this response shape. */
+interface OpenResponse {
+  canceled: false;
+  /** Registry URL (`/doc/:id/:name`), never a filesystem path. */
+  path: string;
+  metadata: unknown;
+  name: string;
+  /** Present for downloaded documents only. */
+  sourceUrl?: string;
+  documentId: string;
+}
+
+/** One entry of `GET /api/documents`; deliberately path-free. */
+interface DocumentSummary {
+  id: string;
+  name: string;
+  size: number;
+  sourceUrl: string | null;
+  active: boolean;
+}
+
+/**
+ * Map a typed registry failure onto its HTTP status.
+ *
+ * Kept here (not on the error class) so the registry stays transport-agnostic.
+ * Any other error keeps the generic 500 path in `createWebServer`.
+ */
+function statusForRegistryError(code: DocumentRegistryErrorCode): number {
+  switch (code) {
+    case 'not_found':
+      return 404;
+    case 'conflict':
+      return 409;
+    case 'too_large':
+      return 413;
+  }
+}
+
+function openResponse(registry: DocumentRegistry, opened: OpenedDocument): OpenResponse {
+  const doc = opened.doc;
+  const response: OpenResponse = {
+    canceled: false,
+    path: registry.urlFor(doc),
+    metadata: opened.metadata,
+    name: doc.name,
+    documentId: doc.id,
+  };
+  if (doc.sourceUrl !== null) response.sourceUrl = doc.sourceUrl;
+  return response;
+}
+
+function documentSummary(doc: OpenDocument, activeDocumentId: string | null): DocumentSummary {
+  return {
+    id: doc.id,
+    name: doc.name,
+    size: doc.size,
+    sourceUrl: doc.sourceUrl,
+    active: doc.id === activeDocumentId,
+  };
+}
+
+type DocumentPath =
+  | { action: 'activate'; id: string }
+  | { action: 'close'; id: string };
+
+/**
+ * Parse `/api/documents/:id` and `/api/documents/:id/activate`.
+ *
+ * `null` means "not a documents route shape" (the caller answers 404). A
+ * malformed percent-escape in the id is a 400 instead: the id is user-visible
+ * in the address bar, and decoding must not silently turn a typo into 404.
+ * Empty segments (`//`), trailing slashes and extra segments are rejected.
+ */
+function parseDocumentPath(pathname: string): DocumentPath | null {
+  const prefix = '/api/documents/';
+  if (!pathname.startsWith(prefix)) return null;
+
+  const segments = pathname.slice(prefix.length).split('/');
+  if (segments.length > 2) return null;
+  if (segments.some((segment) => segment === '')) return null;
+
+  let id: string;
+  try {
+    id = decodeURIComponent(segments[0]);
+  } catch {
+    throw new HttpError(400, 'Invalid document id');
+  }
+  if (!id) return null;
+
+  if (segments.length === 1) return { action: 'close', id };
+  if (segments[1] === 'activate') return { action: 'activate', id };
+  return null;
+}
+
 async function handleOpenUpload(
   req: IncomingMessage,
   res: ServerResponse,
@@ -1599,8 +2091,9 @@ async function handleOpenUpload(
   // Registered before the bytes arrive so a shutdown mid-upload still unlinks
   // the partial file; ownership passes to the document registry below.
   uploadedTempFiles.add(filePath);
+  let size: number;
   try {
-    await receivePdfUpload(req, filePath);
+    size = await receivePdfUpload(req, filePath);
     if (!(await hasPdfMagic(filePath))) {
       throw new HttpError(400, 'The uploaded file is not a PDF');
     }
@@ -1612,21 +2105,18 @@ async function handleOpenUpload(
 
   let opened: OpenedDocument;
   try {
-    opened = await context.registry.open(filePath, name, true);
+    opened = await context.registry.open(filePath, name, true, size);
   } catch (error) {
     uploadedTempFiles.delete(filePath);
     await removeTempFile(filePath);
     throw error;
   }
 
-  // The registry now owns the file and deletes it when it is replaced/at exit.
+  // The registry now owns the file and deletes it when this document is closed,
+  // evicted or on shutdown. Earlier documents stay registered: opening a PDF is
+  // additive in the browser build.
   uploadedTempFiles.delete(filePath);
-  sendJson(res, 200, {
-    canceled: false,
-    path: context.registry.urlFor(opened.doc),
-    metadata: opened.metadata,
-    name,
-  });
+  sendJson(res, 200, openResponse(context.registry, opened));
 }
 
 /**
@@ -1763,6 +2253,20 @@ async function handleOpenUrl(
   } catch (error) {
     throw new HttpError(400, toErrorMessage(error));
   }
+  const sourceUrl = url.href;
+
+  // Re-opening a URL the session already holds must not download it again or
+  // add a duplicate document. Activating the existing entry is exactly what the
+  // de-dupe rule in the renderer would ask for, and it needs no network.
+  //
+  // This is only the fast path: it cannot see a concurrent request that is
+  // still downloading, so the authoritative check lives in `openDeduped`.
+  const existing = context.registry.findBySourceUrl(sourceUrl);
+  if (existing) {
+    const opened = await context.registry.activate(existing.id);
+    sendJson(res, 200, openResponse(context.registry, opened));
+    return;
+  }
 
   let downloadedPath: string;
   try {
@@ -1771,23 +2275,72 @@ async function handleOpenUrl(
     throw new HttpError(500, toErrorMessage(error));
   }
 
-  let opened: OpenedDocument;
+  let result: DedupedOpenResult;
   try {
-    opened = await context.registry.open(downloadedPath, nameFromUrl(url), true);
+    // The registry records the size so the total-byte bound is known without a
+    // stat per document, and the URL so a repeat open-url can reuse this doc.
+    const info = await stat(downloadedPath);
+    // Serialized with every other mutation: if another request registered this
+    // URL while this one downloaded, the existing document is activated and the
+    // fresh copy is NOT adopted.
+    result = await context.registry.openDeduped(
+      downloadedPath,
+      nameFromUrl(url),
+      true,
+      info.size,
+      sourceUrl,
+    );
   } catch (error) {
     // The fresh download is garbage if the sidecar rejected it (the previous
-    // document was already restored by the registry).
+    // document was already restored by the registry), and equally when
+    // activating the URL's existing document failed.
     await deleteDownloadedFile(downloadedPath);
     throw error;
   }
 
+  if (result.deduped) {
+    // Lost the race: another document already owns this URL, so this copy is
+    // garbage and the winner's document is what the browser gets.
+    await deleteDownloadedFile(downloadedPath);
+  }
+
+  sendJson(res, 200, openResponse(context.registry, result.opened));
+}
+
+/**
+ * `GET /api/documents` — the registry's observable state.
+ *
+ * Paths are intentionally absent: the browser only needs ids for activate/close
+ * and the `/doc/:id/:name` URLs it already received from the open responses.
+ */
+function handleListDocuments(res: ServerResponse, context: ApiContext): void {
+  const activeDocumentId = context.registry.getActiveId();
   sendJson(res, 200, {
-    canceled: false,
-    path: context.registry.urlFor(opened.doc),
-    metadata: opened.metadata,
-    name: opened.doc.name,
-    sourceUrl: url.href,
+    activeDocumentId,
+    documents: context.registry
+      .list()
+      .map((doc) => documentSummary(doc, activeDocumentId)),
   });
+}
+
+/** `POST /api/documents/:id/activate` — same payload as opening the document. */
+async function handleActivateDocument(
+  res: ServerResponse,
+  context: ApiContext,
+  id: string,
+): Promise<void> {
+  const opened = await context.registry.activate(id);
+  sendJson(res, 200, openResponse(context.registry, opened));
+}
+
+/** `DELETE /api/documents/:id` — close one document (active only if last). */
+async function handleCloseDocument(
+  res: ServerResponse,
+  context: ApiContext,
+  id: string,
+): Promise<void> {
+  const result = await context.registry.close(id);
+  sendJson(res, 200, { closed: true, activeDocumentId: result.activeDocumentId });
 }
 
 async function handleRpc(
@@ -1810,6 +2363,13 @@ async function handleRpc(
   // decode large parts of the document; every other allowlisted method keeps
   // the default budget.
   const timeoutMs = RPC_TIMEOUTS[method] ?? DEFAULT_REQUEST_TIMEOUT_MS;
+
+  // The sidecar holds one document. Once the last one is closed (or a restore
+  // failed) there is nothing to query, so fail explicitly instead of letting a
+  // stale sidecar answer for a document the browser no longer has.
+  if (!context.registry.getActive()) {
+    throw new HttpError(409, 'No active document');
+  }
 
   const result = await context.sidecar.send(method, params, timeoutMs);
   sendJson(res, 200, result);
@@ -1913,6 +2473,39 @@ async function handleRequest(
     return;
   }
 
+  if (pathname === '/api/documents') {
+    if (method !== 'GET') {
+      methodNotAllowed(res);
+      return;
+    }
+    handleListDocuments(res, context);
+    return;
+  }
+
+  if (pathname.startsWith('/api/documents/')) {
+    const route = parseDocumentPath(pathname);
+    if (!route) {
+      sendError(res, 404, 'Not found');
+      return;
+    }
+
+    if (route.action === 'activate') {
+      if (method !== 'POST') {
+        methodNotAllowed(res);
+        return;
+      }
+      await handleActivateDocument(res, context, route.id);
+      return;
+    }
+
+    if (method !== 'DELETE') {
+      methodNotAllowed(res);
+      return;
+    }
+    await handleCloseDocument(res, context, route.id);
+    return;
+  }
+
   if (pathname.startsWith('/api/')) {
     sendError(res, 404, 'Not found');
     return;
@@ -1979,6 +2572,11 @@ export function createWebServer(): {
     void handleRequest(req, res, context).catch((error: unknown) => {
       if (error instanceof HttpError) {
         sendError(res, error.statusCode, error.message);
+        return;
+      }
+
+      if (error instanceof DocumentRegistryError) {
+        sendError(res, statusForRegistryError(error.code), error.message);
         return;
       }
 

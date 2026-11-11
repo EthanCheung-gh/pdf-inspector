@@ -12,6 +12,7 @@
  * The sidecar is stubbed: the Python open itself is covered by the sidecar test
  * suite, so only transport and budgets are asserted here.
  */
+import { stat } from 'node:fs/promises';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -76,12 +77,19 @@ afterEach(async () => {
 });
 
 describe('POST /api/open budget', () => {
-  it('opens the uploaded PDF with the 120s open budget', async () => {
+  it('opens the uploaded PDF with the 120s open budget and returns its id', async () => {
     expect(OPEN_PDF_TIMEOUT_MS).toBe(120_000);
 
     const response = await openUpload();
 
     expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      path: string;
+      documentId: string;
+    };
+    expect(payload.documentId).toBeTruthy();
+    expect(payload.path).toBe(`/doc/${payload.documentId}/large.pdf`);
+    expect(registry.getActiveId()).toBe(payload.documentId);
     expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith(
       'open',
@@ -116,6 +124,39 @@ describe('POST /api/open budget', () => {
       ],
     ]);
     expect(registry.getCurrent()).not.toBeNull();
+    expect(registry.list()).toHaveLength(1);
+
+    // The rejected upload is garbage and must not survive as an orphan temp
+    // file: the handler deletes its own copy when the registry refuses it.
+    const rejectedPath = (send.mock.calls[0][1] as { path: string }).path;
+    await expect(stat(rejectedPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+});
+
+describe('POST /api/open multi-document semantics', () => {
+  it('adds a document without replacing the previously opened one', async () => {
+    const firstResponse = await openUpload(PDF_BYTES, 'first.pdf');
+    const first = (await firstResponse.json()) as { path: string; documentId: string };
+    const secondResponse = await openUpload(PDF_BYTES, 'second.pdf');
+    const second = (await secondResponse.json()) as { path: string; documentId: string };
+
+    expect(first.documentId).not.toBe(second.documentId);
+    expect(registry.list()).toHaveLength(2);
+    expect(registry.getActiveId()).toBe(second.documentId);
+
+    // The first document stays addressable even though the second is active.
+    expect((await fetch(`${baseUrl}${first.path}`)).status).toBe(200);
+    expect((await fetch(`${baseUrl}${second.path}`)).status).toBe(200);
+
+    const listed = (await (await fetch(`${baseUrl}/api/documents`)).json()) as {
+      activeDocumentId: string;
+      documents: Array<{ id: string; active: boolean }>;
+    };
+    expect(listed.activeDocumentId).toBe(second.documentId);
+    expect(listed.documents.map((doc) => doc.id)).toEqual([
+      second.documentId,
+      first.documentId,
+    ]);
   });
 });
 
@@ -203,6 +244,33 @@ describe('other methods keep the default budget', () => {
     // page does not surface as a failed page load after 30s.
     expect(EXTRACT_PAGE_TIMEOUT_MS).toBe(120_000);
     expect(EXTRACT_PAGE_TIMEOUT_MS).toBeGreaterThan(30_000);
+  });
+});
+
+describe('RPC without an active document', () => {
+  it('answers 409 before calling the sidecar', async () => {
+    const response = await fetch(`${baseUrl}/api/rpc`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method: 'extract_metadata' }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'No active document' });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('recovers once a document is opened', async () => {
+    expect((await openUpload()).status).toBe(200);
+
+    const response = await fetch(`${baseUrl}/api/rpc`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method: 'extract_metadata' }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(send).toHaveBeenCalledWith('extract_metadata', {}, 30_000);
   });
 });
 

@@ -92,6 +92,11 @@ async function postRpc(payload: unknown): Promise<Response> {
 
 beforeEach(async () => {
   await startTestServer();
+  // /api/rpc requires an active document now. Register a non-temp entry without
+  // touching disk (the sidecar is stubbed and non-temp documents are never
+  // unlinked), then clear the open call so budget assertions stay exact.
+  await registry.open('/tmp/pdf-inspector-audit-active.pdf', 'active.pdf', false, 1);
+  send.mockClear();
 });
 
 afterEach(async () => {
