@@ -6,6 +6,7 @@ import type {
   DiffSide,
 } from '../../../shared/diff-types';
 import { ipc } from '../../services/ipc-client';
+import { useElapsedSeconds } from '../../hooks/useElapsedSeconds';
 import {
   DIFF_CHANGE_KINDS,
   DIFF_OBJECT_TYPE_ORDER,
@@ -18,11 +19,13 @@ import {
   describeDiffDetails,
   diffChangePreview,
   diffPageLabel,
+  firstInterestingPageIndex,
   formatDiffBBox,
   isDiffFilterActive,
   isDiffResultEmpty,
   isPageGeometryChange,
   pageGeometrySummary,
+  resolveDiffPageJump,
   suggestDiffJsonFilename,
   tableCellChanges,
 } from '../../services/diff-view';
@@ -257,9 +260,21 @@ export const DiffWorkspace: React.FC = () => {
   const [centerEl, setCenterEl] = useState<HTMLDivElement | null>(null);
   const [centerWidth, setCenterWidth] = useState(0);
   const [pixelStats, setPixelStats] = useState<PixelDiffStats | null>(null);
+  /** Result-page indexes the user has open; every other group is folded. */
+  const [expandedPages, setExpandedPages] = useState<ReadonlySet<number>>(
+    // Seeded from the result already applied at mount so the list never flashes
+    // fully folded before the reset effect below runs.
+    () => new Set(result ? [firstInterestingPageIndex(result.pages)] : []),
+  );
+  /** Raw text of the "Go to page" field; only digits are acted on. */
+  const [pageJump, setPageJump] = useState('');
   const fittedResultRef = useRef<DiffResult | null>(null);
+  // Informational only: exact seconds spent comparing, no invented percentage.
+  // Resets whenever `loading` turns off (a new run starts again at 0s).
+  const elapsedSeconds = useElapsedSeconds(loading);
 
   const pages = result?.pages ?? [];
+  const totalPages = pages.length;
   const page = result?.pages[pageIndex] ?? null;
   const groups = useMemo(() => buildDiffPageGroups(pages, filter), [pages, filter]);
   const filteredCount = useMemo(() => countFilteredChanges(pages, filter), [pages, filter]);
@@ -290,6 +305,66 @@ export const DiffWorkspace: React.FC = () => {
   const handleRenderStats = useCallback((stats: PixelDiffStats | null) => {
     setPixelStats(stats);
   }, []);
+
+  // -- left pane: foldable page groups -------------------------------------
+  //
+  // A comparison can list hundreds of pages, so the list opens folded to the
+  // page the diff focused. Expansion is a set of result-page indexes (never PDF
+  // page numbers): it survives filter changes and navigation, and only a new
+  // result resets it.
+  useEffect(() => {
+    if (!result) {
+      setExpandedPages(new Set());
+      return;
+    }
+    setExpandedPages(new Set([firstInterestingPageIndex(result.pages)]));
+  }, [result]);
+
+  // Prev/Next, the page jump and a change selection all move the current page.
+  // Its group must be open, or the row the panes are showing would be hidden.
+  useEffect(() => {
+    if (!result) return;
+    setExpandedPages((previous) =>
+      previous.has(pageIndex) ? previous : new Set(previous).add(pageIndex),
+    );
+  }, [pageIndex, result]);
+
+  // Filtering is a request to see matches, so open the groups that contain
+  // some. This only ever adds: groups the user opened stay open.
+  useEffect(() => {
+    if (!result || !isDiffFilterActive(filter)) return;
+
+    const matching = buildDiffPageGroups(result.pages, filter).map((group) => group.pageIndex);
+    if (matching.length === 0) return;
+
+    setExpandedPages((previous) => {
+      if (matching.every((index) => previous.has(index))) return previous;
+      const next = new Set(previous);
+      for (const index of matching) next.add(index);
+      return next;
+    });
+  }, [filter, result]);
+
+  const togglePageGroup = useCallback((index: number) => {
+    setExpandedPages((previous) => {
+      const next = new Set(previous);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }, []);
+
+  const expandAllGroups = useCallback(() => {
+    setExpandedPages(new Set(groups.map((group) => group.pageIndex)));
+  }, [groups]);
+
+  const collapseAllGroups = useCallback(() => setExpandedPages(new Set()), []);
+
+  const goToPage = useCallback(() => {
+    const index = resolveDiffPageJump(pageJump, totalPages);
+    if (index === null) return;
+    setPageIndex(index);
+  }, [pageJump, setPageIndex, totalPages]);
 
   // Measure the center column so "Fit" reflects the real pane width instead of
   // a window-width guess (panels and the summary column take space away).
@@ -384,7 +459,6 @@ export const DiffWorkspace: React.FC = () => {
     }
   }, []);
 
-  const totalPages = pages.length;
   const empty = result ? isDiffResultEmpty(pages) : false;
   // Overlay draws exactly one page, so it must be the side that owns it. An
   // added page has no old side: loading the old document at the new page number
@@ -722,60 +796,158 @@ export const DiffWorkspace: React.FC = () => {
             </p>
           )}
 
-          <ul className={styles.pageList} data-testid="diff-page-list">
-            {groups.map((group) => (
-              <li key={group.pageIndex} className={styles.pageGroup}>
-                <button
-                  className={`${styles.pageHeader} ${group.pageIndex === pageIndex ? styles.pageHeaderActive : ''}`}
-                  type="button"
-                  onClick={() => setPageIndex(group.pageIndex)}
-                  aria-current={group.pageIndex === pageIndex ? 'true' : undefined}
-                  aria-label={`${diffPageLabel(group.page)}, ${DIFF_PAGE_STATUS_LABELS[group.page.status]}${
-                    group.changes.length > 0 ? `, ${group.changes.length} changes` : ''
-                  }`}
-                >
-                  <span className={styles.pageLabel}>{diffPageLabel(group.page)}</span>
-                  <span
-                    className={styles.statusBadge}
-                    data-status={group.page.status}
-                  >
-                    {DIFF_PAGE_STATUS_LABELS[group.page.status]}
-                  </span>
-                  {group.changes.length > 0 && (
-                    <span className={styles.pageCount}>{group.changes.length}</span>
-                  )}
-                </button>
+          {/*
+            The engine stops at its MAX_DIFF_CHANGES safety cap. Say so once:
+            a truncated list must never look like a complete comparison.
+          */}
+          {result?.summary.changesTruncated && (
+            <p className={styles.truncatedNote} role="status" data-testid="diff-truncated">
+              Too many changes — the list stops at the safety limit, so this comparison is
+              incomplete.
+            </p>
+          )}
 
-                {group.changes.length > 0 && (
-                  <ul className={styles.changeList}>
-                    {group.changes.map(({ change, changeIndex }) => {
-                      const isSelected =
-                        selection?.pageIndex === group.pageIndex &&
-                        selection.changeIndex === changeIndex;
-                      return (
-                        <li key={`${group.pageIndex}:${changeIndex}`}>
-                          <button
-                            className={`${styles.changeItem} ${isSelected ? styles.changeItemSelected : ''}`}
-                            type="button"
-                            aria-pressed={isSelected}
-                            aria-label={`${change.kind} ${change.type}: ${diffChangePreview(change)}`}
-                            onClick={() => selectChangeAt(group.pageIndex, changeIndex)}
-                          >
-                            <span className={styles.kindBadge} data-kind={change.kind}>
-                              {change.kind}
-                            </span>
-                            <span className={styles.changeType}>{change.type}</span>
-                            <span className={styles.changePreview} title={diffChangePreview(change)}>
-                              {diffChangePreview(change)}
-                            </span>
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </li>
-            ))}
+          {/*
+            Jump + fold controls sit directly above the list. The row must stay
+            usable in a 200px sidebar, so it is a compact input/button pair and
+            the position, with the label only for assistive technology.
+          */}
+          <div className={styles.pageJump}>
+            <label className={styles.visuallyHidden} htmlFor="diff-page-jump">
+              Go to page
+            </label>
+            <input
+              id="diff-page-jump"
+              className={styles.pageJumpInput}
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={totalPages > 0 ? totalPages : undefined}
+              placeholder={totalPages > 0 ? `1–${totalPages}` : '—'}
+              value={pageJump}
+              onChange={(event) => setPageJump(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter') return;
+                event.preventDefault();
+                goToPage();
+              }}
+              disabled={!result || totalPages === 0}
+              aria-label="Go to page"
+              title="Type a page number and press Enter"
+            />
+            <button
+              className={styles.button}
+              type="button"
+              onClick={goToPage}
+              disabled={!result || totalPages === 0}
+              title="Jump to the typed page"
+            >
+              Go
+            </button>
+            <span className={styles.pageJumpStatus} data-testid="diff-page-jump-status">
+              {totalPages > 0 ? `${pageIndex + 1} of ${totalPages}` : '—'}
+            </span>
+          </div>
+
+          <div className={styles.listActions}>
+            <button
+              className={styles.linkButton}
+              type="button"
+              onClick={expandAllGroups}
+              disabled={groups.length === 0}
+            >
+              Expand all
+            </button>
+            <button
+              className={styles.linkButton}
+              type="button"
+              onClick={collapseAllGroups}
+              disabled={groups.length === 0}
+            >
+              Collapse all
+            </button>
+          </div>
+
+          <ul className={styles.pageList} data-testid="diff-page-list">
+            {groups.map((group) => {
+              const expanded = expandedPages.has(group.pageIndex);
+              const hasChanges = group.changes.length > 0;
+              const changesId = `diff-page-changes-${group.pageIndex}`;
+
+              return (
+                <li key={group.pageIndex} className={styles.pageGroup}>
+                  {/*
+                    One button per page: it selects the page and folds its
+                    changes, so the whole row is the disclosure control (nested
+                    buttons inside a <button> are invalid HTML).
+                  */}
+                  <button
+                    className={`${styles.pageHeader} ${group.pageIndex === pageIndex ? styles.pageHeaderActive : ''}`}
+                    type="button"
+                    onClick={() => {
+                      setPageIndex(group.pageIndex);
+                      if (hasChanges) togglePageGroup(group.pageIndex);
+                    }}
+                    aria-current={group.pageIndex === pageIndex ? 'true' : undefined}
+                    aria-expanded={hasChanges ? expanded : undefined}
+                    aria-controls={hasChanges ? changesId : undefined}
+                    aria-label={`${diffPageLabel(group.page)}, ${DIFF_PAGE_STATUS_LABELS[group.page.status]}${
+                      hasChanges
+                        ? `, ${group.changes.length} change${group.changes.length === 1 ? '' : 's'}`
+                        : ''
+                    }`}
+                  >
+                    <span
+                      className={styles.chevron}
+                      data-expanded={expanded}
+                      data-empty={hasChanges ? undefined : 'true'}
+                      aria-hidden="true"
+                    >
+                      ▸
+                    </span>
+                    <span className={styles.pageLabel}>{diffPageLabel(group.page)}</span>
+                    <span
+                      className={styles.statusBadge}
+                      data-status={group.page.status}
+                    >
+                      {DIFF_PAGE_STATUS_LABELS[group.page.status]}
+                    </span>
+                    {hasChanges && (
+                      <span className={styles.pageCount}>{group.changes.length}</span>
+                    )}
+                  </button>
+
+                  {hasChanges && expanded && (
+                    <ul className={styles.changeList} id={changesId}>
+                      {group.changes.map(({ change, changeIndex }) => {
+                        const isSelected =
+                          selection?.pageIndex === group.pageIndex &&
+                          selection.changeIndex === changeIndex;
+                        return (
+                          <li key={`${group.pageIndex}:${changeIndex}`}>
+                            <button
+                              className={`${styles.changeItem} ${isSelected ? styles.changeItemSelected : ''}`}
+                              type="button"
+                              aria-pressed={isSelected}
+                              aria-label={`${change.kind} ${change.type}: ${diffChangePreview(change)}`}
+                              onClick={() => selectChangeAt(group.pageIndex, changeIndex)}
+                            >
+                              <span className={styles.kindBadge} data-kind={change.kind}>
+                                {change.kind}
+                              </span>
+                              <span className={styles.changeType}>{change.type}</span>
+                              <span className={styles.changePreview} title={diffChangePreview(change)}>
+                                {diffChangePreview(change)}
+                              </span>
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
           </ul>
 
           <p
@@ -804,7 +976,13 @@ export const DiffWorkspace: React.FC = () => {
 
           {loading && (
             <p className={styles.centerEmpty} role="status" aria-live="polite">
-              Comparing documents…
+              <span>
+                Comparing documents…
+                {' '}
+                <span className={styles.elapsed} data-testid="diff-elapsed">
+                  {elapsedSeconds}s
+                </span>
+              </span>
               {/*
                 Muted reassurance for large pairs. Deliberately no percentage:
                 page pairing is only known after the fingerprint pass, so any

@@ -288,6 +288,26 @@ export function computeDiffFitZoom(
   return clampDiffZoom(usable / widest);
 }
 
+/**
+ * Resolve a typed page number to a zero-based result-page index.
+ *
+ * The "Go to page" field is free text, so it must never move the view on
+ * malformed input: only digits are accepted (no decimals, signs or exponents),
+ * and a blank field returns `null` so the caller can ignore the attempt.
+ * Out-of-range numbers are clamped into `1..totalPages`, because typing `999`
+ * in a short comparison means "the last page", not "do nothing".
+ */
+export function resolveDiffPageJump(value: string, totalPages: number): number | null {
+  if (!Number.isFinite(totalPages) || totalPages <= 0) return null;
+
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+
+  const page = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(page)) return null;
+  return Math.min(totalPages, Math.max(1, page)) - 1;
+}
+
 /** Page label for the list/navigation bar; unpaired pages read as one-sided. */
 export function diffPageLabel(page: DiffPage): string {
   if (page.oldIndex !== null && page.newIndex !== null) {

@@ -132,6 +132,32 @@ describe('DiffWorkspace summary and change list', () => {
     expect(screen.getByText('4 changes')).toBeTruthy();
   });
 
+  it('warns when the engine truncated the change list', () => {
+    act(() => {
+      store().applyResult(makeSampleResult());
+    });
+
+    renderWorkspace();
+
+    expect(screen.queryByTestId('diff-truncated')).toBeNull();
+    cleanup();
+
+    const truncated = makeSampleResult();
+    truncated.truncated = true;
+    truncated.summary.changesTruncated = true;
+    act(() => {
+      store().applyResult(truncated);
+    });
+
+    renderWorkspace();
+
+    const warning = screen.getByTestId('diff-truncated');
+    expect(warning.textContent).toContain('Too many changes');
+    expect(warning.textContent).toContain('incomplete');
+    // One line, not a per-page annotation: exactly one warning is rendered.
+    expect(screen.getAllByTestId('diff-truncated')).toHaveLength(1);
+  });
+
   it('selects a change, syncs the panes and fills the detail pane', () => {
     act(() => {
       store().setSource('old', '/docs/old.pdf', 'old.pdf');
@@ -572,7 +598,8 @@ describe('DiffWorkspace ignore regions', () => {
     expect(diffPdfs).toHaveBeenCalledWith('/docs/old.pdf', '/docs/new.pdf', {
       positionTolerance: 1,
       textTolerance: 'normalized',
-      ignoreTypes: [],
+      // The UI default: character-level changes are opt-in, word-level is not.
+      ignoreTypes: ['char'],
       ignoreFonts: false,
       ignoreColors: false,
       ignoreImages: false,
@@ -824,5 +851,314 @@ describe('DiffWorkspace visual mode', () => {
 
     expect(store().zoom).toBe(1.25);
     expect(takeVisual()!.zoom).toBe(1.25);
+  });
+});
+
+describe('DiffWorkspace elapsed counter', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows elapsed seconds while comparing and resets when loading ends', () => {
+    vi.useFakeTimers();
+    renderWorkspace();
+
+    act(() => store().setLoading(true));
+    expect(screen.getByTestId('diff-elapsed').textContent).toBe('0s');
+
+    act(() => {
+      vi.advanceTimersByTime(42_000);
+    });
+    const status = screen.getByRole('status');
+    expect(status.textContent).toContain('Comparing documents… 42s');
+    expect(screen.getByTestId('diff-elapsed').textContent).toBe('42s');
+    expect(status.textContent).toContain('Large PDFs can take several minutes');
+
+    act(() => store().setLoading(false));
+    expect(screen.queryByTestId('diff-elapsed')).toBeNull();
+
+    // A re-run starts from zero rather than resuming the previous count.
+    act(() => store().setLoading(true));
+    expect(screen.getByTestId('diff-elapsed').textContent).toBe('0s');
+  });
+});
+
+describe('DiffWorkspace page list folding', () => {
+  const setup = (result = makeSampleResult()): void => {
+    act(() => {
+      store().setSource('old', '/docs/old.pdf', 'old.pdf');
+      store().setSource('new', '/docs/new.pdf', 'new.pdf');
+      store().applyResult(result);
+    });
+  };
+
+  const list = (): HTMLElement => screen.getByTestId('diff-page-list');
+
+  const header = (name: RegExp): HTMLElement => within(list()).getByRole('button', { name });
+
+  const expandedOf = (name: RegExp): string | null =>
+    header(name).getAttribute('aria-expanded');
+
+  const changeButtons = (): HTMLElement[] =>
+    within(list()).queryAllByRole('button', {
+      name: /^(added|removed|modified|moved) /,
+    });
+
+  it('opens only the focused page on a new result', () => {
+    setup();
+    renderWorkspace();
+
+    expect(expandedOf(/^Page 1/)).toBe('true');
+    expect(expandedOf(/^Old page 2/)).toBe('false');
+    expect(expandedOf(/^New page 2/)).toBe('false');
+
+    // The open group lists its changes; folded groups only keep the count.
+    expect(within(list()).getByRole('button', { name: /modified word:/ })).toBeTruthy();
+    expect(within(list()).queryByRole('button', { name: /removed word:/ })).toBeNull();
+    expect(within(header(/^Old page 2/)).getByText('1')).toBeTruthy();
+    expect(changeButtons()).toHaveLength(2);
+  });
+
+  it('keeps every page in its own row', () => {
+    setup();
+    renderWorkspace();
+
+    const rows = Array.from(list().children) as HTMLElement[];
+    expect(rows).toHaveLength(3);
+    expect(rows.map((row) => within(row).getAllByRole('button')[0].getAttribute('aria-label'))).toEqual(
+      ['Page 1, changed, 2 changes', 'Old page 2, removed, 1 change', 'New page 2, added, 1 change'],
+    );
+  });
+
+  it('toggles a group from its header and selects that page', () => {
+    setup();
+    renderWorkspace();
+
+    act(() => {
+      fireEvent.click(header(/^Old page 2/));
+    });
+
+    expect(store().pageIndex).toBe(1);
+    expect(expandedOf(/^Old page 2/)).toBe('true');
+    expect(within(list()).getByRole('button', { name: /removed word:/ })).toBeTruthy();
+
+    act(() => {
+      fireEvent.click(header(/^Old page 2/));
+    });
+
+    // Collapsing keeps the page selected: the panes stay on what the user picked.
+    expect(store().pageIndex).toBe(1);
+    expect(expandedOf(/^Old page 2/)).toBe('false');
+    expect(within(list()).queryByRole('button', { name: /removed word:/ })).toBeNull();
+  });
+
+  it('expands and collapses every group', () => {
+    setup();
+    renderWorkspace();
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Expand all' }));
+    });
+
+    expect([expandedOf(/^Page 1/), expandedOf(/^Old page 2/), expandedOf(/^New page 2/)]).toEqual([
+      'true',
+      'true',
+      'true',
+    ]);
+    expect(changeButtons()).toHaveLength(4);
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Collapse all' }));
+    });
+
+    expect([expandedOf(/^Page 1/), expandedOf(/^Old page 2/), expandedOf(/^New page 2/)]).toEqual([
+      'false',
+      'false',
+      'false',
+    ]);
+    expect(changeButtons()).toHaveLength(0);
+  });
+
+  it('disables the fold actions when there is nothing to list', () => {
+    setup(makeIdenticalResult());
+    renderWorkspace();
+
+    expect((screen.getByRole('button', { name: 'Expand all' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(
+      (screen.getByRole('button', { name: 'Collapse all' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it('keeps the selected change when its group is folded', () => {
+    setup();
+    renderWorkspace();
+
+    act(() => {
+      fireEvent.click(within(list()).getByRole('button', { name: /modified word: Hello world/ }));
+    });
+    expect(store().selection).toEqual({ pageIndex: 0, changeIndex: 0 });
+
+    act(() => {
+      fireEvent.click(header(/^Page 1/));
+    });
+
+    expect(expandedOf(/^Page 1/)).toBe('false');
+    // The detail pane is driven by the selection, not by the open group.
+    const details = screen.getByTestId('diff-change-details');
+    expect(within(details).getByText('Hello world')).toBeTruthy();
+    expect(store().selection).toEqual({ pageIndex: 0, changeIndex: 0 });
+  });
+
+  it('auto-expands the page reached with Prev and Next', () => {
+    setup();
+    renderWorkspace();
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    });
+    expect(store().pageIndex).toBe(1);
+    expect(expandedOf(/^Old page 2/)).toBe('true');
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    });
+    expect(store().pageIndex).toBe(2);
+    expect(expandedOf(/^New page 2/)).toBe('true');
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Prev' }));
+    });
+    expect(expandedOf(/^Old page 2/)).toBe('true');
+  });
+
+  it('keeps a page separate and opens it when a filter matches it', () => {
+    setup();
+    renderWorkspace();
+
+    act(() => {
+      fireEvent.change(screen.getByLabelText('Filter by kind'), { target: { value: 'removed' } });
+    });
+
+    const rows = Array.from(list().children) as HTMLElement[];
+    expect(rows).toHaveLength(2);
+    // Both matching pages opened, each with only its own removed change.
+    expect(within(rows[0]).getByRole('button', { name: /removed rect:/ })).toBeTruthy();
+    expect(within(rows[1]).getByRole('button', { name: /removed word:/ })).toBeTruthy();
+    expect(within(rows[0]).queryByRole('button', { name: /removed word:/ })).toBeNull();
+  });
+
+  it('preserves manual folding across filter changes', () => {
+    setup();
+    renderWorkspace();
+
+    // Fold the focused page; the added page stays folded until the filter asks
+    // for it.
+    act(() => {
+      fireEvent.click(header(/^Page 1/));
+    });
+    expect(expandedOf(/^Page 1/)).toBe('false');
+
+    act(() => {
+      fireEvent.change(screen.getByLabelText('Filter by kind'), { target: { value: 'added' } });
+    });
+    expect(expandedOf(/^New page 2/)).toBe('true');
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+    });
+
+    expect(expandedOf(/^Page 1/)).toBe('false');
+    expect(expandedOf(/^New page 2/)).toBe('true');
+  });
+});
+
+describe('DiffWorkspace page jump', () => {
+  const setup = (): void => {
+    act(() => {
+      store().setSource('old', '/docs/old.pdf', 'old.pdf');
+      store().setSource('new', '/docs/new.pdf', 'new.pdf');
+      store().applyResult(makeSampleResult());
+    });
+  };
+
+  const jumpInput = (): HTMLInputElement =>
+    screen.getByLabelText('Go to page') as HTMLInputElement;
+
+  const goButton = (): HTMLButtonElement =>
+    screen.getByRole('button', { name: 'Go' }) as HTMLButtonElement;
+
+  const typePage = (value: string): void => {
+    act(() => {
+      fireEvent.change(jumpInput(), { target: { value } });
+    });
+  };
+
+  it('jumps to the typed page with Go and with Enter', () => {
+    setup();
+    renderWorkspace();
+
+    expect(jumpInput().disabled).toBe(false);
+    expect(jumpInput().getAttribute('placeholder')).toBe('1–3');
+    expect(screen.getByTestId('diff-page-jump-status').textContent).toBe('1 of 3');
+
+    typePage('3');
+    act(() => {
+      fireEvent.click(goButton());
+    });
+
+    expect(store().pageIndex).toBe(2);
+    expect(screen.getByTestId('diff-page-jump-status').textContent).toBe('3 of 3');
+    // The jumped-to page is opened like any other navigation.
+    expect(
+      within(screen.getByTestId('diff-page-list'))
+        .getByRole('button', { name: /^New page 2/ })
+        .getAttribute('aria-expanded'),
+    ).toBe('true');
+
+    typePage('2');
+    act(() => {
+      fireEvent.keyDown(jumpInput(), { key: 'Enter' });
+    });
+    expect(store().pageIndex).toBe(1);
+  });
+
+  it('clamps out-of-range pages and ignores blank or fractional input', () => {
+    setup();
+    renderWorkspace();
+
+    typePage('99');
+    act(() => {
+      fireEvent.click(goButton());
+    });
+    expect(store().pageIndex).toBe(2);
+
+    typePage('0');
+    act(() => {
+      fireEvent.click(goButton());
+    });
+    expect(store().pageIndex).toBe(0);
+
+    typePage('');
+    act(() => {
+      fireEvent.click(goButton());
+    });
+    expect(store().pageIndex).toBe(0);
+
+    typePage('2.5');
+    act(() => {
+      fireEvent.keyDown(jumpInput(), { key: 'Enter' });
+    });
+    expect(store().pageIndex).toBe(0);
+  });
+
+  it('disables the jump controls without a result', () => {
+    renderWorkspace();
+
+    expect(jumpInput().disabled).toBe(true);
+    expect(jumpInput().getAttribute('placeholder')).toBe('—');
+    expect(goButton().disabled).toBe(true);
+    expect(screen.getByTestId('diff-page-jump-status').textContent).toBe('—');
   });
 });

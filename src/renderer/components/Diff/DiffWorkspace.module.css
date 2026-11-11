@@ -214,6 +214,18 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* One-line warning for a change list the engine capped (never a full report). */
+.truncatedNote {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 6px 8px;
+  color: var(--pi-warning-text);
+  background: rgba(224, 179, 106, 0.08);
+  border-bottom: 1px solid var(--pi-warning-border-soft);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 /* Drawn ignore regions: the list is the accessible counterpart of the dashed
  * rectangles on the panes, so every mask can be inspected and removed here. */
 .regionPanel {
@@ -306,6 +318,72 @@
   gap: 4px;
 }
 
+.pageJump {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--pi-border-faint);
+}
+
+.pageJumpInput {
+  flex: 1 1 40px;
+  min-width: 32px;
+  max-width: 64px;
+  padding: 2px 4px;
+  color: var(--pi-text);
+  background: var(--pi-bg-panel-alt);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-sm);
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pageJumpInput:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
+.pageJumpInput:disabled {
+  color: var(--pi-text-dim);
+  cursor: not-allowed;
+}
+
+.pageJumpStatus {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--pi-text-subtle);
+  font-size: 10px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.listActions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 8px 4px;
+}
+
+/* Screen-reader-only label: the field has an aria-label too, and a visible
+ * "Go to page" label would not fit a 200px sidebar. */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .pageList {
   flex: 1;
   min-height: 0;
@@ -322,8 +400,9 @@
 .pageHeader {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   width: 100%;
+  min-width: 0;
   padding: 5px 8px;
   color: var(--pi-text-secondary);
   background: var(--pi-bg-sunken);
@@ -346,6 +425,31 @@
 .pageHeaderActive {
   background: var(--pi-accent-soft);
   box-shadow: inset 2px 0 0 var(--pi-accent-border);
+}
+
+/* Disclosure chevron: rotates to point down while the group is open. A page
+ * without changes keeps the slot so every label stays aligned. */
+.chevron {
+  flex: 0 0 auto;
+  width: 9px;
+  color: var(--pi-text-subtle);
+  font-size: 9px;
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+
+.chevron[data-expanded='true'] {
+  transform: rotate(90deg);
+}
+
+.chevron[data-empty='true'] {
+  opacity: 0.25;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
 }
 
 .pageLabel {
@@ -390,9 +494,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Change rows are indented under their page header and hang off a thin guide,
+ * so a long list reads as one group per page. */
 .changeList {
-  margin: 0;
+  margin: 0 0 0 12px;
   padding: 0;
+  border-left: 1px solid var(--pi-border-faint);
   list-style: none;
 }
 
@@ -402,7 +509,7 @@
   gap: 6px;
   align-items: baseline;
   width: 100%;
-  padding: 3px 8px 3px 14px;
+  padding: 3px 8px 3px 12px;
   color: var(--pi-text-secondary);
   background: none;
   border: none;
@@ -541,6 +648,11 @@
   max-width: 46ch;
   color: var(--pi-text-subtle);
   font-size: 11px;
+}
+
+/* Elapsed seconds beside "Comparing documents…" (informational, not a %). */
+.elapsed {
+  font-variant-numeric: tabular-nums;
 }
 
 .pageBar {

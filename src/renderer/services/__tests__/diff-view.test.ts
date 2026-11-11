@@ -16,6 +16,7 @@ import {
   isPageGeometryChange,
   pageGeometrySummary,
   projectDiffBBox,
+  resolveDiffPageJump,
   suggestDiffJsonFilename,
   tableCellChanges,
   type DiffBoxSpec,
@@ -357,5 +358,35 @@ describe('fixtures sanity', () => {
 
     expect(result.summary.objectsAdded).toBe(1);
     expect(result.summary.pagesChanged).toBe(1);
+  });
+});
+
+describe('resolveDiffPageJump', () => {
+  it('maps a typed page number to a zero-based index', () => {
+    expect(resolveDiffPageJump('1', 3)).toBe(0);
+    expect(resolveDiffPageJump('3', 3)).toBe(2);
+    expect(resolveDiffPageJump(' 2 ', 3)).toBe(1);
+  });
+
+  it('clamps out-of-range pages instead of ignoring them', () => {
+    expect(resolveDiffPageJump('0', 3)).toBe(0);
+    expect(resolveDiffPageJump('99', 3)).toBe(2);
+  });
+
+  it('ignores blank, signed, fractional and non-numeric input', () => {
+    expect(resolveDiffPageJump('', 3)).toBeNull();
+    expect(resolveDiffPageJump('   ', 3)).toBeNull();
+    expect(resolveDiffPageJump('-1', 3)).toBeNull();
+    expect(resolveDiffPageJump('+2', 3)).toBeNull();
+    expect(resolveDiffPageJump('2.5', 3)).toBeNull();
+    expect(resolveDiffPageJump('2a', 3)).toBeNull();
+    expect(resolveDiffPageJump('two', 3)).toBeNull();
+    expect(resolveDiffPageJump('1e2', 3)).toBeNull();
+  });
+
+  it('returns null when the comparison has no pages', () => {
+    expect(resolveDiffPageJump('1', 0)).toBeNull();
+    expect(resolveDiffPageJump('1', Number.NaN)).toBeNull();
+    expect(resolveDiffPageJump('1', -3)).toBeNull();
   });
 });
