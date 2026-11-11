@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DiffResult, IpcApi } from '../../renderer/types/ipc-protocol';
 import type { PageData, PdfMetadata } from '../../renderer/types/pdf-objects';
+import { PdfDocumentNotFoundError } from '../../shared/document-errors';
 import { buildDiffUploadRequest, buildOpenPdfRequest, installWebIpc } from '../ipc-adapter';
 
 /** jsdom default origin; the adapter resolves document paths against it. */
@@ -123,9 +124,11 @@ describe('web ipc adapter', () => {
   it('implements every IpcApi method', () => {
     expect(Object.keys(api()).sort()).toEqual(
       [
+        'activatePdfDocument',
         'analyzeFonts',
         'auditDocument',
         'auditPages',
+        'closePdfDocument',
         'diffPdfs',
         'extractMetadata',
         'extractPage',
@@ -144,9 +147,9 @@ describe('web ipc adapter', () => {
     );
   });
 
-  it('has no openPdfPath bridge, so the desktop-only tab bar stays hidden', () => {
-    // Document tabs are desktop-only until a server-side document registry
-    // exists; the renderer hides the tab bar when this method is missing.
+  it('has no openPdfPath bridge, so the web build never opens a local path', () => {
+    // A browser has no known local paths; web tabs switch through
+    // `activatePdfDocument` (server document id) instead.
     expect(api().openPdfPath).toBeUndefined();
     expect('openPdfPath' in api()).toBe(false);
   });
@@ -211,6 +214,7 @@ describe('web ipc adapter', () => {
         metadata: PDF_METADATA,
         sourceUrl: 'https://example.com/remote%20file.pdf',
         name: 'remote file.pdf',
+        documentId: 'abc123',
       }),
     );
 
@@ -227,6 +231,7 @@ describe('web ipc adapter', () => {
       metadata: PDF_METADATA,
       name: 'remote file.pdf',
       sourceUrl: 'https://example.com/remote%20file.pdf',
+      documentId: 'abc123',
     });
   });
 
@@ -275,6 +280,7 @@ describe('web ipc adapter', () => {
         path: '/doc/abc123/%E6%B5%8B%E8%AF%95%20%E6%8A%A5%E5%91%8A.pdf',
         metadata: PDF_METADATA,
         name: '测试 报告.pdf',
+        documentId: 'abc123',
       }),
     );
 
@@ -289,6 +295,7 @@ describe('web ipc adapter', () => {
       path: `${ORIGIN}/doc/abc123/%E6%B5%8B%E8%AF%95%20%E6%8A%A5%E5%91%8A.pdf`,
       metadata: PDF_METADATA,
       name: '测试 报告.pdf',
+      documentId: 'abc123',
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe('/api/open');
@@ -296,6 +303,100 @@ describe('web ipc adapter', () => {
       'Content-Type': 'application/pdf',
       'X-Filename': encodeURIComponent('测试 报告.pdf'),
     });
+  });
+
+  it('activates a server document by id and maps the reply', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        canceled: false,
+        path: '/doc/abc123/report.pdf',
+        metadata: PDF_METADATA,
+        name: 'report.pdf',
+        documentId: 'abc123',
+      }),
+    );
+
+    const result = await api().activatePdfDocument?.('abc123');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith('/api/documents/abc123/activate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(result).toEqual({
+      canceled: false,
+      path: `${ORIGIN}/doc/abc123/report.pdf`,
+      metadata: PDF_METADATA,
+      name: 'report.pdf',
+      documentId: 'abc123',
+    });
+  });
+
+  it('URI-encodes the document id in the activate and close paths', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ canceled: false, path: '/doc/a%20b/x.pdf', metadata: PDF_METADATA }),
+    );
+    await api().activatePdfDocument?.('a b/c#1');
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/documents/a%20b%2Fc%231/activate');
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ closed: true }));
+    await api().closePdfDocument?.('a b/c#1');
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/documents/a%20b%2Fc%231');
+  });
+
+  it('propagates a failed activation instead of returning a document', async () => {
+    fetchMock.mockResolvedValue(errorResponse(JSON.stringify({ error: 'Unknown document' }), 404));
+
+    const activatePdfDocument = api().activatePdfDocument;
+    if (!activatePdfDocument) throw new Error('activatePdfDocument is missing');
+    const error: unknown = await activatePdfDocument('gone').catch((err: unknown) => err);
+
+    // A 404 is typed on purpose: a tab that still knows its source URL must be
+    // able to tell "that id is gone" from a real failure and re-open the URL.
+    expect(error).toBeInstanceOf(PdfDocumentNotFoundError);
+    expect((error as Error).message).toBe('Unknown document');
+  });
+
+  it('keeps other activation failures as plain errors', async () => {
+    fetchMock.mockResolvedValue(errorResponse(JSON.stringify({ error: 'Sidecar crashed' }), 500));
+
+    const activatePdfDocument = api().activatePdfDocument;
+    if (!activatePdfDocument) throw new Error('activatePdfDocument is missing');
+    const error: unknown = await activatePdfDocument('doc-1').catch((err: unknown) => err);
+
+    expect(error).not.toBeInstanceOf(PdfDocumentNotFoundError);
+    expect((error as Error).message).toBe('Sidecar crashed');
+  });
+
+  it('closes a server document with DELETE and reports it closed', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ closed: true }));
+
+    await expect(api().closePdfDocument?.('abc123')).resolves.toEqual({ closed: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith('/api/documents/abc123', { method: 'DELETE' });
+  });
+
+  it('reports a forgotten document instead of throwing when the delete 404s', async () => {
+    // A stale tab's id (LRU-evicted, or a server restart) must stay closable:
+    // the caller removes the tab, so a 404 is an answer, not a failure.
+    fetchMock.mockResolvedValue(errorResponse(JSON.stringify({ error: 'Document not found' }), 404));
+
+    await expect(api().closePdfDocument?.('gone')).resolves.toEqual({
+      closed: false,
+      notFound: true,
+    });
+    expect(fetchMock).toHaveBeenCalledWith('/api/documents/gone', { method: 'DELETE' });
+  });
+
+  it('keeps the tab when the server refuses to close the active document', async () => {
+    fetchMock.mockResolvedValue(
+      errorResponse(JSON.stringify({ error: 'Cannot close the active document' }), 409),
+    );
+
+    await expect(api().closePdfDocument?.('abc123')).rejects.toThrow(
+      'Cannot close the active document',
+    );
   });
 
   it('builds a diff upload request that names its side', () => {

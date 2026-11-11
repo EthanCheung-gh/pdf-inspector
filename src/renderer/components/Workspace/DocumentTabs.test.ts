@@ -7,22 +7,32 @@ import { usePdfStore } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
 import type { IpcApi, OpenPdfResult } from '../../types/ipc-protocol';
 import type { PdfMetadata } from '../../types/pdf-objects';
+import { PdfDocumentNotFoundError } from '../../../shared/document-errors';
 
-const { navigate, openPdfPath, openPdfUrl } = vi.hoisted(() => ({
-  navigate: vi.fn(),
-  openPdfPath: vi.fn(),
-  openPdfUrl: vi.fn(),
-}));
+const { navigate, openPdfPath, openPdfUrl, activatePdfDocument, closePdfDocument } = vi.hoisted(
+  () => ({
+    navigate: vi.fn(),
+    openPdfPath: vi.fn(),
+    openPdfUrl: vi.fn(),
+    activatePdfDocument: vi.fn(),
+    closePdfDocument: vi.fn(),
+  }),
+);
 
 vi.mock('../../services/ipc-client', () => ({
-  ipc: { openPdfPath, openPdfUrl },
+  ipc: { openPdfPath, openPdfUrl, activatePdfDocument, closePdfDocument },
 }));
 
 vi.mock('../../hooks/usePageNavigation', () => ({
   usePageNavigation: () => ({ navigate }),
 }));
 
-import { DocumentTabs, clampSnapshotPage, restoreViewSnapshot } from './DocumentTabs';
+import {
+  DocumentTabs,
+  clampSnapshotPage,
+  neighbourTabId,
+  restoreViewSnapshot,
+} from './DocumentTabs';
 
 const metadata: PdfMetadata = {
   pages: 5,
@@ -44,11 +54,13 @@ const opened = (
   path: string,
   meta: PdfMetadata = metadata,
   sourceUrl?: string,
+  documentId?: string,
 ): OpenedDocument => ({
   canceled: false,
   path,
   metadata: meta,
   ...(sourceUrl ? { sourceUrl } : {}),
+  ...(documentId ? { documentId } : {}),
 });
 
 const tabStore = () => useDocumentTabsStore.getState();
@@ -59,14 +71,25 @@ function installDesktopBridge(): void {
   (window as unknown as { pdfInspector?: Partial<IpcApi> }).pdfInspector = { openPdfPath };
 }
 
+/**
+ * Web bridge: no local paths, server document ids instead. Both the activate and
+ * the close method are present, which is what enables the tab bar there.
+ */
 function installWebBridge(): void {
   (window as unknown as { pdfInspector?: Partial<IpcApi> }).pdfInspector = {
     openPdfUrl,
+    activatePdfDocument,
+    closePdfDocument,
   };
 }
 
 function findTab(name: string): HTMLElement {
   return screen.getByRole('tab', { name });
+}
+
+/** A web tab: a server document id plus the `/doc/<id>/<name>` path it resolved. */
+function webSource(id: string, name: string, meta: PdfMetadata = metadata) {
+  return { path: `/doc/${id}/${name}`, metadata: meta, documentId: id, name };
 }
 
 beforeEach(() => {
@@ -75,6 +98,9 @@ beforeEach(() => {
   navigate.mockResolvedValue(undefined);
   openPdfPath.mockReset();
   openPdfUrl.mockReset();
+  activatePdfDocument.mockReset();
+  closePdfDocument.mockReset();
+  closePdfDocument.mockResolvedValue({ closed: true });
 
   tabStore().reset();
   pdfStore().resetDocument();
@@ -104,9 +130,25 @@ describe('tab bar visibility', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('renders nothing on the web build, which has no open-by-path bridge', () => {
+  it('renders web tabs, which switch documents by server id', () => {
     installWebBridge();
-    tabStore().addTab(opened('/docs/a.pdf'));
+    tabStore().addTab(webSource('doc-a', 'a.pdf'));
+    tabStore().addTab(webSource('doc-b', 'b.pdf'));
+
+    render(React.createElement(DocumentTabs));
+
+    // The browser bridge has no `openPdfPath`; `activatePdfDocument` is what
+    // makes the tab bar available there.
+    expect(screen.getByRole('tablist', { name: 'Open documents' })).toBeTruthy();
+    expect(findTab('a.pdf').getAttribute('aria-selected')).toBe('false');
+    expect(findTab('b.pdf').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getAllByRole('tab')).toHaveLength(2);
+  });
+
+  it('renders nothing on a bridge that cannot switch documents', () => {
+    // Neither `openPdfPath` nor `activatePdfDocument`: nothing to switch with.
+    (window as unknown as { pdfInspector?: Partial<IpcApi> }).pdfInspector = {};
+    tabStore().addTab(webSource('doc-a', 'a.pdf'));
 
     const { container } = render(React.createElement(DocumentTabs));
 
@@ -210,6 +252,178 @@ describe('switching documents', () => {
     expect(pdfStore().pageCount).toBe(9);
   });
 
+  it('activates a web tab by document id and restores its snapshot', async () => {
+    installWebBridge();
+    const first = tabStore().addTab(webSource('doc-a', 'a.pdf'));
+    const second = tabStore().addTab(webSource('doc-b', 'b.pdf'));
+
+    // The user left the first document on page 3, zoomed in, in the Fonts tab.
+    tabStore().activate(first.id);
+    pdfStore().setFile('/doc/doc-a/a.pdf', metadata);
+    pdfStore().setPage(3);
+    pdfStore().setZoom(1.5);
+    useWorkspaceStore.setState({ leftTab: 'fonts', inspectorTab: 'page' });
+    tabStore().saveActiveSnapshot();
+
+    // The server is currently showing the second document.
+    pdfStore().setFile('/doc/doc-b/b.pdf', metadata);
+    tabStore().activate(second.id);
+
+    activatePdfDocument.mockResolvedValue(
+      opened('/doc/doc-a/a.pdf', metadata, undefined, 'doc-a'),
+    );
+    render(React.createElement(DocumentTabs));
+
+    await act(async () => {
+      fireEvent.click(findTab('a.pdf'));
+    });
+
+    await waitFor(() => expect(pdfStore().filePath).toBe('/doc/doc-a/a.pdf'));
+
+    expect(activatePdfDocument).toHaveBeenCalledWith('doc-a');
+    // Switching inside the browser never re-uploads or re-downloads.
+    expect(openPdfUrl).not.toHaveBeenCalled();
+    expect(openPdfPath).not.toHaveBeenCalled();
+    expect(closePdfDocument).not.toHaveBeenCalled();
+
+    // Snapshot restored onto the re-activated document.
+    expect(pdfStore().zoom).toBe(1.5);
+    expect(useWorkspaceStore.getState().leftTab).toBe('fonts');
+    expect(useWorkspaceStore.getState().inspectorTab).toBe('page');
+    expect(navigate).toHaveBeenCalledWith(3);
+
+    expect(tabStore().activeTabId).toBe(first.id);
+    expect(findTab('a.pdf').getAttribute('aria-selected')).toBe('true');
+    expect(findTab('b.pdf').getAttribute('aria-selected')).toBe('false');
+  });
+
+  it('refreshes a web tab from the activation result', async () => {
+    installWebBridge();
+    // The tab was created before the server resolved the document's own path.
+    const stale = tabStore().addTab(
+      { path: '/doc/doc-a/stale.pdf', metadata, documentId: 'doc-a' },
+      'a.pdf',
+    );
+    tabStore().addTab(webSource('doc-b', 'b.pdf'));
+
+    activatePdfDocument.mockResolvedValue(
+      opened('/doc/doc-a/a.pdf', otherMetadata, undefined, 'doc-a'),
+    );
+    render(React.createElement(DocumentTabs));
+
+    await act(async () => {
+      fireEvent.click(findTab('a.pdf'));
+    });
+
+    await waitFor(() => expect(pdfStore().filePath).toBe('/doc/doc-a/a.pdf'));
+
+    const tab = tabStore().tabs.find((candidate) => candidate.id === stale.id);
+    expect(tab?.documentId).toBe('doc-a');
+    expect(tab?.path).toBe('/doc/doc-a/a.pdf');
+    expect(tab?.metadata).toBe(otherMetadata);
+    expect(pdfStore().pageCount).toBe(9);
+  });
+
+  it('prefers the document id over the tab’s source URL', async () => {
+    installWebBridge();
+    // A URL document opened in the browser also has a registry id: activating it
+    // must win, so the switch never re-downloads.
+    const urlTab = tabStore().addTab(
+      opened('/doc/doc-a/a.pdf', metadata, 'https://example.com/a.pdf', 'doc-a'),
+    );
+    tabStore().addTab(webSource('doc-b', 'b.pdf'));
+
+    activatePdfDocument.mockResolvedValue(
+      opened('/doc/doc-a/a.pdf', metadata, 'https://example.com/a.pdf', 'doc-a'),
+    );
+    render(React.createElement(DocumentTabs));
+
+    await act(async () => {
+      fireEvent.click(findTab('https://example.com/a.pdf'));
+    });
+
+    await waitFor(() => expect(activatePdfDocument).toHaveBeenCalledWith('doc-a'));
+    expect(openPdfUrl).not.toHaveBeenCalled();
+    expect(openPdfPath).not.toHaveBeenCalled();
+    expect(pdfStore().sourceUrl).toBe('https://example.com/a.pdf');
+    expect(tabStore().activeTabId).toBe(urlTab.id);
+  });
+
+  it('re-opens the source URL when the tab’s document id is stale', async () => {
+    installWebBridge();
+    const url = 'https://example.com/a.pdf';
+    // The tab was opened from a URL, so it has both a registry id and a URL the
+    // server can download again; the user left it on page 3, zoomed in.
+    const stale = tabStore().addTab(opened('/doc/gone/a.pdf', metadata, url, 'gone'));
+    const other = tabStore().addTab(webSource('doc-b', 'b.pdf'));
+
+    tabStore().activate(stale.id);
+    pdfStore().setFile('/doc/gone/a.pdf', metadata);
+    pdfStore().setPage(3);
+    pdfStore().setZoom(1.5);
+    tabStore().saveActiveSnapshot();
+    pdfStore().setFile('/doc/doc-b/b.pdf', metadata);
+    tabStore().activate(other.id);
+
+    // The server forgot `gone` (LRU eviction or a restart) but still has the URL
+    // to download, which hands the document back under a fresh id.
+    activatePdfDocument.mockRejectedValue(new PdfDocumentNotFoundError('Document not found'));
+    openPdfUrl.mockResolvedValue(opened('/doc/doc-c/a.pdf', otherMetadata, url, 'doc-c'));
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    render(React.createElement(DocumentTabs));
+
+    await act(async () => {
+      fireEvent.click(findTab(url));
+    });
+
+    await waitFor(() => expect(pdfStore().filePath).toBe('/doc/doc-c/a.pdf'));
+    consoleWarn.mockRestore();
+
+    expect(activatePdfDocument).toHaveBeenCalledWith('gone');
+    // The stale id falls back to the URL instead of giving up on the tab.
+    expect(openPdfUrl).toHaveBeenCalledWith(url);
+    expect(openPdfPath).not.toHaveBeenCalled();
+
+    const healed = tabStore().tabs.find((tab) => tab.id === stale.id);
+    expect(healed?.documentId).toBe('doc-c');
+    expect(healed?.path).toBe('/doc/doc-c/a.pdf');
+    expect(healed?.metadata).toBe(otherMetadata);
+    expect(healed?.sourceUrl).toBe(url);
+    // A self-heal is a normal switch: no error and the snapshot is restored.
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(pdfStore().zoom).toBe(1.5);
+    expect(navigate).toHaveBeenCalledWith(3);
+    expect(tabStore().activeTabId).toBe(stale.id);
+  });
+
+  it('keeps a stale upload tab and reports why it cannot be re-opened', async () => {
+    installWebBridge();
+    // An upload has no source URL, so a forgotten id leaves nothing to re-open.
+    const stale = tabStore().addTab(webSource('gone', 'upload.pdf'));
+    const active = tabStore().addTab(webSource('doc-b', 'b.pdf'));
+    pdfStore().setFile('/doc/doc-b/b.pdf', metadata);
+
+    activatePdfDocument.mockRejectedValue(new PdfDocumentNotFoundError('Document not found'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(React.createElement(DocumentTabs));
+
+    await act(async () => {
+      fireEvent.click(findTab('upload.pdf'));
+    });
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Document not found'));
+    consoleError.mockRestore();
+
+    expect(openPdfUrl).not.toHaveBeenCalled();
+    expect(openPdfPath).not.toHaveBeenCalled();
+    // The tab survives (it is still closable: a close of a forgotten id removes
+    // it) and the open document is untouched.
+    expect(tabStore().tabs).toHaveLength(2);
+    expect(tabStore().tabs.find((tab) => tab.id === stale.id)?.documentId).toBe('gone');
+    expect(tabStore().activeTabId).toBe(active.id);
+    expect(pdfStore().filePath).toBe('/doc/doc-b/b.pdf');
+  });
+
   it('shows a loading state while the switch is in flight', async () => {
     tabStore().addTab(opened('/docs/a.pdf'));
     tabStore().addTab(opened('/docs/b.pdf'));
@@ -293,6 +507,10 @@ describe('closing tabs', () => {
 
     expect(openPdfPath).not.toHaveBeenCalled();
     expect(openPdfUrl).not.toHaveBeenCalled();
+    // A desktop tab only holds a local path: closing it must never delete the
+    // user's file, so the web close bridge stays untouched.
+    expect(closePdfDocument).not.toHaveBeenCalled();
+    expect(activatePdfDocument).not.toHaveBeenCalled();
     expect(pdfStore().filePath).toBe('/docs/b.pdf');
     expect(tabStore().tabs.map((tab) => tab.name)).toEqual(['b.pdf']);
     expect(tabStore().activeTabId).toBe(tabStore().tabs[0].id);
@@ -321,10 +539,287 @@ describe('closing tabs', () => {
     expect(pdfStore().searchQuery).toBe('');
     // The bar disappears with the last tab.
     expect(screen.queryByRole('tablist')).toBeNull();
+    // Local documents are never deleted, not even when the last tab goes away.
+    expect(closePdfDocument).not.toHaveBeenCalled();
+  });
+});
+
+describe('closing web tabs', () => {
+  beforeEach(() => {
+    installWebBridge();
+  });
+
+  it('closes an inactive tab’s document before removing the tab', async () => {
+    tabStore().addTab(webSource('doc-a', 'a.pdf'));
+    const active = tabStore().addTab(webSource('doc-b', 'b.pdf'));
+    pdfStore().setFile('/doc/doc-b/b.pdf', metadata);
+
+    render(React.createElement(DocumentTabs));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close a.pdf' }));
+    });
+
+    await waitFor(() => expect(tabStore().tabs.map((tab) => tab.name)).toEqual(['b.pdf']));
+
+    // The server deletes only that document's temp copy...
+    expect(closePdfDocument).toHaveBeenCalledTimes(1);
+    expect(closePdfDocument).toHaveBeenCalledWith('doc-a');
+    // ...and the active document stays open, so nothing is re-activated.
+    expect(activatePdfDocument).not.toHaveBeenCalled();
+    expect(pdfStore().filePath).toBe('/doc/doc-b/b.pdf');
+    expect(tabStore().activeTabId).toBe(active.id);
+  });
+
+  it('keeps the tab and shows the error when the close fails', async () => {
+    tabStore().addTab(webSource('doc-a', 'a.pdf'));
+    const active = tabStore().addTab(webSource('doc-b', 'b.pdf'));
+    pdfStore().setFile('/doc/doc-b/b.pdf', metadata);
+    closePdfDocument.mockRejectedValue(new Error('Document is active'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    render(React.createElement(DocumentTabs));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close a.pdf' }));
+    });
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Document is active'));
+    consoleError.mockRestore();
+
+    // The document is still open on the server, so its tab must survive.
+    expect(tabStore().tabs.map((tab) => tab.name)).toEqual(['a.pdf', 'b.pdf']);
+    expect(tabStore().activeTabId).toBe(active.id);
+    expect(pdfStore().filePath).toBe('/doc/doc-b/b.pdf');
+  });
+
+  it('activates the neighbour of a closed active tab, then closes that document', async () => {
+    const first = tabStore().addTab(webSource('doc-a', 'a.pdf'));
+    const second = tabStore().addTab(webSource('doc-b', 'b.pdf'));
+
+    // The neighbour was last seen on page 2; the document being closed is on 4.
+    tabStore().activate(first.id);
+    pdfStore().setFile('/doc/doc-a/a.pdf', metadata);
+    pdfStore().setPage(2);
+    tabStore().saveActiveSnapshot();
+    tabStore().activate(second.id);
+    pdfStore().setFile('/doc/doc-b/b.pdf', metadata);
+    pdfStore().setPage(4);
+
+    activatePdfDocument.mockResolvedValue(
+      opened('/doc/doc-a/a.pdf', metadata, undefined, 'doc-a'),
+    );
+    render(React.createElement(DocumentTabs));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close b.pdf' }));
+    });
+
+    await waitFor(() => expect(pdfStore().filePath).toBe('/doc/doc-a/a.pdf'));
+    await waitFor(() => expect(closePdfDocument).toHaveBeenCalledWith('doc-b'));
+
+    // The server refuses to close the active document while siblings remain, so
+    // the neighbour is activated first and only then is the old id deleted.
+    expect(activatePdfDocument).toHaveBeenCalledWith('doc-a');
+    expect(tabStore().tabs.map((tab) => tab.name)).toEqual(['a.pdf']);
+    expect(tabStore().activeTabId).toBe(first.id);
+    expect(second.id).not.toBe(first.id);
+    // The neighbour's own snapshot is what lands on screen (`navigate` is the
+    // mocked page navigation, so it carries the restored page).
+    expect(navigate).toHaveBeenCalledWith(2);
+    expect(screen.getByRole('tab').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('keeps the active tab and document when the neighbour cannot be activated', async () => {
+    tabStore().addTab(webSource('doc-a', 'a.pdf'));
+    const active = tabStore().addTab(webSource('doc-b', 'b.pdf'));
+    pdfStore().setFile('/doc/doc-b/b.pdf', metadata);
+    activatePdfDocument.mockRejectedValue(new Error('Unknown document'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    render(React.createElement(DocumentTabs));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close b.pdf' }));
+    });
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Unknown document'));
+    consoleError.mockRestore();
+
+    // Nothing was closed: the tab and the open document are both intact.
+    expect(closePdfDocument).not.toHaveBeenCalled();
+    expect(tabStore().tabs.map((tab) => tab.name)).toEqual(['a.pdf', 'b.pdf']);
+    expect(tabStore().activeTabId).toBe(active.id);
+    expect(pdfStore().filePath).toBe('/doc/doc-b/b.pdf');
+  });
+
+  it('closing the last web tab closes its document and resets the view', async () => {
+    tabStore().addTab(webSource('doc-a', 'a.pdf'));
+    pdfStore().setFile('/doc/doc-a/a.pdf', metadata);
+    pdfStore().setPage(3);
+    pdfStore().setSearchQuery('needle');
+
+    render(React.createElement(DocumentTabs));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close a.pdf' }));
+    });
+
+    await waitFor(() => expect(tabStore().tabs).toEqual([]));
+
+    // The registry entry goes away with its tab; nothing is left to activate.
+    expect(closePdfDocument).toHaveBeenCalledWith('doc-a');
+    expect(activatePdfDocument).not.toHaveBeenCalled();
+    expect(tabStore().activeTabId).toBeNull();
+
+    expect(pdfStore().filePath).toBeNull();
+    expect(pdfStore().metadata).toBeNull();
+    expect(pdfStore().pageCount).toBe(0);
+    expect(pdfStore().currentPage).toBe(1);
+    expect(pdfStore().searchQuery).toBe('');
+    expect(screen.queryByRole('tablist')).toBeNull();
+  });
+
+  it('removes a tab whose document the server has already forgotten', async () => {
+    // The id was LRU-evicted (or the server restarted), so DELETE answers 404:
+    // the document is gone even though the close did not succeed, and keeping
+    // the tab would leave it permanently unclosable.
+    tabStore().addTab(webSource('gone', 'a.pdf'));
+    const active = tabStore().addTab(webSource('doc-b', 'b.pdf'));
+    pdfStore().setFile('/doc/doc-b/b.pdf', metadata);
+    closePdfDocument.mockResolvedValue({ closed: false, notFound: true });
+
+    render(React.createElement(DocumentTabs));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close a.pdf' }));
+    });
+
+    await waitFor(() => expect(tabStore().tabs.map((tab) => tab.name)).toEqual(['b.pdf']));
+
+    // The dead document is not reported as an error: there is nothing to fix.
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(closePdfDocument).toHaveBeenCalledWith('gone');
+    // The active document is neither re-activated nor replaced.
+    expect(activatePdfDocument).not.toHaveBeenCalled();
+    expect(pdfStore().filePath).toBe('/doc/doc-b/b.pdf');
+    expect(tabStore().activeTabId).toBe(active.id);
+  });
+
+  it('closing the last tab still empties the view when its id is stale', async () => {
+    tabStore().addTab(webSource('gone', 'a.pdf'));
+    pdfStore().setFile('/doc/gone/a.pdf', metadata);
+    pdfStore().setPage(3);
+    closePdfDocument.mockResolvedValue({ closed: false, notFound: true });
+
+    render(React.createElement(DocumentTabs));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close a.pdf' }));
+    });
+
+    await waitFor(() => expect(tabStore().tabs).toEqual([]));
+
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(closePdfDocument).toHaveBeenCalledWith('gone');
+    expect(tabStore().activeTabId).toBeNull();
+    // Nothing is left on the server, so the renderer stops showing a document.
+    expect(pdfStore().filePath).toBeNull();
+    expect(pdfStore().currentPage).toBe(1);
+    expect(screen.queryByRole('tablist')).toBeNull();
+  });
+
+  it('keeps a document opened while the close of the last tab is in flight', async () => {
+    // The close is asynchronous, so the toolbar can open another document before
+    // it settles. The "there was only one tab" decision taken before that
+    // request must not wipe the document the user opened meanwhile.
+    tabStore().addTab(webSource('gone', 'a.pdf'));
+    pdfStore().setFile('/doc/gone/a.pdf', metadata);
+    pdfStore().setPage(3);
+
+    let resolveClose: (result: { closed: boolean; notFound?: boolean }) => void = () => {};
+    closePdfDocument.mockReturnValue(
+      new Promise<{ closed: boolean; notFound?: boolean }>((resolve) => {
+        resolveClose = resolve;
+      }),
+    );
+
+    render(React.createElement(DocumentTabs));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close a.pdf' }));
+    });
+    expect(screen.getByRole('status').textContent).toBe('Closing…');
+
+    // Simulate a Toolbar open landing during the pending delete: a new server
+    // document becomes the open one and gets its own tab.
+    await act(async () => {
+      pdfStore().setFile('/doc/new-id/new.pdf', metadata, null, 'new.pdf');
+      tabStore().addTab(webSource('new-id', 'new.pdf'));
+    });
+
+    await act(async () => {
+      resolveClose({ closed: true });
+    });
+
+    await waitFor(() => expect(tabStore().tabs.map((tab) => tab.name)).toEqual(['new.pdf']));
+
+    // Only the closed document's tab is gone; the freshly opened document is
+    // still the one on screen.
+    expect(closePdfDocument).toHaveBeenCalledWith('gone');
+    expect(activatePdfDocument).not.toHaveBeenCalled();
+    expect(pdfStore().filePath).toBe('/doc/new-id/new.pdf');
+    expect(pdfStore().documentName).toBe('new.pdf');
+    expect(tabStore().activeTabId).toBe(tabStore().tabs[0].id);
+    expect(screen.getByRole('tab').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('shows a closing state and disables the tabs while the delete is in flight', async () => {
+    tabStore().addTab(webSource('doc-a', 'a.pdf'));
+    tabStore().addTab(webSource('doc-b', 'b.pdf'));
+    pdfStore().setFile('/doc/doc-b/b.pdf', metadata);
+
+    let resolveClose: (result: { closed: boolean }) => void = () => {};
+    closePdfDocument.mockReturnValue(
+      new Promise<{ closed: boolean }>((resolve) => {
+        resolveClose = resolve;
+      }),
+    );
+
+    render(React.createElement(DocumentTabs));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close a.pdf' }));
+    });
+
+    expect(screen.getByRole('status').textContent).toBe('Closing…');
+    expect((findTab('b.pdf') as HTMLButtonElement).disabled).toBe(true);
+
+    await act(async () => {
+      resolveClose({ closed: true });
+    });
+
+    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+    expect(tabStore().tabs.map((tab) => tab.name)).toEqual(['b.pdf']);
   });
 });
 
 describe('helpers', () => {
+  it('picks the same neighbour removeTab would activate', () => {
+    const first = tabStore().addTab(opened('/docs/a.pdf'));
+    const second = tabStore().addTab(opened('/docs/b.pdf'));
+    const third = tabStore().addTab(opened('/docs/c.pdf'));
+
+    // Middle tab: the one sliding into its slot wins, matching `removeTab`.
+    expect(neighbourTabId(tabStore().tabs, second.id)).toBe(third.id);
+    // Last tab: there is nothing after it, so the previous one takes over.
+    expect(neighbourTabId(tabStore().tabs, third.id)).toBe(second.id);
+    // The only tab of a single-tab bar has no neighbour at all.
+    expect(neighbourTabId([first], first.id)).toBeNull();
+    // Unknown ids never guess.
+    expect(neighbourTabId(tabStore().tabs, 'tab-missing')).toBeNull();
+  });
+
   it('clamps a snapshot page into the re-opened document', () => {
     expect(clampSnapshotPage(3, 5)).toBe(3);
     expect(clampSnapshotPage(9, 5)).toBe(5);

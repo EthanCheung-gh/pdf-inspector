@@ -5,13 +5,15 @@ import type { InspectorTab, LeftPanelTab } from './workspace-store';
 import { useWorkspaceStore } from './workspace-store';
 
 /**
- * Desktop document tabs (work package H3).
+ * Document tabs (work packages H3/H4).
  *
  * A tab is a *lightweight view snapshot*, not a live document: the sidecar (and
- * PDF.js) only ever hold the active document, so switching re-opens the file and
- * restores page/zoom/panel state. Font/audit/raw results are deliberately not
- * snapshotted — they are re-run or reset on activation, which keeps this phase
- * free of a per-document analysis cache and of N resident documents.
+ * PDF.js) only ever hold the active document, so switching re-opens the document
+ * and restores page/zoom/panel state. Desktop tabs re-open a local path, web
+ * tabs re-activate a server-side document id (see `activatePdfDocument` on
+ * `IpcApi`). Font/audit/raw results are deliberately not snapshotted — they are
+ * re-run or reset on activation, which keeps this phase free of a per-document
+ * analysis cache and of N resident documents.
  */
 
 /** The view state restored when a tab becomes active again. */
@@ -30,6 +32,14 @@ export interface DocumentTab {
   path: string;
   /** Source URL the document was opened from, or null for a local file. */
   sourceUrl: string | null;
+  /**
+   * Id of the document in the web server's registry, or null on the desktop.
+   *
+   * The strongest identity a tab can have: a web activation keeps the same id
+   * even though the document's `/doc/<id>` path may be re-resolved, so tabs are
+   * deduped by id before URL or path.
+   */
+  documentId: string | null;
   /** Label shown in the tab bar (basename, or the URL). */
   name: string;
   metadata: PdfMetadata;
@@ -41,6 +51,8 @@ export interface DocumentTabSource {
   path: string;
   metadata: PdfMetadata;
   sourceUrl?: string | null;
+  /** Registry id from a web bridge; unset on the desktop. */
+  documentId?: string | null;
   /** Display name from the opening bridge, used when no URL label applies. */
   name?: string | null;
 }
@@ -56,7 +68,11 @@ export interface DocumentTabsState {
   activeTabId: string | null;
   /**
    * Add a tab for a freshly opened document, or focus the existing tab when the
-   * same path/URL is already open. Returns the (new or existing) tab.
+   * same document id/URL/path is already open.
+   *
+   * The returned tab always describes the document that was just opened: a
+   * matched tab is refreshed from `source` (path, metadata, document id, source
+   * URL, label) and keeps only its own id and view snapshot.
    */
   addTab: (source: DocumentTabSource, name?: string) => DocumentTab;
   /** Copy the current pdf/workspace view state into the active tab. */
@@ -82,12 +98,17 @@ export function documentTabName(path: string): string {
 /**
  * Whether this build can switch documents without a dialog.
  *
- * Only the desktop preload implements `openPdfPath`; the browser bridge omits
- * it, which is what hides the tab bar on the web build.
+ * The desktop preload implements `openPdfPath`; the browser bridge implements
+ * `activatePdfDocument` instead (server-side document ids). Either one is enough
+ * for the tab bar, and a bridge with neither keeps it hidden.
  */
 export function supportsDocumentTabs(): boolean {
   if (typeof window === 'undefined') return false;
-  return typeof window.pdfInspector?.openPdfPath === 'function';
+  const bridge = window.pdfInspector;
+  return (
+    typeof bridge?.openPdfPath === 'function' ||
+    typeof bridge?.activatePdfDocument === 'function'
+  );
 }
 
 /**
@@ -112,21 +133,50 @@ export function captureViewSnapshot(): DocumentViewSnapshot {
 /**
  * Find a tab that already represents `source`.
  *
- * URL documents are matched by their source URL: re-opening the same URL gives a
- * new temp path but is the same document. Local files are matched by path.
+ * Priority follows identity strength: a server document id is the same document
+ * even if its `/doc/<id>` path changed (a web activation re-resolves it), a URL
+ * is the same document even though every open produces a new download copy, and
+ * a local file is matched by path.
  */
 export function findExistingTab(
   tabs: readonly DocumentTab[],
   source: DocumentTabSource,
 ): DocumentTab | undefined {
+  const documentId = source.documentId ?? null;
+  if (documentId) {
+    // Both sides must have an id: a tab without one is a desktop document and
+    // must never be confused with a web registry entry.
+    const byId = tabs.find((tab) => tab.documentId !== null && tab.documentId === documentId);
+    if (byId) return byId;
+  }
+
   const sourceUrl = source.sourceUrl ?? null;
-  return tabs.find((tab) =>
-    sourceUrl && tab.sourceUrl ? tab.sourceUrl === sourceUrl : tab.path === source.path,
-  );
+  if (sourceUrl) {
+    const byUrl = tabs.find((tab) => tab.sourceUrl !== null && tab.sourceUrl === sourceUrl);
+    if (byUrl) return byUrl;
+  }
+
+  return tabs.find((tab) => tab.path === source.path);
 }
 
 let tabSequence = 0;
 const nextTabId = (): string => `tab-${++tabSequence}`;
+
+/**
+ * The label a tab shows for an opened document.
+ *
+ * A URL is its own label; otherwise prefer the name the bridge reported (keeps
+ * Unicode upload names readable) before falling back to the path (a new tab) or
+ * to the label the tab already had (a refreshed tab). An explicit `name` from
+ * the caller always wins.
+ */
+function documentTabLabel(
+  source: DocumentTabSource,
+  name: string | undefined,
+  fallback: string,
+): string {
+  return name ?? source.sourceUrl ?? source.name ?? fallback;
+}
 
 export const useDocumentTabsStore = create<DocumentTabsState>((set, get) => ({
   tabs: [],
@@ -137,18 +187,35 @@ export const useDocumentTabsStore = create<DocumentTabsState>((set, get) => ({
     const existing = findExistingTab(tabs, source);
     if (existing) {
       // Opening the same document again focuses its tab instead of duplicating
-      // it; the caller still re-opens the file, so the snapshot stays valid.
-      set({ activeTabId: existing.id });
-      return existing;
+      // it, and the tab adopts what the new open reported.
+      //
+      // That refresh is not cosmetic: a web re-open of the same URL (or a
+      // re-upload of the same file) registers a *new* server document id — the
+      // old one may have been LRU-evicted — and resolves a new `/doc/<id>` path.
+      // Keeping the previous id would leave the tab pointing at a document the
+      // server no longer has, so every following activate/close would 404. The
+      // view snapshot and the tab's own id are the only things that survive.
+      const refreshed: DocumentTab = {
+        ...existing,
+        path: source.path,
+        metadata: source.metadata,
+        documentId: source.documentId ?? null,
+        sourceUrl: source.sourceUrl ?? null,
+        name: documentTabLabel(source, name, existing.name),
+      };
+      set({
+        tabs: tabs.map((tab) => (tab.id === existing.id ? refreshed : tab)),
+        activeTabId: existing.id,
+      });
+      return refreshed;
     }
 
     const tab: DocumentTab = {
       id: nextTabId(),
       path: source.path,
       sourceUrl: source.sourceUrl ?? null,
-      // A URL is its own label; otherwise prefer the name the bridge reported
-      // (keeps Unicode upload names readable) before falling back to the path.
-      name: name ?? source.sourceUrl ?? source.name ?? documentTabName(source.path),
+      documentId: source.documentId ?? null,
+      name: documentTabLabel(source, name, documentTabName(source.path)),
       metadata: source.metadata,
       snapshot: captureViewSnapshot(),
     };

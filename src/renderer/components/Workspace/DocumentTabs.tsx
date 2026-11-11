@@ -5,9 +5,11 @@ import {
   supportsDocumentTabs,
   useDocumentTabsStore,
 } from '../../store/document-tabs-store';
-import type { DocumentViewSnapshot } from '../../store/document-tabs-store';
+import type { DocumentTab, DocumentViewSnapshot } from '../../store/document-tabs-store';
+import type { OpenPdfResult } from '../../types/ipc-protocol';
 import { usePdfStore } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
+import { PdfDocumentNotFoundError } from '../../../shared/document-errors';
 import styles from './DocumentTabs.module.css';
 
 /**
@@ -34,13 +36,76 @@ export function clampSnapshotPage(page: number, pageCount: number): number {
 }
 
 /**
- * Desktop document tab bar.
+ * The tab that takes over when `tabId` is closed, without mutating anything.
  *
- * Renders nothing when the build cannot open a known path (the web build omits
- * `openPdfPath`), so the web app keeps its single-document behavior. Switching
- * re-opens the document without a dialog — a URL tab re-downloads, because main
- * deletes the previous download when another document replaces it — and then
- * restores the tab's page/zoom/panel snapshot.
+ * Mirrors `removeTab`'s choice exactly (the tab that slides into the closed slot,
+ * else the previous one) so a web close can activate that neighbour *before*
+ * asking the server to drop the old document — the server refuses to close an
+ * active document that still has siblings. Returns null for the last tab.
+ */
+export function neighbourTabId(tabs: readonly DocumentTab[], tabId: string): string | null {
+  const index = tabs.findIndex((tab) => tab.id === tabId);
+  if (index === -1) return null;
+  const remaining = tabs.filter((tab) => tab.id !== tabId);
+  const neighbour = remaining[Math.min(index, remaining.length - 1)] ?? null;
+  return neighbour ? neighbour.id : null;
+}
+
+/**
+ * How a tab's document was re-opened, and whether the document identity changed.
+ *
+ * `renewed` marks a self-healed activation: the server had forgotten the tab's
+ * document id, so the document was re-opened from its source URL and came back
+ * under a new id (or under none, if the bridge no longer reports one).
+ */
+interface OpenedTabDocument {
+  result: OpenPdfResult;
+  renewed: boolean;
+}
+
+/**
+ * Open (or re-activate) the document behind a tab.
+ *
+ * Identity order: a server document id survives a re-resolved `/doc/<id>` path,
+ * so web tabs activate it; the desktop has no ids and re-opens by URL (fresh
+ * download) or by local path.
+ *
+ * A web activation can fail with `PdfDocumentNotFoundError` when the server no
+ * longer has that id (LRU eviction, or a restart while the page stayed open).
+ * A tab that still knows its source URL is self-healed by re-opening that URL:
+ * the server dedupes it against its own registry or downloads it again. Tabs
+ * without a URL (uploads) have nothing to re-open from and keep the error.
+ */
+async function openDocumentForTab(tab: DocumentTab): Promise<OpenedTabDocument> {
+  if (tab.documentId !== null && typeof ipc.activatePdfDocument === 'function') {
+    try {
+      return { result: await ipc.activatePdfDocument(tab.documentId), renewed: false };
+    } catch (error) {
+      if (!(error instanceof PdfDocumentNotFoundError) || !tab.sourceUrl) throw error;
+      console.warn('Document id is stale, re-opening its source URL:', tab.sourceUrl, error);
+      return { result: await ipc.openPdfUrl(tab.sourceUrl), renewed: true };
+    }
+  }
+
+  if (tab.sourceUrl) return { result: await ipc.openPdfUrl(tab.sourceUrl), renewed: false };
+  return { result: await ipc.openPdfPath(tab.path), renewed: false };
+}
+
+/**
+ * Document tab bar.
+ *
+ * Switching never re-uploads or re-downloads on the web: a tab holding a server
+ * `documentId` is re-activated in place (the server keeps its own copy), while a
+ * desktop tab re-opens by URL (re-download) or by local path. Either way the
+ * tab's page/zoom/panel snapshot is restored afterwards.
+ *
+ * Closing differs by build too: a web tab first activates its neighbour (when it
+ * was the active one) and only then asks the server to delete that document's
+ * temporary copy, so a failure keeps the tab instead of lying about it. A tab
+ * whose document the server has already forgotten (LRU eviction, restart) is the
+ * one exception: nothing is left to delete or to show, so it is removed anyway
+ * instead of becoming permanently unclosable. Desktop tabs never call the close
+ * bridge — their paths are the user's own files.
  */
 export const DocumentTabs: React.FC = () => {
   const tabs = useDocumentTabsStore((state) => state.tabs);
@@ -51,36 +116,41 @@ export const DocumentTabs: React.FC = () => {
   // during a slow open must not be clobbered by the slower request.
   const requestIdRef = useRef(0);
   const [switchingTabId, setSwitchingTabId] = useState<string | null>(null);
+  const [closingTabId, setClosingTabId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Returns whether the tab actually became the open document, which is what a
+  // close must know: a failed activation leaves the old tab (and the old
+  // document) in place.
   const openTab = useCallback(
-    async (tabId: string): Promise<void> => {
+    async (tabId: string): Promise<boolean> => {
       const tab = useDocumentTabsStore.getState().tabs.find((candidate) => candidate.id === tabId);
-      if (!tab) return;
+      if (!tab) return false;
 
       const requestId = ++requestIdRef.current;
       setError(null);
       setSwitchingTabId(tabId);
 
       try {
-        const result = tab.sourceUrl
-          ? await ipc.openPdfUrl(tab.sourceUrl)
-          : await ipc.openPdfPath(tab.path);
-        if (requestId !== requestIdRef.current) return;
+        const { result, renewed } = await openDocumentForTab(tab);
+        if (requestId !== requestIdRef.current) return false;
 
         if (result.canceled) {
           setError(`Could not open ${tab.name}`);
-          return;
+          return false;
         }
 
         usePdfStore
           .getState()
           .setFile(result.path, result.metadata, result.sourceUrl ?? null, result.name ?? null);
-        // A URL tab's downloaded copy is owned by the document that replaced it,
-        // so reactivation produces a new temp path and fresh metadata.
+        // An activation (or a URL re-download) can resolve a new path, fresh
+        // metadata and — after a self-heal — a new document id, so the tab is
+        // refreshed from the result instead of keeping the values it was
+        // created with. A healed tab must not fall back to its dead id.
         useDocumentTabsStore.getState().updateTab(tabId, {
           path: result.path,
           metadata: result.metadata,
+          documentId: result.documentId ?? (renewed ? null : tab.documentId),
           ...(result.sourceUrl ? { sourceUrl: result.sourceUrl } : {}),
         });
         useDocumentTabsStore.getState().activate(tabId);
@@ -88,10 +158,12 @@ export const DocumentTabs: React.FC = () => {
         restoreViewSnapshot(tab.snapshot);
         // Guarded navigation: `navigate` ignores pages outside the new document.
         await navigate(clampSnapshotPage(tab.snapshot.currentPage, result.metadata.pages));
+        return true;
       } catch (err) {
-        if (requestId !== requestIdRef.current) return;
+        if (requestId !== requestIdRef.current) return false;
         console.error('Failed to switch document tab:', err);
         setError(err instanceof Error ? err.message : `Failed to open ${tab.name}`);
+        return false;
       } finally {
         if (requestId === requestIdRef.current) setSwitchingTabId(null);
       }
@@ -99,42 +171,106 @@ export const DocumentTabs: React.FC = () => {
     [navigate],
   );
 
+  const busy = switchingTabId !== null || closingTabId !== null;
+
   const selectTab = useCallback(
     async (tabId: string): Promise<void> => {
-      if (switchingTabId !== null) return;
+      if (switchingTabId !== null || closingTabId !== null) return;
       const store = useDocumentTabsStore.getState();
       if (store.activeTabId === tabId) return;
       // Capture where the user left the outgoing document before replacing it.
       store.saveActiveSnapshot();
       await openTab(tabId);
     },
-    [openTab, switchingTabId],
+    [closingTabId, openTab, switchingTabId],
   );
 
   const closeTab = useCallback(
     async (tabId: string): Promise<void> => {
-      if (switchingTabId !== null) return;
+      if (switchingTabId !== null || closingTabId !== null) return;
       const store = useDocumentTabsStore.getState();
+      const tab = store.tabs.find((candidate) => candidate.id === tabId);
+      if (!tab) return;
       const wasActive = store.activeTabId === tabId;
-      const result = store.removeTab(tabId);
-      if (!result) return;
 
-      setError(null);
-      if (result.nextActiveId === null) {
-        // Last tab: return to the empty state and stop tracking a document.
-        usePdfStore.getState().resetDocument();
+      // Desktop (or any build without the close bridge): the tab only tracks a
+      // local document, so closing it removes the tab and nothing else. The
+      // user's file must never be deleted from here.
+      if (tab.documentId === null || typeof ipc.closePdfDocument !== 'function') {
+        const result = store.removeTab(tabId);
+        if (!result) return;
+
+        setError(null);
+        if (result.nextActiveId === null) {
+          // Last tab: return to the empty state and stop tracking a document.
+          usePdfStore.getState().resetDocument();
+          return;
+        }
+        // Closing an inactive tab leaves the open document alone; closing the
+        // active one activates its neighbour (whose snapshot is already intact).
+        if (wasActive) await openTab(result.nextActiveId);
         return;
       }
-      // Closing an inactive tab leaves the open document alone; closing the
-      // active one activates its neighbour (whose snapshot is already intact).
-      if (wasActive) await openTab(result.nextActiveId);
+
+      const documentId = tab.documentId;
+      setError(null);
+      setClosingTabId(tabId);
+
+      try {
+        // Only used to pick the neighbour that must become active *before* the
+        // server will drop the outgoing document. Its "no neighbour" case must
+        // not be remembered: the tab set can change while the requests below
+        // are in flight (the toolbar can open another document at any time).
+        const neighbourIdBeforeClose = neighbourTabId(store.tabs, tabId);
+
+        if (wasActive && neighbourIdBeforeClose !== null) {
+          // The server refuses to close the active document while others remain,
+          // so the neighbour has to become active first. The outgoing view is
+          // snapshotted, exactly like a manual switch would do.
+          store.saveActiveSnapshot();
+          const switched = await openTab(neighbourIdBeforeClose);
+          // `openTab` already reported why; the old tab and document are intact.
+          if (!switched) return;
+        }
+
+        // Closing an inactive tab touches nothing else; closing the active one
+        // has already switched the view to its neighbour above. A rejection
+        // means the document is still open on the server (and still readable at
+        // `/doc/<id>`), so the tab stays and the error is shown.
+        //
+        // `notFound` is the exception: the server has already forgotten this id
+        // (LRU eviction or a restart), so there is nothing left to keep. The tab
+        // is dropped like a successful close, without an error, which is also
+        // what finally makes a dead tab closable again.
+        const closed = await ipc.closePdfDocument(documentId);
+        if (!closed.closed && closed.notFound !== true) {
+          // A bridge that reports a refusal instead of rejecting it: the
+          // document may still be open, so the tab must survive.
+          throw new Error(`Could not close ${tab.name}`);
+        }
+
+        // Both awaits above may have let another open land, so the tab set is
+        // re-read here: the removal reports what is left *now*, and a viewer
+        // showing a document opened meanwhile must not be reset. A null removal
+        // means the tab is already gone and there is nothing to decide.
+        const removal = useDocumentTabsStore.getState().removeTab(tabId);
+        if (removal?.nextActiveId === null) {
+          // Last web tab: the server holds no document any more, so the renderer
+          // must not keep showing one. (Also true for a stale id: the document
+          // is gone either way.)
+          usePdfStore.getState().resetDocument();
+        }
+      } catch (err) {
+        console.error('Failed to close document tab:', err);
+        setError(err instanceof Error ? err.message : `Failed to close ${tab.name}`);
+      } finally {
+        setClosingTabId(null);
+      }
     },
-    [openTab, switchingTabId],
+    [closingTabId, openTab, switchingTabId],
   );
 
   if (!supportsDocumentTabs() || tabs.length === 0) return null;
-
-  const busy = switchingTabId !== null;
 
   return (
     <div className={styles.bar} data-testid="document-tabs">
@@ -175,6 +311,11 @@ export const DocumentTabs: React.FC = () => {
       {switchingTabId !== null && (
         <span className={styles.status} role="status">
           Opening…
+        </span>
+      )}
+      {switchingTabId === null && closingTabId !== null && (
+        <span className={styles.status} role="status">
+          Closing…
         </span>
       )}
       {error !== null && (

@@ -1,13 +1,16 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   captureViewSnapshot,
   documentTabName,
   findExistingTab,
+  supportsDocumentTabs,
   useDocumentTabsStore,
 } from '../document-tabs-store';
 import type { DocumentTabSource } from '../document-tabs-store';
 import { usePdfStore } from '../pdf-store';
 import { useWorkspaceStore } from '../workspace-store';
+import type { IpcApi } from '../../types/ipc-protocol';
 import type { PdfMetadata } from '../../types/pdf-objects';
 
 const metadata: PdfMetadata = {
@@ -27,6 +30,19 @@ const source = (path: string, sourceUrl?: string): DocumentTabSource => ({
   metadata,
   ...(sourceUrl ? { sourceUrl } : {}),
 });
+
+/** A web document: the bridge reports a registry id next to its `/doc/<id>` path. */
+const webSource = (documentId: string, path: string): DocumentTabSource => ({
+  path,
+  metadata,
+  documentId,
+});
+
+type BridgeWindow = { pdfInspector?: Partial<IpcApi> };
+
+function installBridge(bridge: Partial<IpcApi>): void {
+  (window as unknown as BridgeWindow).pdfInspector = bridge;
+}
 
 const tabStore = () => useDocumentTabsStore.getState();
 
@@ -92,13 +108,96 @@ describe('addTab', () => {
 
     expect(second.id).toBe(first.id);
     expect(tabStore().tabs).toHaveLength(1);
-    // The tab keeps the path it was created with; a switch refreshes it.
-    expect(tabStore().tabs[0].path).toBe('/tmp/first.pdf');
+    // The tab adopts the fresh temp copy the re-open downloaded.
+    expect(tabStore().tabs[0].path).toBe('/tmp/second.pdf');
   });
 
   it('keeps tabs with different source URLs apart', () => {
     tabStore().addTab(source('/tmp/a.pdf', 'https://example.com/a.pdf'));
     tabStore().addTab(source('/tmp/b.pdf', 'https://example.com/b.pdf'));
+
+    expect(tabStore().tabs).toHaveLength(2);
+  });
+
+  it('keeps the server document id of a web document', () => {
+    const tab = tabStore().addTab(webSource('doc-1', '/doc/doc-1/report.pdf'));
+
+    expect(tab.documentId).toBe('doc-1');
+    expect(tabStore().tabs[0].documentId).toBe('doc-1');
+  });
+
+  it('stores a null document id for a desktop or legacy document', () => {
+    expect(tabStore().addTab(source('/docs/a.pdf')).documentId).toBeNull();
+    expect(
+      tabStore().addTab({ path: '/docs/b.pdf', metadata, documentId: null }).documentId,
+    ).toBeNull();
+  });
+
+  it('dedupes a web document by id even when its path changed', () => {
+    // A web activation re-resolves `/doc/<id>`; the id is what identifies the
+    // document, so a different path must not create a second tab.
+    const first = tabStore().addTab(webSource('doc-1', '/doc/doc-1/first.pdf'));
+    const second = tabStore().addTab(webSource('doc-1', '/doc/doc-1/second.pdf'));
+
+    expect(second.id).toBe(first.id);
+    expect(tabStore().tabs).toHaveLength(1);
+    // The tab follows the path the newest activation resolved.
+    expect(tabStore().tabs[0].path).toBe('/doc/doc-1/second.pdf');
+    expect(tabStore().activeTabId).toBe(first.id);
+  });
+
+  it('keeps the existing snapshot and id when the same URL is re-opened', () => {
+    // A URL re-open registers a *new* server document id (the old one may have
+    // been LRU-evicted) and downloads a new copy, so the tab must follow both.
+    const url = 'https://example.com/report.pdf';
+    const first = tabStore().addTab(source('/tmp/first.pdf', url));
+    usePdfStore.setState({ currentPage: 3, zoom: 1.5 });
+    tabStore().saveActiveSnapshot();
+    const metadata2 = { ...metadata, pages: 9 };
+
+    const refreshed = tabStore().addTab({
+      path: '/doc/doc-c/report.pdf',
+      metadata: metadata2,
+      sourceUrl: url,
+      documentId: 'doc-c',
+      name: 'report.pdf',
+    });
+
+    expect(refreshed.id).toBe(first.id);
+    expect(tabStore().tabs).toHaveLength(1);
+    // Authoritative fields come from the open that just happened...
+    expect(refreshed.path).toBe('/doc/doc-c/report.pdf');
+    expect(refreshed.documentId).toBe('doc-c');
+    expect(refreshed.metadata).toBe(metadata2);
+    expect(refreshed.sourceUrl).toBe(url);
+    // ...the label stays the URL it was named after...
+    expect(refreshed.name).toBe(url);
+    // ...and the view state the user left is untouched.
+    expect(refreshed.snapshot.currentPage).toBe(3);
+    expect(refreshed.snapshot.zoom).toBe(1.5);
+    expect(tabStore().activeTabId).toBe(first.id);
+  });
+
+  it('refreshes a directly opened desktop path without losing its snapshot', () => {
+    const first = tabStore().addTab(source('/docs/a.pdf'));
+    usePdfStore.setState({ currentPage: 2 });
+    tabStore().saveActiveSnapshot();
+    const metadata2 = { ...metadata, pages: 12 };
+
+    const again = tabStore().addTab({ path: '/docs/a.pdf', metadata: metadata2 });
+
+    expect(again.id).toBe(first.id);
+    expect(again.path).toBe('/docs/a.pdf');
+    expect(again.metadata).toBe(metadata2);
+    expect(again.documentId).toBeNull();
+    expect(again.name).toBe('a.pdf');
+    expect(again.snapshot.currentPage).toBe(2);
+    expect(tabStore().tabs).toHaveLength(1);
+  });
+
+  it('keeps web documents with different ids apart', () => {
+    tabStore().addTab(webSource('doc-1', '/doc/doc-1/a.pdf'));
+    tabStore().addTab(webSource('doc-2', '/doc/doc-2/b.pdf'));
 
     expect(tabStore().tabs).toHaveLength(2);
   });
@@ -115,6 +214,56 @@ describe('findExistingTab', () => {
     );
     expect(findExistingTab(tabs, source('/docs/b.pdf'))?.id).toBe(localTab.id);
     expect(findExistingTab(tabs, source('/docs/c.pdf'))).toBeUndefined();
+  });
+
+  it('prefers the document id over a shared source URL and over the path', () => {
+    const byId = tabStore().addTab({
+      path: '/doc/one/a.pdf',
+      metadata,
+      documentId: 'one',
+      sourceUrl: 'https://example.com/a.pdf',
+    });
+    const byUrl = tabStore().addTab({
+      path: '/doc/two/b.pdf',
+      metadata,
+      documentId: 'two',
+      sourceUrl: 'https://example.com/b.pdf',
+    });
+
+    // Same id, but the URL and path of the other tab: the id still wins.
+    expect(
+      findExistingTab(tabStore().tabs, {
+        path: '/doc/two/b.pdf',
+        metadata,
+        documentId: 'one',
+        sourceUrl: 'https://example.com/b.pdf',
+      })?.id,
+    ).toBe(byId.id);
+    // Without an id the URL decides, even though the path matches another tab.
+    expect(
+      findExistingTab(tabStore().tabs, {
+        path: '/doc/one/a.pdf',
+        metadata,
+        sourceUrl: 'https://example.com/b.pdf',
+      })?.id,
+    ).toBe(byUrl.id);
+  });
+
+  it('never matches a tab without an id by id, so the path fallback still applies', () => {
+    const desktop = tabStore().addTab(source('/docs/c.pdf'));
+
+    // A desktop tab has no document id; a web open of a different document that
+    // happens to use the same path falls through to the path match.
+    expect(
+      findExistingTab(tabStore().tabs, {
+        path: '/docs/c.pdf',
+        metadata,
+        documentId: 'three',
+      })?.id,
+    ).toBe(desktop.id);
+    expect(
+      findExistingTab(tabStore().tabs, { path: '/doc/three/c.pdf', metadata, documentId: 'three' }),
+    ).toBeUndefined();
   });
 });
 
@@ -277,6 +426,32 @@ describe('reset', () => {
 
     expect(tabStore().tabs).toEqual([]);
     expect(tabStore().activeTabId).toBeNull();
+  });
+});
+
+describe('supportsDocumentTabs', () => {
+  afterEach(() => {
+    delete (window as unknown as BridgeWindow).pdfInspector;
+  });
+
+  it('is true for the desktop bridge, which opens a known local path', () => {
+    installBridge({ openPdfPath: vi.fn() });
+
+    expect(supportsDocumentTabs()).toBe(true);
+  });
+
+  it('is true for the web bridge, which activates a server document id', () => {
+    installBridge({ activatePdfDocument: vi.fn() });
+
+    expect(supportsDocumentTabs()).toBe(true);
+  });
+
+  it('is false when the bridge can switch to neither a path nor an id', () => {
+    installBridge({ openPdfUrl: vi.fn() });
+    expect(supportsDocumentTabs()).toBe(false);
+
+    delete (window as unknown as BridgeWindow).pdfInspector;
+    expect(supportsDocumentTabs()).toBe(false);
   });
 });
 

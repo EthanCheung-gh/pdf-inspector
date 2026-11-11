@@ -30,6 +30,7 @@ import type {
   RawRef,
 } from '../renderer/types/raw-pdf';
 import type { SaveFileRequest } from '../shared/constants';
+import { PdfDocumentNotFoundError } from '../shared/document-errors';
 import { UNSAFE_EXTERNAL_URL_ERROR, toSafeExternalUrl } from '../shared/external-url';
 import type { OpenExternalResult } from '../shared/external-url';
 import type { AuditDocumentResult, AuditPagesResult } from '../shared/audit-types';
@@ -47,13 +48,15 @@ const CANCEL_FOCUS_GRACE_MS = 300;
 /** Delay before revoking the download object URL (some engines abort early). */
 const OBJECT_URL_REVOKE_DELAY_MS = 60_000;
 
-/** Wire shape of a successful `POST /api/open` or `POST /api/open-url` reply. */
+/** Wire shape of a successful `POST /api/open`, `/api/open-url` or activate reply. */
 interface ServerOpenDocumentResult {
   canceled?: boolean;
   path?: string;
   metadata?: PdfMetadata;
   name?: string;
   sourceUrl?: string;
+  /** Registry id of the opened/activated document (web multi-document). */
+  documentId?: string;
 }
 
 interface RestartResult {
@@ -125,6 +128,15 @@ async function responseError(response: Response): Promise<Error> {
   return new Error(message);
 }
 
+/** Parse a successful reply body, or throw with the server's error message. */
+async function readJson<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    throw await responseError(response);
+  }
+
+  return (await response.json()) as T;
+}
+
 async function postJson<T>(url: string, payload: unknown): Promise<T> {
   const response = await fetch(url, {
     method: 'POST',
@@ -132,11 +144,12 @@ async function postJson<T>(url: string, payload: unknown): Promise<T> {
     body: JSON.stringify(payload),
   });
 
-  if (!response.ok) {
-    throw await responseError(response);
-  }
+  return readJson<T>(response);
+}
 
-  return (await response.json()) as T;
+/** Registry endpoint of one server-side document, id URI-encoded. */
+function documentApiPath(id: string): string {
+  return `/api/documents/${encodeURIComponent(id)}`;
 }
 
 /** Forward a sidecar request; the backend returns the sidecar result verbatim. */
@@ -168,6 +181,11 @@ function mapOpenResult(result: ServerOpenDocumentResult): OpenPdfResult {
   }
   if (result.sourceUrl) {
     mapped.sourceUrl = result.sourceUrl;
+  }
+  // The registry id is what lets a tab activate or close this exact document
+  // later; a backend without multi-document support simply omits it.
+  if (result.documentId) {
+    mapped.documentId = result.documentId;
   }
   return mapped;
 }
@@ -435,10 +453,44 @@ export function createWebIpc(): IpcApi {
       return mapOpenResult(response);
     },
 
-    // Deliberately no `openPdfPath`: a browser has no known local paths, and
-    // multi-document tabs on the web need a server-side document registry
-    // (deferred). Leaving the optional method out keeps the desktop-only tab
-    // bar hidden instead of exposing a half-working switch.
+    // Web multi-document: the server keeps a bounded registry, so a tab can
+    // re-activate a document it opened earlier (the reply carries the same
+    // shape as an open, including the id and the resolved `/doc/<id>` path) and
+    // close one it no longer shows. Activating never re-uploads or
+    // re-downloads: the server already owns the bytes.
+    activatePdfDocument: async (id: string) => {
+      const response = await fetch(`${documentApiPath(id)}/activate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      // A 404 is not a generic failure: the id was evicted or the server
+      // restarted, and a tab that still knows its source URL can re-open it.
+      // Any other status (409 while restoring, 500, ...) stays a plain error.
+      if (response.status === 404) {
+        throw new PdfDocumentNotFoundError((await responseError(response)).message);
+      }
+      return mapOpenResult(await readJson<ServerOpenDocumentResult>(response));
+    },
+
+    closePdfDocument: async (id: string) => {
+      const response = await fetch(documentApiPath(id), { method: 'DELETE' });
+      // The server has already forgotten the id, so there is nothing to delete
+      // and nothing to report: the caller drops the tab as if it had closed.
+      // A 404 here is NOT an error the user should see — the tab is stale.
+      if (response.status === 404) {
+        return { closed: false, notFound: true };
+      }
+      // A 409 (active document with siblings) or a 5xx throws instead, so the
+      // caller keeps the tab and reports the server's message.
+      const body = await readJson<{ closed?: unknown }>(response);
+      return { closed: body.closed !== false };
+    },
+
+    // Deliberately no `openPdfPath`: a browser has no known local paths, so the
+    // desktop-only path bridge stays absent. Web tabs switch through
+    // `activatePdfDocument` (server document id) instead, which is why
+    // `supportsDocumentTabs()` accepts either method.
 
     extractPage: (page: number) => rpc<PageData>('extract_page', { page }),
 

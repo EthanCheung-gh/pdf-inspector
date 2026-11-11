@@ -462,6 +462,148 @@ describe('ipc-client openPdfPath', () => {
   });
 });
 
+describe('ipc-client server document bridge (web tabs)', () => {
+  // The shared fake bridge; the web-only methods are added/removed per test.
+  const bridge = globalThis.window.pdfInspector as unknown as Record<string, unknown>;
+
+  beforeEach(async () => {
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    vi.resetModules();
+    delete bridge.activatePdfDocument;
+    delete bridge.closePdfDocument;
+    ({ ipc } = await import('../ipc-client'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    delete bridge.activatePdfDocument;
+    delete bridge.closePdfDocument;
+  });
+
+  it('rejects clearly when the bridge cannot activate a server document (desktop build)', async () => {
+    // The desktop bridge opens local paths; a caller that tries a web document id
+    // anyway must not fail with "undefined is not a function".
+    await expect(ipc.activatePdfDocument('doc-1')).rejects.toThrow(
+      'Activating a server document is not available in this build',
+    );
+  });
+
+  it('rejects clearly when the bridge cannot close a server document', async () => {
+    await expect(ipc.closePdfDocument('doc-1')).rejects.toThrow(
+      'Closing a server document is not available in this build',
+    );
+  });
+
+  it('forwards the document id and resolves the activation result', async () => {
+    const activated = {
+      canceled: false,
+      path: '/doc/doc-1/a.pdf',
+      metadata: { pages: 2 },
+      documentId: 'doc-1',
+    };
+    const activatePdfDocument = vi.fn().mockResolvedValue(activated);
+    bridge.activatePdfDocument = activatePdfDocument;
+
+    await expect(ipc.activatePdfDocument('doc-1')).resolves.toEqual(activated);
+
+    expect(activatePdfDocument).toHaveBeenCalledTimes(1);
+    expect(activatePdfDocument).toHaveBeenCalledWith('doc-1');
+    expect(mockRestartSidecar).not.toHaveBeenCalled();
+  });
+
+  it('keeps waiting past the 30s default because activation opens the document', async () => {
+    // Activating makes the sidecar parse the document again, so the generic 30s
+    // budget must not turn a legitimately slow switch into a restart.
+    bridge.activatePdfDocument = vi.fn(() => new Promise(() => {}));
+
+    let settled = false;
+    const promise = ipc.activatePdfDocument('doc-1');
+    void promise.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(OPEN_PDF_TIMEOUT_MS);
+    await vi.runAllTicks();
+
+    expect(settled).toBe(false);
+    expect(mockRestartSidecar).not.toHaveBeenCalled();
+  });
+
+  it('retries activation with the same id after its own renderer backstop', async () => {
+    mockRestartSidecar.mockResolvedValue({ success: true, running: true });
+    const activatePdfDocument = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise(() => {}))
+      .mockResolvedValueOnce({
+        canceled: false,
+        path: '/doc/doc-1/a.pdf',
+        metadata: { pages: 2 },
+        documentId: 'doc-1',
+      });
+    bridge.activatePdfDocument = activatePdfDocument;
+
+    const promise = ipc.activatePdfDocument('doc-1');
+    await vi.advanceTimersByTimeAsync(OPEN_PDF_RENDERER_TIMEOUT_MS);
+    await vi.runAllTicks();
+
+    await expect(promise).resolves.toMatchObject({ documentId: 'doc-1' });
+    expect(mockRestartSidecar).toHaveBeenCalledTimes(1);
+    // The retry must re-send the captured id, never activate "something else".
+    expect(activatePdfDocument.mock.calls).toEqual([['doc-1'], ['doc-1']]);
+  });
+
+  it('closes by id and resolves the closed flag', async () => {
+    const closePdfDocument = vi.fn().mockResolvedValue({ closed: true });
+    bridge.closePdfDocument = closePdfDocument;
+
+    await expect(ipc.closePdfDocument('doc-2')).resolves.toEqual({ closed: true });
+
+    expect(closePdfDocument).toHaveBeenCalledTimes(1);
+    expect(closePdfDocument).toHaveBeenCalledWith('doc-2');
+    expect(mockRestartSidecar).not.toHaveBeenCalled();
+  });
+
+  it('passes a not-found close result through instead of retrying', async () => {
+    // The document is already gone on the server: that is an answer the tab bar
+    // acts on (drop the tab), not a failure worth a sidecar restart.
+    const closePdfDocument = vi.fn().mockResolvedValue({ closed: false, notFound: true });
+    bridge.closePdfDocument = closePdfDocument;
+
+    await expect(ipc.closePdfDocument('gone')).resolves.toEqual({
+      closed: false,
+      notFound: true,
+    });
+
+    expect(closePdfDocument).toHaveBeenCalledTimes(1);
+    expect(mockRestartSidecar).not.toHaveBeenCalled();
+  });
+
+  it('gives closing the 30s default budget, not the open budget', async () => {
+    // Deleting a temp copy is quick: a hanging close must time out (and retry) at
+    // the generic budget instead of waiting for the 125s open budget.
+    mockRestartSidecar.mockResolvedValue({ success: true, running: true });
+    const closePdfDocument = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise(() => {}))
+      .mockResolvedValueOnce({ closed: true });
+    bridge.closePdfDocument = closePdfDocument;
+
+    const promise = ipc.closePdfDocument('doc-2');
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.runAllTicks();
+
+    await expect(promise).resolves.toEqual({ closed: true });
+    expect(mockRestartSidecar).toHaveBeenCalledTimes(1);
+    expect(closePdfDocument.mock.calls).toEqual([['doc-2'], ['doc-2']]);
+  });
+});
+
 describe('IPC timeout budgets', () => {
   it('gives page extraction 120s and lets main lose the race, never the renderer', () => {
     expect(EXTRACT_PAGE_TIMEOUT_MS).toBe(120_000);

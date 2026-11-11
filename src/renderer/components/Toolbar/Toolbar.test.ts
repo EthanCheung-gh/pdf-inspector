@@ -801,6 +801,76 @@ describe('Toolbar document tabs', () => {
   });
 });
 
+describe('Toolbar document tabs on the web bridge', () => {
+  type WebBridgeWindow = {
+    pdfInspector?: { activatePdfDocument?: unknown; closePdfDocument?: unknown };
+  };
+
+  beforeEach(() => {
+    openPdf.mockReset();
+    openPdfUrl.mockReset();
+    navigate.mockReset();
+    navigate.mockImplementation(async () => {
+      usePdfStore.getState().setLoading(false);
+    });
+    useDocumentTabsStore.getState().reset();
+    usePdfStore.getState().resetDocument();
+    useWorkspaceStore.setState({ leftTab: 'objects', inspectorTab: 'inspect' });
+    // The browser bridge has no `openPdfPath`; server document ids are what
+    // enable the tab bar there.
+    (window as unknown as WebBridgeWindow).pdfInspector = {
+      activatePdfDocument: vi.fn(),
+      closePdfDocument: vi.fn(),
+    };
+  });
+
+  afterEach(() => {
+    cleanup();
+    delete (window as unknown as WebBridgeWindow).pdfInspector;
+    // These uploads carry display names; leaving one behind would change the
+    // filename another describe renders.
+    usePdfStore.getState().resetDocument();
+  });
+
+  it('stores the document id of every upload in its tab', async () => {
+    openPdf
+      .mockResolvedValueOnce({
+        canceled: false,
+        path: '/doc/doc-a/a.pdf',
+        metadata,
+        name: 'a.pdf',
+        documentId: 'doc-a',
+      })
+      .mockResolvedValueOnce({
+        canceled: false,
+        path: '/doc/doc-b/b.pdf',
+        metadata,
+        name: 'b.pdf',
+        documentId: 'doc-b',
+      });
+
+    render(React.createElement(Toolbar));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    });
+    await waitFor(() => expect(useDocumentTabsStore.getState().tabs).toHaveLength(1));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    });
+    await waitFor(() => expect(useDocumentTabsStore.getState().tabs).toHaveLength(2));
+
+    // The ids are what let the tab bar re-activate or close these documents
+    // later without re-uploading them.
+    const tabs = useDocumentTabsStore.getState().tabs;
+    expect(tabs.map((tab) => tab.name)).toEqual(['a.pdf', 'b.pdf']);
+    expect(tabs.map((tab) => tab.documentId)).toEqual(['doc-a', 'doc-b']);
+    expect(tabs.map((tab) => tab.path)).toEqual(['/doc/doc-a/a.pdf', '/doc/doc-b/b.pdf']);
+    expect(useDocumentTabsStore.getState().activeTabId).toBe(tabs[1].id);
+  });
+});
+
 describe('Toolbar layout with search open', () => {
   const dockedFile = '/docs/report.pdf';
 

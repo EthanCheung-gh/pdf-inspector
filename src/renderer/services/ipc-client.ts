@@ -115,9 +115,9 @@ export const ipc = {
     callWithTimeout(() => window.pdfInspector.openPdfUrl(url), 'openPdfUrl', OPEN_PDF_URL_TIMEOUT_MS),
   // Document tabs re-open a path the user already chose, so there is no dialog
   // and the budget is a normal open budget. The bridge method is optional: only
-  // the desktop preload implements it, so the browser build (where the tab bar
-  // is hidden) gets a clear rejection instead of an opaque `undefined is not a
-  // function` if a caller ever tries anyway.
+  // the desktop preload implements it, so the browser build (where tabs switch by
+  // server document id instead) gets a clear rejection rather than an opaque
+  // `undefined is not a function` if a caller ever tries anyway.
   openPdfPath: (path: string) => {
     const openPdfPath = window.pdfInspector?.openPdfPath;
     if (typeof openPdfPath !== 'function') {
@@ -130,6 +130,41 @@ export const ipc = {
       'openPdfPath',
       OPEN_PDF_RENDERER_TIMEOUT_MS,
     );
+  },
+  // Web counterpart of `openPdfPath`: the browser activates a document the
+  // server already holds, by registry id. It is the same cost as an open — the
+  // sidecar must open and parse that document's file — so it gets the open
+  // budget, not the 30s default. `callWithTimeout` restarts a wedged sidecar and
+  // retries the captured id, so a switch is never half-applied by a timeout.
+  //
+  // Optional bridge method: only the web adapter implements it, so the desktop
+  // build (and any caller that ignores `supportsDocumentTabs()`) gets a clear
+  // rejection instead of `undefined is not a function`.
+  activatePdfDocument: (id: string) => {
+    const activatePdfDocument = window.pdfInspector?.activatePdfDocument;
+    if (typeof activatePdfDocument !== 'function') {
+      return Promise.reject(
+        new Error('Activating a server document is not available in this build'),
+      );
+    }
+    return callWithTimeout(
+      () => activatePdfDocument(id),
+      'activatePdfDocument',
+      OPEN_PDF_RENDERER_TIMEOUT_MS,
+    );
+  },
+  // Closing only drops a registry entry and deletes that document's temp copy,
+  // so the default 30s budget is already generous. The bridge method is optional
+  // (web only); a rejection means the document is still open and the caller must
+  // keep its tab.
+  closePdfDocument: (id: string) => {
+    const closePdfDocument = window.pdfInspector?.closePdfDocument;
+    if (typeof closePdfDocument !== 'function') {
+      return Promise.reject(
+        new Error('Closing a server document is not available in this build'),
+      );
+    }
+    return callWithTimeout(() => closePdfDocument(id), 'closePdfDocument');
   },
   // One page is extracted per navigation and normally returns in well under
   // 0.1s, but a single complex page (many tables and objects) is extracted in

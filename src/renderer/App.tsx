@@ -178,10 +178,11 @@ const App = (): JSX.Element => {
     <div className={styles.app}>
       <Toolbar />
       {/*
-       * Desktop document tabs belong to the Inspect document only: while Diff,
-       * Audit or Raw owns the workspace they are hidden rather than acting on a
-       * document the user cannot see. The bar renders nothing on the web build
-       * (no open-by-path bridge) or while only one document is open.
+       * Document tabs belong to the Inspect document only: while Diff, Audit
+       * or Raw owns the workspace they are hidden rather than acting on a
+       * document the user cannot see. The bar renders nothing when the bridge
+       * cannot switch documents (no tab bridge) or before the first document
+       * opens; Web tabs use the server document id instead of a local path.
        */}
       {!workspaceActive && <DocumentTabs />}
       <main className={styles.main}>

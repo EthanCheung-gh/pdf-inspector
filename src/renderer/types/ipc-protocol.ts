@@ -77,6 +77,15 @@ export type OpenPdfResult = {
    * downloaded temp copy, so the UI shows this instead of the temp file name.
    */
   sourceUrl?: string;
+  /**
+   * Identifier of the document inside the web server's document registry.
+   *
+   * Only the browser bridge sets it: the web server keeps a bounded set of open
+   * documents and addresses them by id, so a tab can later activate or close
+   * that exact document. Desktop results leave it unset — there the document is
+   * identified by `path` alone (see `IpcApi.openPdfPath`).
+   */
+  documentId?: string;
 };
 
 export type SaveFileResult =
@@ -90,11 +99,50 @@ export interface IpcApi {
    * Open an already known local path without showing a file dialog.
    *
    * Optional because only the desktop bridge can do it: the browser build has
-   * no local paths, so it omits the method and the document tab bar stays
-   * hidden (web multi-document is deferred). Callers must check for the method
-   * before relying on tabs.
+   * no local paths, so it omits this method. It is one of the two optional
+   * bridges that enable the document tab bar (`activatePdfDocument` is the
+   * web counterpart); callers must check for one of them before relying on
+   * tabs.
    */
   openPdfPath?(path: string): Promise<OpenPdfResult>;
+  /**
+   * Activate a document the web server already holds, by registry id.
+   *
+   * This is the web counterpart of `openPdfPath`, and the two are alternatives,
+   * not aliases: `openPdfPath` opens a *local path* the desktop process can read,
+   * while this activates a *server-side document id* whose temporary copy lives
+   * in the server's registry and is only readable through `/doc/<id>/<name>`.
+   * The browser therefore cannot use `openPdfPath` (it never learns a real
+   * filesystem path), and the desktop has no document ids to activate.
+   *
+   * Both are optional and either one enables the document tab bar. A result
+   * carries `documentId` and the document's own (URL-resolved) `path`, so a
+   * switching tab can refresh both without re-uploading or re-downloading.
+   *
+   * The server may have forgotten the id (LRU eviction, or a restart): the web
+   * bridge then rejects with `PdfDocumentNotFoundError`
+   * (`src/shared/document-errors.ts`) instead of a generic error, so a tab that
+   * still knows its source URL can re-open that URL and heal itself.
+   */
+  activatePdfDocument?(id: string): Promise<OpenPdfResult>;
+  /**
+   * Close a server-side document and let the server delete its temporary copy.
+   *
+   * Optional for the same reason as `activatePdfDocument`: only the web bridge
+   * has a registry to close from. Desktop tabs hold local paths and removing a
+   * tab must never delete the user's file.
+   *
+   * `closed: true` means the document is gone (its `/doc/<id>` URL is 404 now).
+   * A rejected promise means it is still open — for example it is the active
+   * document and has neighbours, which the server refuses to close — so callers
+   * must keep the tab and show the error instead of dropping it.
+   *
+   * `notFound: true` (with `closed: false`) is the third outcome: the server
+   * does not know the id any more, so there is nothing left to delete. Callers
+   * should drop the tab as if it had been closed — the document is unreachable
+   * either way — without reporting an error to the user.
+   */
+  closePdfDocument?(id: string): Promise<{ closed: boolean; notFound?: boolean }>;
   saveFile(req: SaveFileRequest): Promise<SaveFileResult>;
   extractPage(page: number): Promise<PageData>;
   extractMetadata(): Promise<PdfMetadata>;
