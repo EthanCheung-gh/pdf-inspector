@@ -1,216 +1,240 @@
 # PDF Inspector
 
-面向开发者的 PDF 结构检查工具——在 PDF.js 渲染结果之上叠加 pdfplumber 的坐标级对象数据，直观检查字符、单词、线条、曲线、矩形、表格和图片，并以只读方式检查注释、链接、表单字段、原始对象树与内容流。提供 Electron 桌面应用与浏览器（Node HTTP 后端）两种运行方式。
+English | [简体中文](README.zh-CN.md)
+
+PDF Inspector is a developer-focused PDF structure viewer. It overlays coordinate-level pdfplumber object data on PDF.js rendering so you can inspect characters, words, lines, curves, rectangles, tables, and images, and read annotations, links, form fields, the raw object tree, and content streams without editing the PDF. It runs as an Electron desktop app or in a browser backed by a Node HTTP server.
 
 [![CI](https://github.com/EthanCheung-gh/pdf-inspector/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/EthanCheung-gh/pdf-inspector/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-v0.2.0-blue.svg)](https://github.com/EthanCheung-gh/pdf-inspector)
 [GitHub](https://github.com/EthanCheung-gh/pdf-inspector) · [GitCode](https://gitcode.com/EthanCheung/pdf-inspector)
 
+> The detailed design notes under [`docs/`](docs/) are currently written in Chinese. This README is the English overview; commands, API names, file names, and UI labels are kept exact.
+
 |  |  |
 | :---: | :---: |
-| ![工作区总览：Objects / Outline / Fonts / Layers 标签与可调整面板](docs/images/overview.png) | ![对象检查](docs/images/inspector.png) |
-| ![Islands 主题：工具栏、左右面板、画布与状态栏作为圆角浮动卡片，中间留出间隙](docs/images/theme-islands.png) | **Dark / Islands 主题**<br>工具栏右侧的 `Theme` 按钮在默认 `Dark` 与 VS Code 风格 `Islands` 之间切换；Islands 把主要面板变成带 1px 边框、圆角与柔和阴影的浮动卡片，Diff / Audit / Raw 工作区同样适用。 |
-| ![字体分析：嵌入状态徽标与 Standard 14 汇总](docs/images/fonts.png) | ![URL 打开](docs/images/url-dialog.png) |
-| ![图层面板](docs/images/layers.png) | **Layers**<br>七类对象开关、计数、All/None、Solo 与透明度。 |
-| ![按元素类型导出](docs/images/export-dialog.png) | **按元素类型导出**<br>选择当前页/整档、JSON/CSV 与要包含的元素类型；未勾选的类型不会写入文件。 |
-| ![表格单元格网格与选中单元格](docs/images/table-cells.png) | **表格单元格**<br>选中表格后显示单元格网格、合并/缺失标记与选中单元格的 BBox；悬停或点击单元格时画布同步高亮。 |
-| ![页面几何：五个页面框与标尺](docs/images/page-geometry.png) | **页面几何**<br>`Page` 标签页列出 MediaBox / CropBox / TrimBox / BleedBox / ArtBox，可切换 pt/mm 并显示标尺。 |
-| ![Diff 工作区：并排旧/新页面、变更摘要与列表、右侧选中变更详情](docs/images/diff-workspace.png) | **PDF Diff**<br>并排查看旧/新页面；左侧按页汇总变更，选中条目后右侧显示旧/新文本、BBox 与字段差异，顶部可重新选择旧/新文件或导出 JSON。 |
-| ![叠加模式：同一页上叠加旧/新对象框](docs/images/diff-overlay.png) | **叠加模式**<br>在同一页叠加旧/新对象框（移除红、新增绿、移动橙、修改蓝），适合定位同一区域的改动。 |
-| ![Visual 模式：像素热力图叠加在页面上，顶部显示 changed / total 像素统计](docs/images/diff-visual.png) | **Visual 像素对比**<br>在 Diff 工作区切到 `Visual`，以新页为底叠加旧页（`Blend`）或逐像素热力图（`Heatmap`），并在页面栏显示 `changed / total px`；`Boxes` 只显示对象框。 |
-| ![忽略区域：在并排页面上拖动矩形后显示虚线框、区域列表与重新运行按钮](docs/images/diff-regions.png) | **忽略区域**<br>打开 `Ignore region` 后在任一页拖动矩形，左侧列出页码/侧/bbox，虚线框同步绘制；`Apply & re-run` 重新比较并过滤相交的变更。 |
-| ![页面重排：页面列表显示 Old 2 → New 1、Old 3 → New 2 等对齐结果与新页 5 为 added](docs/images/diff-reordered.png) | **页面对齐与重排**<br>页面按内容指纹配对，列表与页面栏显示 `Old 2 → New 1` 等旧/新页码；插入/删除页保持单侧，`--fail-on reordered` 可把这些配对作为 CI 门禁。 |
-| ![Diff 页列表：按页折叠的变更组、Go to page 输入与 Expand all/Collapse all](docs/images/diff-page-groups.png) | **按页分组的 Diff 结果**<br>左侧每个页面是独立可折叠组，标题保留状态与变更数；`Go to page` 输入支持夹取跳转并自动展开目标页，`Expand all` / `Collapse all` 批量控制。 |
-| ![文档体检工作区：严重级别汇总、筛选器、发现列表与右侧选中发现详情](docs/images/audit-workspace.png) | **文档体检**<br>跨字体、页面、图片、元数据、结构与安全的整档审计；按严重级别汇总，可按严重级别/类别筛选，选中条目查看证据与修复建议，并可跳转到对应页面。 |
-| ![PDF 审计 HTML 报告：文档信息、严重级别汇总与逐条发现](docs/images/audit-report.png) | **审计报告（HTML）**<br>CLI `audit --format html` 生成单文件报告：文档信息、严重级别汇总与逐条发现（证据、建议）；内联 CSS、无脚本、无外部资源。 |
-| ![注释、链接与表单：Annots 列表、画布框选与 Inspector 只读表单详情](docs/images/annotations.png) | **注释、链接与表单（当前页）**<br>`Annots` 的 `Current page` 模式列出当前页的链接、表单字段、标记与注释；画布同步绘制只读框，选中后在 Inspector 查看字段值、选项与链接目标。 |
-| ![整档注释索引：Whole document 模式下列出全部注释、Issues 与 External links 清单](docs/images/annotations-index.png) | **整档注释索引**<br>切到 `Whole document` 后按 10 页一批读取整份文档：顶部汇总 `7 annotations · 1 page · 2 links · 3 form fields`；`Issues` 默认展开、`External links` 折叠，列表按页定位并支持搜索与全局过滤。 |
-| ![导出注释对话框：Export annotations、JSON 选中与可编辑文件名](docs/images/annotations-export.png) | **注释导出**<br>索引完成后 `Export` 打开对话框，可选 JSON/CSV 并修改文件名；JSON 包含文档信息、summary、按页注释、链接/表单问题与合并字段，且不写入本地绝对路径。 |
-| ![Raw 对象树：Catalog → Pages → Page → Resources 逐层展开，右侧显示图片 XObject 的流元数据](docs/images/raw-object-tree.png) | **原始对象树**<br>工具栏 `Raw` 打开只读工作区；左侧从 trailer 根开始按引用懒加载，展开 `Pages`、页面与 `Resources` 后选中对象，右侧显示字典、数组与流元数据。 |
-| ![内容流：第 1 页解码后的操作符与操作数，包含 BT、Tf、Tj、Do](docs/images/raw-content-stream.png) | **内容流**<br>`Content stream` 标签页按页解码内容流，逐条列出 offset、操作符与操作数；`BT` / `Tf` / `Tj` / `Do` 等操作符只读取、不执行。 |
-| ![1000 页页面列表与 Go to page：工具栏显示 1000 / 1000，左侧列表末尾为 Page 1000](docs/images/large-doc-pages.png) | **大文档页面列表与跳页**<br>打开 1000 页示例，左侧页面树使用 CSS 窗口化；Go to page 把输入夹到 `1..pageCount`，只展开当前页对象。 |
-| ![大文档搜索：SearchBox 显示 Indexing 100/1000…，页面与页面列表仍可用](docs/images/large-doc-search.png) | **分批搜索索引**<br>搜索按 10 页一批建立文本索引，SearchBox 显示 `Indexing done/total…`；关闭搜索或切换文档会取消构建。 |
-| ![桌面文档标签栏：两个通过 URL 打开的文档标签，切换到 basic.pdf 后工具栏显示 1 / 4](docs/images/large-doc-tabs.png) | **桌面文档标签**<br>桌面端可同时保留多个文档标签，切换时恢复页码、缩放、叠加层与面板标签；Web 端通过服务端 `documentId` 激活标签。 |
-| ![Web 文档标签栏：basic.pdf 与 large.pdf 两个标签，当前 large.pdf 显示 1 / 120](docs/images/web-tabs.png) | **Web 文档标签**<br>Web 与桌面端都显示文档标签栏；切换按 `documentId` 激活并恢复视图快照，未激活文档的 `/doc/:id` 仍可读取，关闭标签只删除该文档的临时副本。 |
+| ![Workspace overview: Objects / Outline / Fonts / Layers tabs and adjustable panels](docs/images/overview.png) | ![Object inspection](docs/images/inspector.png) |
+| ![Islands theme: toolbar, side panels, canvas, and status bar as rounded floating cards with gaps](docs/images/theme-islands.png) | **Dark / Islands themes**<br>The `Theme` button on the right side of the toolbar switches between the default `Dark` theme and the VS Code-inspired `Islands` theme. Islands turns major panels into floating cards with 1px borders, rounded corners, and soft shadows; Diff / Audit / Raw workspaces use the same treatment. |
+| ![Font analysis: embedding badges and Standard 14 summary](docs/images/fonts.png) | ![Open URL dialog](docs/images/url-dialog.png) |
+| ![Layers panel](docs/images/layers.png) | **Layers**<br>Seven object-type toggles with counts, All/None, Solo, and opacity. |
+| ![Export by element type](docs/images/export-dialog.png) | **Export by element type**<br>Choose current page or whole document, JSON or CSV, the element types to include, and an editable file name. Unchecked types are omitted. |
+| ![Table cell grid with a selected cell](docs/images/table-cells.png) | **Table cells**<br>Select a table to see a cell grid with merged/missing markers and the selected cell's BBox. Hovering or clicking a cell highlights it on the canvas. |
+| ![Page geometry: five page boxes and rulers](docs/images/page-geometry.png) | **Page geometry**<br>The `Page` tab lists MediaBox / CropBox / TrimBox / BleedBox / ArtBox, with pt/mm switching and canvas rulers. |
+| ![Diff workspace: old/new pages side by side, change summary and list, selected change details](docs/images/diff-workspace.png) | **PDF Diff**<br>Compare old and new pages side by side. The left side summarizes changes per page; selecting an item shows old/new text, BBoxes, and field differences on the right. Old/new files can be changed and the result exported as JSON. |
+| ![Overlay mode: old/new object boxes on one page](docs/images/diff-overlay.png) | **Overlay mode**<br>Overlay old/new object boxes on one page: removed red, added green, moved orange, modified blue. Useful for locating changes in the same region. |
+| ![Visual mode: pixel heatmap over a page with changed / total pixel statistics](docs/images/diff-visual.png) | **Visual pixel comparison**<br>Switch the Diff workspace to `Visual` to blend the old page over the new page (`Blend`) or draw a per-pixel heatmap (`Heatmap`); the page bar shows `changed / total px`. `Boxes` only shows object boxes. |
+| ![Ignore region: dashed rectangle, region list, and re-run button](docs/images/diff-regions.png) | **Ignore regions**<br>Turn on `Ignore region`, drag a rectangle on either page, and review page/side/bbox rows on the left with a synchronized dashed outline. `Apply & re-run` filters intersecting changes. |
+| ![Page alignment: Old 2 → New 1, Old 3 → New 2, and a new page 5 marked added](docs/images/diff-reordered.png) | **Page alignment and reordering**<br>Pages are paired by content fingerprints; the list and page bar show `Old 2 → New 1` style old/new numbers. Inserted/deleted pages stay one-sided, and `--fail-on reordered` can gate page-order changes in CI. |
+| ![Diff page list: collapsible per-page groups, Go to page input, Expand all/Collapse all](docs/images/diff-page-groups.png) | **Collapsible Diff page groups**<br>Each page is an independent collapsible group whose header keeps its status and change count. `Go to page` clamps and reveals the target page; `Expand all` / `Collapse all` control the list. |
+| ![Audit workspace: severity summary, filters, findings list, selected finding details](docs/images/audit-workspace.png) | **Document audit**<br>Whole-document checks across fonts, pages, images, metadata, structure, and security. Filter by severity/category, inspect evidence and recommendations, and jump to the referenced page. |
+| ![PDF audit HTML report: document information, severity summary, and findings](docs/images/audit-report.png) | **Audit report (HTML)**<br>CLI `audit --format html` writes a single-file report with document information, severity summary, and findings (evidence and recommendations). Inline CSS, no scripts, no external resources. |
+| ![Annotations, links, and forms: Annots list, canvas boxes, and read-only form details](docs/images/annotations.png) | **Annotations, links, and forms (current page)**<br>`Annots` in `Current page` mode lists links, form fields, markup, and annotations on the current page. Canvas boxes stay in sync; select one to inspect values, options, and link targets in the Inspector. |
+| ![Whole-document annotation index: all annotations, Issues, and External links](docs/images/annotations-index.png) | **Whole-document annotation index**<br>Switch to `Whole document` to read the entire PDF in 10-page batches. The header shows `7 annotations · 1 page · 2 links · 3 form fields`; `Issues` opens by default, `External links` is collapsed, and the list supports page targeting, search, and global filters. |
+| ![Annotation export dialog: Export annotations, JSON selection, editable file name](docs/images/annotations-export.png) | **Annotation export**<br>After indexing, `Export` opens a dialog for JSON or CSV with an editable file name. JSON includes document information, summary, per-page annotations, link/form issues, and merged fields, and never writes local absolute paths. |
+| ![Raw object tree: Catalog → Pages → Page → Resources with image XObject stream metadata](docs/images/raw-object-tree.png) | **Raw object tree**<br>The toolbar `Raw` button opens a read-only workspace. The tree starts at the trailer root and follows references lazily; expand `Pages`, a page, and `Resources` to inspect dictionaries, arrays, and stream metadata. |
+| ![Content stream: decoded page 1 operators and operands including BT, Tf, Tj, Do](docs/images/raw-content-stream.png) | **Content streams**<br>The `Content stream` tab decodes a page's content stream and lists offsets, operators, and operands. `BT` / `Tf` / `Tj` / `Do` and other operators are read, never executed. |
+| ![1000-page page list and Go to page: toolbar shows 1000 / 1000 and the list ends at Page 1000](docs/images/large-doc-pages.png) | **Large-document page list and jump**<br>Open the 1000-page sample and use CSS windowing in the page tree. Go to page clamps input to `1..pageCount` and expands only the current page's objects. |
+| ![Large-document search: SearchBox shows Indexing 100/1000… while pages and the page list remain usable](docs/images/large-doc-search.png) | **Batched search index**<br>Search builds the text index in 10-page batches and shows `Indexing done/total…` in the SearchBox. Closing search or switching documents cancels the build. |
+| ![Search 2.0: query PDF shows 1/7, results panel lists 7 hits with p.N context previews](docs/images/search-results.png) | **Search 2.0 results**<br>`Ctrl/Cmd+F` opens in-document search; `Aa` / `W` / `.*` toggle case, whole-word, and regex matching. The results panel lists `p.N` rows with context; click or use the keyboard to jump. Results are capped at 5,000 with an explicit truncation notice. |
+| ![Command palette: Ctrl/Cmd+K opened and filtered by page, showing the Navigate group and Go to page…](docs/images/command-palette.png) | **Command palette**<br>`Ctrl/Cmd+K` opens a grouped, filterable list of registered commands (File / Navigate / View / Analyze / Export). Document-dependent commands disable when unavailable, and the Go to page subview clamps input to `1..pageCount`. |
+| ![Desktop document tabs: two URL-opened tabs, switched back to basic.pdf with toolbar 1 / 4](docs/images/large-doc-tabs.png) | **Desktop document tabs**<br>The desktop app keeps multiple document tabs and restores page, zoom, overlays, and panel tabs when switching. Web tabs activate a server-side `documentId` instead. |
+| ![Web document tabs: basic.pdf and large.pdf tabs, active large.pdf showing 1 / 120](docs/images/web-tabs.png) | **Web document tabs**<br>Web and desktop both show the document tab bar. Switching activates by `documentId` and restores the view snapshot; inactive documents remain readable at `/doc/:id`, and closing a tab removes only that document's temporary copy. |
 
-*截图来自 Web 构建与真实 Electron 桌面构建；页面列表/搜索、注释整档索引/导出、主题与 Diff/Audit/Raw 为 1440×900，桌面标签为 Electron + xvfb 实测（CDP 1440×900 视口）。详见 [docs/large-docs.md](docs/large-docs.md) 与 [docs/annotations.md](docs/annotations.md)。*
+*Screenshots come from the Web build and a real Electron desktop build. Page list / Search 2.0 / command palette, annotation index/export, themes, and Diff/Audit/Raw are 1440×900. Desktop tabs were captured from Electron + `xvfb` through CDP at a 1440×900 viewport. See [docs/search.md](docs/search.md), [docs/large-docs.md](docs/large-docs.md), and [docs/annotations.md](docs/annotations.md).*
 
-## 功能特性
+## Features
 
-### 渲染与检查
+### Rendering and inspection
 
-- PDF.js 多页渲染，支持翻页、缩放与适合页面宽度。
-- char / word / line / curve / rect / table / image 七类对象的边界框叠加层，可在 Layers 标签页统一控制可见类型与透明度。
-- 悬停或点击选中对象，Inspector 的 `Inspect` 标签页展示页码、坐标、字体、字号、颜色及原始 JSON；图片对象提供内嵌预览。
-- 文本选择层支持直接选中页面文字。
+- Multi-page PDF.js rendering with page navigation, zoom, and fit-to-width.
+- Bounding-box overlays for seven object types: char, word, line, curve, rect, table, and image. The Layers tab controls visibility and opacity by type.
+- Hover or click to select an object. The Inspector's `Inspect` tab shows page number, coordinates, font, size, color, and raw JSON; image objects include an inline preview.
+- A text-selection layer lets you select text directly on the page.
 
-### 导航与结构
+### Navigation and structure
 
-- 左侧面板包含五个标签页：`Objects`（按页展示全部对象）、`Outline`（PDF 书签）、`Fonts`（字体统计）、`Layers`（叠加层控制）与 `Annots`（当前页或整档的注释、链接与表单字段）。
-- `Objects` 标签页的对象树按页展示全部对象，页面节点可折叠/展开。
-- `Outline` 标签页读取 PDF 书签（outline），点击条目直接跳转到对应页面。
-- 当前页码显示与上一页/下一页导航，并实时显示缩放比例。
+- The left panel has five tabs: `Objects` (all objects by page), `Outline` (PDF bookmarks), `Fonts` (font statistics), `Layers` (overlay controls), and `Annots` (annotations, links, and form fields for the current page or the whole document).
+- The `Objects` tree groups all objects by page; page nodes can be collapsed and expanded.
+- The `Outline` tab reads PDF bookmarks and jumps to a page when an entry is clicked.
+- Current-page display, previous/next navigation, and a live zoom indicator.
 
-### 工作区与布局
+### Workspace and layout
 
-- 左右面板可通过分隔条拖拽调整宽度，并可折叠；工具栏的 Left / Right 按钮与面板内的折叠按钮保持同步。
-- 面板收起后，画布边缘会出现 `Objects` / `Inspector` 恢复条，点击即可重新打开；专注模式下左上角显示 `Show panels` 恢复按钮。
-- `F` 或工具栏 Focus 进入专注模式，隐藏左右面板、只保留画布；再次按 `F` 或点击 Focus 退出。
-- Inspector 面板分为 `Inspect / Filter / Results / Page` 四个标签页：查看对象属性、组合筛选条件、管理筛选或框选结果、查看页面几何。
-- 面板宽度、折叠状态、Focus 模式、当前标签页与叠加层透明度会保存在 localStorage，下次启动自动恢复。
+- Drag the splitters to resize the left and right panels, or collapse them. The toolbar Left/Right buttons and the in-panel collapse buttons stay synchronized.
+- When a panel is collapsed, an `Objects` / `Inspector` restore rail appears on the canvas edge; Focus mode shows a `Show panels` button in the top-left corner.
+- Press `F` or click Focus to hide both side panels and keep only the canvas. Press `F` again or click Focus to leave.
+- The Inspector has four tabs: `Inspect / Filter / Results / Page` for object properties, combined filters, filtered or box-selected results, and page geometry.
+- Panel widths, collapsed state, Focus mode, active tabs, and overlay opacity are stored in localStorage and restored on the next launch.
 
-### 主题与外观
+### Themes
 
-- 工具栏右侧的 `Theme: Dark` / `Theme: Islands` 按钮切换界面主题，按钮文字始终显示当前主题，并通过 `aria-pressed` 暴露 Islands 的激活状态。
-- `Dark` 是默认主题，保持原有的紧凑、无缝面板外观；`Islands` 使用近黑色渐变画布，把工具栏、文档标签栏、左右面板、画布、Inspector、Diff / Audit / Raw 工作区与状态栏都变成带 1px 边框、圆角与柔和阴影的浮动卡片，面板之间保留间隙。
-- Islands 只改变外观：面板宽度、分隔条拖拽、Focus 模式与 1280 / 1440 / 1600 下的布局尺寸保持不变，不会产生横向溢出。
-- 主题持久化在 localStorage 的 `pdf-inspector:theme:v1`，启动时在第一帧渲染前写入 `document.documentElement.dataset.theme`；存储不可用（隐私模式、jsdom 等）时回退到 `Dark`，不影响使用。
-- 结构色集中在 `src/renderer/theme.css` 的 CSS 变量中；PDF 页面白底、PDF 对象类型色、注释类型色与页面框颜色不随主题变化。
+- The `Theme: Dark` / `Theme: Islands` button on the right side of the toolbar switches themes. The label always shows the current theme, and `aria-pressed` exposes the Islands active state.
+- `Dark` is the default and keeps the compact, seamless panel look. `Islands` uses a near-black gradient canvas and turns the toolbar, document tab bar, side panels, canvas, Inspector, Diff / Audit / Raw workspaces, and status bar into floating cards with 1px borders, rounded corners, and soft shadows.
+- Islands is appearance-only: panel widths, splitter dragging, Focus mode, and layout dimensions at 1280 / 1440 / 1600 remain unchanged, with no horizontal overflow.
+- The theme is persisted under `pdf-inspector:theme:v1` in localStorage and written to `document.documentElement.dataset.theme` before the first frame. If storage is unavailable (private mode, jsdom, etc.), it falls back to `Dark`.
+- Structural colors live in CSS variables in `src/renderer/theme.css`; PDF page white, object-type colors, annotation-type colors, and page-box colors do not change with the theme.
 
-### 搜索与导出
+### Search and export
 
-- `Ctrl/Cmd+F` 跨页全文搜索，逐条导航并高亮匹配位置。
-- 导出当前页或整份文档，格式为 JSON 或 CSV；导出时可勾选要包含的元素类型（char / word / line / curve / rect / table / image）。桌面端使用原生保存对话框，Web 端触发浏览器下载。
-- CSV 按对象类型分段，便于在表格工具中继续分析。
-- JSON 导出新增可选字段：`metadata.fontInfo`（字体嵌入详情）、每页的 `page.boxes` / `page.rotation`、表格的 `table.cellBoxes` / `table.cellSpans`，以及图片的 `content_hash`（可读取时的 SHA-256）；CSV 各段的列定义保持不变。
-- 注释、链接与表单有独立的整档导出：在 `Annots → Whole document` 中点 `Export` 选择 JSON/CSV，不改变上面的对象导出 schema。
+- `Ctrl/Cmd+F` opens in-document full-text search. The `Aa` (case-sensitive), `W` (whole-word), and `.*` (regex) options re-run immediately; the results panel lists hits by page with context previews. Click a row or use the keyboard to jump and highlight.
+- Input is debounced by 300ms, and the text index is built and cached in 10-page batches. Toggling options reuses the cached index instead of rebuilding it. Matches never span pages; invalid regex shows an inline error; zero-length matches are skipped.
+- Results are capped at 5,000 hits and show `Showing first 5,000 matches` when truncated. Patterns are limited to 500 characters. In the search box, `Enter` / `Shift+Enter` jump to the next/previous hit; `Escape` closes the results panel first, then search.
+- Export the current page or the whole document as JSON or CSV. Choose the element types to include (char / word / line / curve / rect / table / image) and edit the output file name. Desktop uses the native save dialog; Web triggers a browser download.
+- CSV is grouped by object type for further analysis in spreadsheet tools.
+- JSON export adds optional fields: `metadata.fontInfo` (embedding details), per-page `page.boxes` / `page.rotation`, table `table.cellBoxes` / `table.cellSpans`, and image `content_hash` (SHA-256 when available). CSV section schemas are unchanged.
+- Annotations, links, and forms have a separate whole-document export: use `Export` in `Annots → Whole document` to write JSON or CSV without changing the object-export schema.
 
-### 大文档与多文档
+### Command palette
 
-- **双通道 sidecar**：交互通道负责 `open` / `extract_page` / `extract_metadata` / `get_image_data`，后台通道负责 `analyze_fonts` / `audit_*` / `raw_*` / `diff_documents`；路由表由 `laneForMethod()` 统一，桌面端与 Web 端共用。翻页不会被正在运行的字体、审计、Raw 或 Diff 请求挡住。
-- **后台通道懒启动**：只有第一次请求字体/审计/Raw/Diff 时才创建第二个 Python 进程；两个通道打开同一份文档，切换文档时后台通道异步重新打开，失败只影响后台功能。因此正常查看始终只有一个进程，最多两个。
-- **搜索分批与进度**：搜索按 10 页一批建立当前文档的文本索引，SearchBox 显示 `Indexing 40/1000…`；清空查询、关闭搜索、切换文档或离开 Inspect 会取消构建，过期构建不会写回结果。索引只保存文本，不保留 PDF.js 页面对象。
-- **页面列表窗口化与跳页**：1000 页的 `Objects` 列表使用 CSS `content-visibility` 窗口化，只绘制视口附近的行；只有当前页展开对象组。顶部 Go to page 输入 `1..pageCount`，越界会夹取，非法输入被忽略，并复用与 Prev/Next 相同的受保护导航。
-- **对象上限**：当前页 Words 最多显示 50 条，其他对象组最多 200 条，超出显示 `Showing first N of M …`；选中对象仍映射回完整对象。
-- **桌面文档标签**：打开多个本地文件或 URL 文档后，工作区顶部出现标签栏；相同路径/URL 再次打开会聚焦已有标签。切换标签会保存旧标签的页码、缩放、叠加层、左右面板标签与查询字符串，重新打开目标文档后恢复；字体、审计、Raw 结果不进入快照，切回后重新运行。关闭活动标签激活邻居，关闭最后一个回到空状态。
-- **桌面 URL 标签**：桌面端 URL 文档下载到临时副本，临时文件归“当前文档”所有；切换到其他文档会删除上一个副本，因此重新激活桌面 URL 标签会重新下载，但保留同一个 `sourceUrl` 和标签身份。Web 端的 URL 副本由注册表保留，见下条。
-- **Web 文档标签**：Web 与桌面端都显示文档标签栏。Web 文档由服务端按 `documentId` 登记，只有活动文档在 sidecar 中打开（交互/后台两个通道打开同一份）；切换标签调用激活接口，在同一 sidecar 中重新打开目标文件，并恢复该标签的页码、缩放、叠加层、面板标签与查询字符串。注册表最多 8 份文档 / 总 512 MiB，超出时淘汰最久未激活的非活动文档。关闭标签只删除该文档的临时副本，关闭最后一个标签才清空活动文档；同一 `sourceUrl` 再次打开会去重并复用已保留的下载副本。标签是会话状态，不写入 localStorage，也不改变 Web 端原有的认证边界（Web 端本来就没有认证）。
-- **清理与限制**：桌面与 Web 标签都只保存视图快照，不保留 N 份 PDF.js 文档或分析缓存；Web 端不做每文档 sidecar，切换是串行的 sidecar 重新打开；后台通道在本阶段不做空闲自动退出；异常退出后临时文件清理是尽力而为。完整路由表、快照语义、Web 多文档 API 与验证记录见 [docs/large-docs.md](docs/large-docs.md)。
+- `Ctrl/Cmd+K` opens a command palette grouped by `File` / `Navigate` / `View` / `Analyze` / `Export`. It focuses the filter input on open; type a title or keyword (for example `page`) to filter. `↑/↓` moves, `Enter` runs, and `Escape` closes.
+- Commands cover Open PDF, Open URL, Search document, Go to page, Theme, Focus mode, left/right panels, Layers, Diff, Audit, Raw, Export, Clear selection, and Close palette. `Go to page…` switches to a page-number subview that clamps input to `1..pageCount`.
+- Commands are registered by the components that own the handler. The palette only calls existing handlers and stores, so there is no duplicated IPC, file-open, or export logic. Document-dependent commands are shown disabled when no document or workspace permits them.
+- Registration is explicit: there are no user-defined commands, plugins, or shortcut editor. `Ctrl/Cmd+F` still opens search directly; `Ctrl/Cmd+K` only handles the command palette.
 
-### 过滤与叠加层
+### Large documents and multiple documents
 
-- 七类对象的开关已从工具栏移入 `Layers` 标签页：每类一行显示当前页对象计数，并提供 All / None 批量开关、Solo 单独查看与 Opacity 透明度滑杆；工具栏的 `Layers n/7` 按钮可直接打开该标签页。
-- 筛选仍在 Inspector → `Filter` 标签页：按字体、字号、颜色与类型组合筛选对象。
-- 拖拽框选区域，支持“相交（intersect）”与“包含（contain）”两种匹配方式。
-- 筛选或框选结果显示在 Inspector → `Results` 标签页，并在画布上高亮；可直接导出该子集。
+- **Dual-lane sidecar:** the interactive lane handles `open` / `extract_page` / `extract_metadata` / `get_image_data`; the background lane handles `analyze_fonts` / `audit_*` / `raw_*` / `diff_documents`. The shared `laneForMethod()` routing table keeps desktop and Web behavior aligned, so page navigation is not blocked by a running font, audit, Raw, or Diff request.
+- **Lazy background lane:** the second Python process starts only on the first font/audit/Raw/Diff request. Both lanes open the same document; switching documents re-opens it asynchronously in the background, and a background failure only affects background features.
+- **Batched search with progress:** search builds the current document's text index in 10-page batches and shows `Indexing 40/1000…` in the SearchBox. Clearing the query, closing search, switching documents, or leaving Inspect cancels the build; stale builds never publish results. The index stores text only, not PDF.js page objects.
+- **Windowed page list and jump:** the 1000-page `Objects` list uses CSS `content-visibility` to lay out only rows near the viewport. Only the current page expands its object groups. Go to page accepts `1..pageCount`, clamps out-of-range values, ignores invalid input, and uses the same guarded navigation as Prev/Next.
+- **Object display caps:** the current page shows at most 50 Words and 200 entries in each other object group. Beyond that, `Showing first N of M …` is displayed; selection still maps back to the full object.
+- **Desktop document tabs:** opening multiple local files or URL documents adds tabs at the top of the workspace. Reopening the same path/URL focuses the existing tab. Switching saves the old tab's page, zoom, overlays, left/right panel tabs, and search query, then restores them after reopening; font, audit, and Raw results are not snapshotted and must run again. Closing the active tab activates its neighbor; closing the last tab returns to the empty state.
+- **Desktop URL tabs:** a URL document is downloaded to a temporary copy owned by the current document. Switching deletes the previous copy, so re-activating a desktop URL tab downloads it again while keeping the same `sourceUrl` and tab identity. Web URL copies are retained by the registry (see below).
+- **Web document tabs:** Web and desktop both show the document tab bar. Web documents are registered server-side by `documentId`; only the active document is open in the sidecar (both lanes open the same one). Switching activates the id, re-opens that file in the same sidecar, and restores the tab's page, zoom, overlays, panel tabs, and query. The registry holds at most 8 documents / 512 MiB total and evicts least-recently-active inactive documents. Closing a tab deletes only that document's temporary copy; closing the last tab clears the active document. Reopening the same `sourceUrl` deduplicates and reuses the retained download. Tabs are session-only, are not written to localStorage, and do not change the Web authentication boundary (there is none).
+- **Cleanup and limits:** desktop and Web tabs store view snapshots only; they do not retain N PDF.js documents or analysis caches. Web has no per-document sidecar, so switching is a serialized re-open. The background lane has no idle shutdown in this phase, and cleanup after an abnormal exit is best-effort. See [docs/large-docs.md](docs/large-docs.md) for the full routing table, snapshot semantics, Web multi-document API, and verification record.
 
-### 字体分析
+### Filtering and overlays
 
-- 统计整份文档的字体使用情况：页数、字符数、字号范围、颜色。
-- 每个字体显示嵌入状态徽标：`Embedded` / `Standard 14` / `Not embedded` / `Unknown`，并区分子集字体（`Subset`）与字体子类型（如 `Type1`）。
-- 展开字体条目可查看细节：嵌入状态、Subtype、是否子集、Encoding、ToUnicode 与字体文件类型。
-- 顶部汇总分别统计未嵌入字体与标准 14 字体（例如 `8 fonts · 0 not embedded · 8 standard 14`），不会把 Standard 14 当作缺失字体。
-- 按每 10 页一批顺序分析，并实时显示进度。
-- 分批处理让页面提取有机会穿插执行，分析长文档时界面保持可用。
-- 点击字体条目跳转到首个使用页，并通过筛选高亮该字体的对象。
+- The seven object-type toggles moved from the toolbar to the `Layers` tab: each row shows the current-page count and offers All / None, Solo, and an Opacity slider. The toolbar `Layers n/7` button opens this tab.
+- Filtering remains in Inspector → `Filter`: combine font, size, color, and type criteria.
+- Drag a region to box-select objects, using either intersect or contain matching.
+- Filtered or box-selected results appear in Inspector → `Results`, are highlighted on the canvas, and can be exported as a subset.
 
-### 表格单元格
+### Font analysis
 
-- 选中表格对象后，Inspector → `Inspect` 的 Table 区显示与 `cells` 对齐的单元格网格；合并覆盖的槽位显示 `▨`，缺少几何数据的槽位显示 `∅`。
-- 悬停单元格可预览，点击可选中并查看行、列、Span、文本、BBox 与尺寸；画布叠加层同步绘制该表格的单元格网格，并高亮悬停或选中的单元格。
-- 表格文本仍按 `cells` 矩阵导出，CSV 表格段的列（`page, table_index, row, col, text`）保持不变。
+- Summarizes font usage across the document: page count, character count, size range, and colors.
+- Each font shows an embedding badge: `Embedded` / `Standard 14` / `Not embedded` / `Unknown`, with subset status (`Subset`) and subtype (for example `Type1`).
+- Expand a font row for embedding status, subtype, subset flag, Encoding, ToUnicode, and font-file type.
+- The header counts missing and Standard 14 fonts separately (for example `8 fonts · 0 not embedded · 8 standard 14`); Standard 14 fonts are not treated as missing.
+- Analysis runs sequentially in 10-page batches with live progress.
+- Batching lets page extraction interleave with analysis, so the UI stays usable on long documents.
+- Click a font row to jump to its first usage page and highlight matching objects through a filter.
 
-### 页面几何
+### Table cells
 
-- Inspector 新增 `Page` 标签页：显示当前页尺寸与 `/Rotate` 旋转角，并可在 pt 与 mm 之间切换。
-- 列出 MediaBox、CropBox、TrimBox、BleedBox、ArtBox 的原始坐标；每个框可独立显示或隐藏，画布以不同颜色和虚线样式叠加。
-- 画布可显示页面顶部与左侧标尺，单位跟随 pt/mm；状态栏显示页面尺寸、旋转角以及光标相对 MediaBox 原点的坐标（与 Inspector 的对象坐标一致）。
+- Selecting a table shows a cell grid aligned with `cells` in Inspector → `Inspect`. Merged-covered slots show `▨`; slots without geometry show `∅`.
+- Hover a cell to preview it; click to select it and inspect row, column, span, text, BBox, and dimensions. The canvas overlay draws the table's cell grid and highlights the hovered or selected cell.
+- Table text is still exported as the `cells` matrix; the CSV table section columns (`page, table_index, row, col, text`) are unchanged.
 
-### 注释、链接与表单
+### Page geometry
 
-- **两种范围**：`Annots` 顶部在 `Current page` 与 `Whole document` 之间切换。默认 `Current page`，保留原有的页级列表、画布框与 Inspector 行为；`Whole document` 列出整份文档的全部注释、链接与表单字段。
-- **整档索引**：首次切到 `Whole document` 时由渲染层用 PDF.js 读取注释，按 10 页一批、批间让出事件循环，面板显示 `Indexing annotations 40/120…` 与进度条；索引期间翻页、缩放与当前页 Inspect 仍可用。切回 `Current page` 不会取消或丢弃已完成的索引，再切回直接复用。
-- **汇总、搜索与过滤**：文档模式汇总为 `7 annotations · 1 page · 2 links · 3 form fields`；搜索覆盖页码、subtype/kind、标题与内容、链接目标、字段名/类型/值/选项，Kind 与 Subtype 过滤是全局的，可与搜索叠加。
-- **定位与选中**：点击文档模式的行会跳到该注释所在页，并请求选中该注释；目标页加载完成后按注释 id 选中并切到 Inspector。id 不存在（或与当前页数据不一致）时只跳页，不强行选中。
-- **链接健康**：`unresolved`（既无安全外部 URL、也无解析出的内部页码）与 `unsafe`（`mailto:` / `file:` / `data:` / `javascript:` 等非 `http(s)` 目标）计入 `Issues`；可打开的 `http(s)` 目标列在默认折叠的 `External links` 清单里，只作为信息，不算错误，也不会被自动打开或探测。
-- **表单健康**：无名 Widget 与同名字段类型冲突计为 warning；同名字段出现在多个页面是 PDF 表单的常见用法，作为 info 展示，不默认判错。每条链接/表单问题都带页码，可 `Go to page` 跳转。
-- **导出**：索引完成后 `Export` 打开对话框，可选 JSON/CSV 并修改文件名。JSON 含 `schemaVersion`、文档信息、summary、按页注释、链接/表单问题与合并后的表单字段；CSV 分 `# annotations` / `# links` / `# form_fields` 三段，带 BOM 与 RFC 4180 转义，不写入本地绝对路径。
-- **画布框与选中**：注释按类型着色——链接蓝、表单紫、标记黄、注释橙、图章青、其他灰；悬停加亮，选中使用金色描边。点击注释框会选中该注释并切换到 Inspector，点击对象则清除注释选中，两者不会同时高亮。`Show boxes` 只作用于当前页。
-- **Inspector 详情**：`Inspect` 显示 subtype / kind / 页码 / Rect、标题与内容、修改时间、颜色与不透明度；链接额外显示目标与 `Open link` / `Go to page N`，表单字段显示字段名、类型、值、默认值、Flags 与选项。
-- **内部与外部链接**：外部链接只在用户显式点击 `Open link` 时打开，且仅允许 `http(s)`；PDF.js 的原始 `unsafeUrl` 只用于显示，不安全目标会禁用按钮并提示“仅支持 http(s)”。渲染层、桌面主进程与 Web 适配器都会再次校验 URL，打开失败不会影响文档状态。内部目标解析为页码后，使用与 Prev/Next 相同的翻页导航。
-- **表单只读**：字段值、默认值、Flags 与选项全部以文本呈现，没有输入框、没有重置/提交按钮，也没有写回 PDF 的路径；签名字段只作为字段显示并标注未验证。
-- **隐藏与弹出注释**：Popup 注释不单独列出（改为显示父注释的内容）；隐藏注释在列表中带 `Hidden` 标记，但默认不绘制画布框。
-- **只读与数据来源**：当前页与整档索引都是纯读取功能，不修改 PDF，也不新增侧车注释 RPC；整档导出只序列化已建立的索引，不重新解析页面。索引批次、origin 缓存、JSON/CSV schema、健康检查语义与非目标详见 [docs/annotations.md](docs/annotations.md)。
+- The Inspector's `Page` tab shows the current page size and `/Rotate` angle, with pt/mm switching.
+- Lists raw MediaBox, CropBox, TrimBox, BleedBox, and ArtBox coordinates. Each box can be shown or hidden independently; the canvas overlays them with distinct colors and dash patterns.
+- The canvas can show top and left rulers in pt or mm. The status bar shows page size, rotation, and the cursor position relative to the MediaBox origin, matching Inspector object coordinates.
 
-### 原始 PDF 对象树与内容流
+### Annotations, links, and forms
 
-- **Raw 工作区**：工具栏 `Raw` 打开独立的只读工作区，与 Diff、Audit 互斥；Inspect 保持挂载但被隐藏，页码、缩放、选中与筛选状态不受影响，`Back to Inspect` 随时返回。Raw 不使用左侧第六个标签页，因此在 200px 最小面板宽度下左侧仍只有五个标签。
-- **Trailer 根**：对象树从 trailer 的 `Root`（catalog）、`Info`、`Encrypt`、`ID` 以及 catalog 的 `Pages` 引用开始，只读取这些根，不做整图遍历。
-- **懒加载引用**：`15 0 R` 这样的引用本身就是一个节点，展开或点击时才读取该对象；引用不会自动递归解析，循环引用不会展开成死循环，树上限 8 层并提示深度限制。
-- **字典、数组与流**：右侧 `Object` 标签页显示对象摘要与值树，区分 null / 布尔 / 数字 / 字符串 / 名称 / 引用 / 数组 / 字典 / 流；字典与数组可展开，流只显示长度、过滤器、Subtype 与有界文本预览，二进制字节永不返回。
-- **内容流操作符**：`Content stream` 标签页按页解码页面内容流，逐条列出序号、offset、操作符与操作数（`BT` / `Tf` / `Tj` / `Do` / `cm` 等）；操作数中的引用可点击跳转到对应对象，所有文本按普通文本渲染，操作符只读取、不执行。
-- **上限与截断**：嵌套 4 层、每个容器 100 项、字符串与预览 4096 字符、每页 5000 个操作符、每页 20 条内容流；超限时标记 `truncated` 并在界面提示，而不是静默截断。
-- **只读**：不能编辑对象、重写流、解密或执行内容流，也不提供 raw diff、导出或 CLI。序列化语义、上限与安全边界详见 [docs/raw.md](docs/raw.md)。
+- **Two scopes:** the top of `Annots` switches between `Current page` and `Whole document`. `Current page` is the default and keeps the page-level list, canvas boxes, and Inspector behavior. `Whole document` lists every annotation, link, and form field in the PDF.
+- **Whole-document index:** the first switch to `Whole document` reads annotations through PDF.js in the renderer, in 10-page batches that yield between batches. The panel shows `Indexing annotations 40/120…` and a progress bar. Paging, zooming, and current-page Inspect remain usable during indexing. Switching back to `Current page` neither cancels nor discards a completed index; returning reuses it.
+- **Summary, search, and filters:** document mode summarizes as `7 annotations · 1 page · 2 links · 3 form fields`. Search covers page number, subtype/kind, title and contents, link target, and form name/type/value/options. Kind and Subtype filters are global and combine with search.
+- **Targeting and selection:** clicking a document-mode row jumps to the annotation's page and requests selection. Once the target page loads, the annotation is selected by id and the Inspector switches in. If the id is missing or does not match the current page data, only the page jump occurs.
+- **Link health:** `unresolved` (neither a safe external URL nor a resolved internal page) and `unsafe` (`mailto:` / `file:` / `data:` / `javascript:` and other non-`http(s)` targets) count as `Issues`. Openable `http(s)` targets are listed in the collapsed-by-default `External links` section as information, not errors, and are never opened or probed automatically.
+- **Form health:** unnamed widgets and duplicate field-name type conflicts are warnings; the same field name across pages is an info-level common form pattern rather than an error by default. Every link/form issue carries a page number and supports `Go to page`.
+- **Export:** after indexing, `Export` opens a dialog for JSON or CSV with an editable file name. JSON contains `schemaVersion`, document information, summary, per-page annotations, link/form issues, and merged form fields. CSV has `# annotations` / `# links` / `# form_fields` sections, a BOM, and RFC 4180 escaping, and never writes local absolute paths.
+- **Canvas boxes and selection:** links are blue, form fields purple, markup yellow, annotations orange, stamps cyan, and others gray. Hover brightens, selection uses a gold outline. Clicking an annotation selects it and switches to the Inspector; clicking an object clears annotation selection, so only one is highlighted. `Show boxes` applies to the current page only.
+- **Inspector details:** `Inspect` shows subtype / kind / page / Rect, title and contents, modification time, color, and opacity. Links also show the target and `Open link` / `Go to page N`; form fields show name, type, value, default value, Flags, and options.
+- **Internal and external links:** external links open only when the user explicitly clicks `Open link`, and only `http(s)` is allowed. PDF.js `unsafeUrl` is display-only; unsafe targets disable the button and show an http(s)-only message. The renderer, desktop main process, and Web adapter validate again; a failed open does not affect document state. Internal targets resolve to a page and use the same guarded navigation as Prev/Next.
+- **Read-only forms:** field values, defaults, Flags, and options are rendered as text. There are no inputs, reset/submit buttons, or write-back paths; signature fields are shown as fields and marked unverified.
+- **Hidden and popup annotations:** popup annotations are not listed separately (the parent annotation's content is shown); hidden annotations carry a `Hidden` marker but do not draw canvas boxes by default.
+- **Read-only data source:** current-page and whole-document views are read-only, do not modify the PDF, and add no sidecar annotation RPC. Whole-document export serializes the existing index instead of re-parsing pages. See [docs/annotations.md](docs/annotations.md) for index batching, origin caching, JSON/CSV schemas, health-check semantics, and non-goals.
 
-### PDF Diff
+### Raw object tree and content streams
 
-- **对象级变更**：对 word / char / rect / line / curve / image / table 七类对象逐页比较，报告 `added` / `removed` / `moved` / `modified`；每条变更包含旧/新页码、BBox、文本与细节（字体、字号、颜色、描边/填充、content hash、表格单元格等）。
-- **页面级变更**：识别页面新增/删除、页面尺寸与 `/Rotate` 旋转角变化；这些变化以页面级说明展示，而不是对象框。
-- **表格单元格**：表格按单元格文本比较，`details.cellChanges` 列出变化的行、列与旧/新文本，并报告行列数变化。
-- **容差与忽略**：可调位置容差（pt，默认 1.0）与文本比较模式（`exact` / `normalized` / `case-insensitive`，默认 `normalized`），并可忽略字体、颜色、图片或指定对象类型。对比对话框提供位置容差与忽略字体/颜色/图片；文本容差与 `--ignore-types` 通过 CLI 使用。
-- **对比工作区**：顶部摘要（页数、页面变更、各类对象计数）加左侧按页变更列表，支持按 Kind / Type 过滤；中间为并排（Side by side）、叠加（Overlay）或视觉（Visual）视图，共享页码与缩放；右侧显示选中变更的新旧文本、Box 与字段差异。
-- **按页折叠与跳页**：左侧每个页面是独立可折叠组，标题显示 `Old/New` 页码、状态与变更数；默认展开当前/首个变更页，`Go to page` 输入 `1..页数` 后跳转并自动展开，`Expand all` / `Collapse all` 批量控制。过滤不会合并不同页。
-- **大文件快速路径**：未改动页通过页面签名直接判为 `unchanged`，不触发 pdfplumber 布局与对象抽取；Diff 只对改动页做完整比较。长时间运行每 5 秒有心跳，修改页数很多时可显示 `Comparing documents… Ns`，并受 50k 变更上限保护。
-- **叠加配色**：叠加模式以页面所属文档为底图（有旧页用旧页，新增页用新页），绘制旧/新对象框——移除红、新增绿、移动橙、修改蓝，便于在同一位置快速定位改动。
-- **Export JSON**：把当前结果导出为 `DiffResult` JSON（`schemaVersion: 1`）。
-- **不影响当前检查**：Diff 在独立的旧/新文档上运行，Inspect 中打开的文档、页码、缩放与选中状态保持不变；`Back to Inspect` 返回原文档。
+- **Raw workspace:** the toolbar `Raw` button opens a separate read-only workspace, mutually exclusive with Diff and Audit. Inspect stays mounted but hidden, preserving page, zoom, selection, and filters; `Back to Inspect` returns at any time. Raw does not add a sixth left-panel tab, so the left panel still has five tabs at its 200px minimum width.
+- **Trailer roots:** the object tree starts from trailer `Root` (catalog), `Info`, `Encrypt`, `ID`, and the catalog `Pages` reference. Only these roots are read; no full graph traversal is performed.
+- **Lazy references:** a reference such as `15 0 R` is itself a node and is read only when expanded or clicked. References do not recursively resolve automatically; cycles do not loop, and the tree is limited to 8 levels with a depth-limit notice.
+- **Dictionaries, arrays, and streams:** the right-hand `Object` tab shows a summary and value tree for null / boolean / number / string / name / reference / array / dictionary / stream. Dictionaries and arrays expand; streams show length, filters, Subtype, and a bounded text preview, never binary bytes.
+- **Content-stream operators:** the `Content stream` tab decodes page content and lists sequence number, offset, operator, and operands (`BT` / `Tf` / `Tj` / `Do` / `cm`, etc.). References in operands jump to the corresponding object; all text is rendered as plain text and operators are read, never executed.
+- **Limits and truncation:** nesting is capped at 4 levels, 100 items per container, 4096 characters for strings and previews, 5000 operators per page, and 20 content streams per page. Over-limit data is marked `truncated` in the UI instead of being silently cut.
+- **Read-only:** objects cannot be edited, streams rewritten, encryption removed, or content executed. There is no raw diff, export, or CLI. See [docs/raw.md](docs/raw.md) for serialization semantics, limits, and security boundaries.
 
-#### PDF Diff 2.0
+### PDF Diff (2.0/3.0)
 
-- **页面对齐与重排**：页面先按内容指纹（页面尺寸、旋转、文本哈希、对象计数、表格文本）配对，结果在每个 `DiffPage` 上新增 `match: { score, reordered }`，摘要新增 `pagesReordered`。`reordered` 表示配对页在修订版中换了页码（`oldIndex != newIndex`），不是对象顺序变化；插入/删除页保持单侧（`match: null`）。页面列表与页面栏显示 `Old 2 → New 1` 形式的新旧页码。
-- **Visual 视觉差异**：`Visual` 视图以新页为底图、旧页半透明叠加（`Blend`），或逐像素比较并绘制热力图（`Heatmap`），也可只看对象框（`Boxes`）；页面栏显示 `changed / total px (百分比)`。逐像素比较在浏览器 canvas 中完成，通道差阈值固定为 24，并按上限缩放位图；结果不写入 CLI/JSON。
-- **忽略区域**：打开 `Ignore region` 后在并排/叠加页面拖动矩形，区域按页与 MediaBox 坐标记录（`DiffIgnoreRegion`：`oldPage` / `newPage` / `bbox`），虚线框与左侧区域列表同步显示；`Apply & re-run` 显式重新比较，与区域相交的变更从 JSON/UI/HTML 中消失，`Remove` 后重新运行即可恢复。区域只读，不修改 PDF。
-- **忽略区域 CLI/Action**：`--ignore-regions PATH` 读取与 UI 相同的 camelCase JSON 数组；action 提供同名输入 `ignore-regions`。
-- **重排阈值**：`--fail-on reordered` 在存在 `pagesReordered > 0` 时返回 1，适合把“页序变化”作为独立门禁；原有 `added` / `removed` / `modified` / `page-count` / `none` 语义不变。
-- **生成示例**：`web-samples/diff-visual-old.pdf` / `diff-visual-new.pdf`（第 1 页文字、颜色与位置小幅变化）与 `web-samples/diff-reordered-old.pdf` / `diff-reordered.pdf`（删除首页草稿、追加发布说明，4 个配对页换位）由 `scripts/generate-web-samples.py` 确定性生成。
-- **详细说明**：页面对齐语义、视觉模式、区域 JSON、CLI/action 示例与阈值见 [docs/diff.md](docs/diff.md)。
+The current Diff combines the 2.0 page-alignment and visual-review workflow with the 3.0 long-run protections (page signatures, heartbeat/timeout recovery, change caps, and opt-in character-level comparison). Object-level results remain authoritative.
 
-#### 对象级与视觉级的关系
+- **Object-level changes:** compare word / char / rect / line / curve / image / table objects page by page and report `added` / `removed` / `moved` / `modified`. Each change carries old/new page numbers, BBoxes, text, and details such as font, size, color, stroke/fill, content hash, and table cells.
+- **Page-level changes:** detect added/deleted pages and page-size or `/Rotate` changes. These are shown as page-level notes rather than object boxes.
+- **Table cells:** compare tables by cell text; `details.cellChanges` lists changed rows/columns with old/new text and reports row/column count changes.
+- **Tolerances and ignores:** adjust position tolerance (pt, default 1.0) and text comparison (`exact` / `normalized` / `case-insensitive`, default `normalized`), and ignore fonts, colors, images, or selected object types. The setup dialog exposes position tolerance plus font/color/image ignores; text tolerance and `--ignore-types` are CLI options.
+- **Comparison workspace:** a top summary (page counts, page changes, object counts) and left-hand per-page change list with Kind / Type filters. The center shows Side by side, Overlay, or Visual views sharing page and zoom; the right side shows old/new text, BBoxes, and field differences for the selected change.
+- **Collapsible page groups and Go to page:** each page is an independent collapsible group. Headers show `Old page N`, `Old N → New M`, or `New page N`, plus status and change count. The current or first changed page opens by default; Prev/Next, `Go to page`, or jumping from change details automatically expands the target group. `Go to page` accepts `1..totalPages`, ignores empty/decimal/non-numeric input, clamps out-of-range values, and shows `N of M`. `Expand all` / `Collapse all` control the list; filtering never merges pages.
+- **Page signatures and fast path:** each page is fingerprinted from normalized page boxes, rotation, decoded content-stream bytes, and a bounded resource digest. Pairing uses a separate alignment key. If paired signatures match, the page is emitted as `unchanged` without pdfplumber layout or object extraction. Byte-identical files only scan page geometry; one-sided pages are extracted normally. `match.score` is 1.0 for identical signatures, 0.7 for paired-but-changed pages, and `match` is null for one-sided pages.
+- **Visual and ignore regions:** `Visual` renders old/new pages into one bitmap with `Blend`, `Heatmap`, or `Boxes` and reports `changed / total px`. Ignore regions are media-box-coordinate rectangles created by dragging on Side by side or Overlay, applied with `Apply & re-run`, and also accepted by CLI/action as JSON. Visual comparison runs only in the browser UI; CLI/JSON/HTML remain object-level and render-free.
+- **50,000-change cap:** a run keeps at most `MAX_DIFF_CHANGES = 50_000` changes. Beyond that, results carry `truncated: true` and `summary.changesTruncated: true`; page status remains complete.
+- **Heartbeat and timeout recovery:** `diff_documents` reports progress per page and side. While a diff runs, the sidecar emits a 5-second heartbeat so a slow page does not look idle. The budget is 300s of **no progress** (not a total-time cap), renewed by progress or heartbeat. A timeout means the Python process may still be computing: desktop and Web restart only the background lane, then return the original timeout error (Web 504); restart failure is logged without masking the original error.
+- **Character-level changes are opt-in in the UI:** the engine and CLI compare all types by default; the UI starts with `"char"` in `ignoreTypes` so it reports word-level changes. The `Character-level changes` checkbox enables character-level diffs; large text PDFs can otherwise produce huge change lists, which is why the 50k cap and truncation flag also exist.
+- **Overlay colors:** overlay mode uses the page's owning document as the base (old pages for existing pages, new pages for added pages) and draws old/new object boxes: removed red, added green, moved orange, modified blue.
+- **Export JSON:** export the current result as `DiffResult` JSON (`schemaVersion: 1`).
+- **Does not disturb Inspect:** Diff runs on separate old/new files; the Inspect document, page, zoom, and selection remain unchanged. `Back to Inspect` returns to the original document.
 
-- **对象仍是事实来源**：变更列表、过滤、导出 JSON、CLI 与 action 都基于提取出的对象及其元数据；视觉视图只是额外的 UI 视图，不替代对象级结果，也不做 OCR。
+#### Page alignment, reordering, and visual review
 
-### 文档体检
+- **Page alignment and reordering:** pages are paired by content fingerprints (page size, rotation, text hash, object counts, table text). Each `DiffPage` gains `match: { score, reordered }`, and the summary gains `pagesReordered`. `reordered` means a paired page moved to a different page number (`oldIndex != newIndex`), not that objects changed order. Inserted/deleted pages remain one-sided (`match: null`). The page list and page bar show old/new numbers such as `Old 2 → New 1`.
+- **Visual comparison:** `Visual` uses the new page as the base, overlays the old page semi-transparently (`Blend`), or computes a per-pixel heatmap (`Heatmap`); `Boxes` shows object boxes only. The page bar reports `changed / total px (percentage)`. Pixel comparison runs in a browser canvas with a fixed channel-difference threshold of 24 and a bounded bitmap; results are not written to CLI/JSON.
+- **Ignore regions:** turn on `Ignore region`, drag on Side by side or Overlay, and regions are recorded per page in MediaBox coordinates (`DiffIgnoreRegion`: `oldPage` / `newPage` / `bbox`). Dashed outlines and the left-hand region list update together. `Apply & re-run` explicitly reruns the diff; changes intersecting a region disappear from JSON/UI/HTML, and `Remove` followed by a rerun restores them. Regions are read-only and never modify the PDF.
+- **Ignore-region CLI/action:** `--ignore-regions PATH` reads the same camelCase JSON array as the UI; the action exposes the same `ignore-regions` input.
+- **Reordering gate:** `--fail-on reordered` returns 1 when `pagesReordered > 0`, so page-order changes can be a separate CI gate. Existing `added` / `removed` / `modified` / `page-count` / `none` semantics are unchanged.
+- **Sample files:** `web-samples/diff-visual-old.pdf` / `diff-visual-new.pdf` (small text, color, and position changes on page 1) and `web-samples/diff-reordered-old.pdf` / `diff-reordered.pdf` (a removed draft cover, an appended release note, and four reordered paired pages) are generated deterministically by `scripts/generate-web-samples.py`.
+- **Details:** see [docs/diff.md](docs/diff.md) for page-alignment semantics, Visual mode, region JSON, CLI/action examples, and thresholds.
 
-- **整档检查**：跨字体、页面、图片、元数据、结构与安全执行确定性检查，覆盖未嵌入字体、缺少 ToUnicode、混合页面尺寸、旋转页面、页面框越界、低分辨率图片、图片页无可提取文本、扫描页、空页面、缺失元数据、加密与未标记 PDF 等场景。
-- **严重级别**：发现分为 `error` / `warning` / `info`，不提供“健康分”。页面提取失败是当前的 `error` 来源；未嵌入字体为 `warning`，Standard 14 字体不会被视为缺失。
-- **分批进度**：文档级检查完成后按每 10 页一批顺序执行页面检查，并实时显示 `Auditing pages N/M…`；批次之间界面保持可用。
-- **独立工作区**：工具栏 `Audit` 打开文档体检工作区（与 Diff 互斥），顶部显示文件与 `Run` / `Re-run`，左侧按严重级别汇总并可按严重级别/类别筛选，中间为发现列表，右侧显示选中发现的说明、证据与修复建议。
-- **跳转到页面**：带页码的发现提供 `Open page`，点击后关闭 Audit 并在 Inspect 中导航到该页；Inspect 中打开的文档、页码、缩放与选中状态保持不变，`Back to Inspect` 可随时返回。
-- **JSON 导出**：`Export JSON` 保存完整的 `AuditReport`（`schemaVersion: 1`），包含 tool、document、summary 与 findings；CLI `audit --format json` 输出同一 schema。
-- **报告与集成**：CLI 支持 `summary` / `json` / `html` 三种格式，HTML 为单文件、内联 CSS、无脚本；`audit/action.yml` 可在 CI 中运行审计并按 `fail-on` 决定步骤成败。详见 [docs/audit.md](docs/audit.md)。
-- **启发式检查**：审计基于提取出的对象、字体信息、页面框与 catalog 元数据，不做 PDF/A 认证或签名验证，也不做 OCR；旋转页或 CropBox 偏移页上的发现只到页面级。
+#### Object-level results remain authoritative
 
-### 打开方式
+- Changes, filters, JSON export, CLI, and actions are based on extracted objects and their metadata. Visual mode is an additional UI view; it does not replace object-level results or perform OCR.
 
-- 打开本地 PDF，或通过 `http(s)` URL 打开远程文档（先下载到临时目录再解析）。
-- 桌面端与 Web 端能力一致，仅底层通道不同。
+### Document audit
 
-### 桌面与 Web
+- **Whole-document checks:** deterministic checks across fonts, pages, images, metadata, structure, and security, including unembedded fonts, missing ToUnicode, mixed page sizes, rotated pages, page boxes outside their bounds, low-resolution images, image-only pages, scanned pages, empty pages, missing metadata, encryption, and untagged PDFs.
+- **Severities:** findings are `error` / `warning` / `info`; there is no health score. Page extraction failure is the current `error` source. Unembedded fonts are warnings, and Standard 14 fonts are not treated as missing.
+- **Batched progress:** after document-level checks, page checks run sequentially in 10-page batches with `Auditing pages N/M…`; the UI stays usable between batches.
+- **Dedicated workspace:** the toolbar `Audit` button opens the audit workspace (mutually exclusive with Diff). The header shows the file and `Run` / `Re-run`; the left side summarizes by severity and supports severity/category filters; the middle lists findings; the right shows the selected finding's explanation, evidence, and recommendation.
+- **Jump to page:** findings with a page number offer `Open page`, which closes Audit and navigates Inspect to that page. The Inspect document, page, zoom, and selection remain unchanged, and `Back to Inspect` returns at any time.
+- **JSON export:** `Export JSON` writes the full `AuditReport` (`schemaVersion: 1`) with tool, document, summary, and findings. CLI `audit --format json` uses the same schema.
+- **Reports and integration:** CLI supports `summary` / `json` / `html`. HTML is a single file with inline CSS and no scripts. `audit/action.yml` runs the audit in CI and uses `fail-on` to decide the step result. See [docs/audit.md](docs/audit.md).
+- **Heuristic checks:** audit uses extracted objects, font information, page boxes, and catalog metadata. It does not certify PDF/A, verify signatures, or perform OCR. Findings on rotated or CropBox-offset pages are page-level only.
 
-- **桌面端**：Electron 主进程负责窗口、原生菜单/对话框与 Python 侧车生命周期。
-- **Web 端**：React UI 在浏览器中运行，由无 Electron 依赖的 Node HTTP 后端提供同样的文档与侧车能力。
-- **多文档**：桌面端与 Web 端都支持文档标签页。桌面标签按本地路径或 URL 重新打开文档；Web 标签按服务端 `documentId` 激活已登记文档。两者都只保存视图快照，不保留第二份 PDF.js 文档或分析缓存。
+### Opening documents
 
-### 键盘快捷键
+- Open a local PDF, or open a remote document through an `http(s)` URL (downloaded to a temporary directory before parsing).
+- Desktop and Web have the same capabilities; only the underlying transport differs.
 
-| 快捷键 | 作用 |
-|--------|------|
-| `T` | 切换文本选择模式 |
-| `R` | 切换区域框选模式（与文本选择互斥） |
-| `F` | 切换 Focus 模式（隐藏左右面板） |
-| `Ctrl/Cmd+F` | 打开搜索 |
-| `Ctrl/Cmd+滚轮` | 缩放文档；向上滚放大，向下滚缩小（触控板捏合同样生效） |
-| `Esc` | 清除选中、筛选与框选结果 |
+### Desktop and Web
 
-## 快速开始
+- **Desktop:** the Electron main process owns the window, native menus/dialogs, and the Python sidecar lifecycle.
+- **Web:** the React UI runs in a browser, backed by an Electron-free Node HTTP server that provides the same document and sidecar capabilities.
+- **Multiple documents:** both desktop and Web support document tabs. Desktop tabs reopen a document by local path or URL; Web tabs activate a registered document by its server-side `documentId`. Both store only view snapshots, not a second PDF.js document or analysis cache.
 
-### 环境要求
+### Keyboard shortcuts
 
-- **Node.js ≥ 22.12**（见 `.nvmrc`；jsdom 需要 `require(esm)` 支持）
+| Shortcut | Action |
+|----------|--------|
+| `T` | Toggle text-selection mode |
+| `R` | Toggle region-selection mode (mutually exclusive with text selection) |
+| `F` | Toggle Focus mode (hide both side panels) |
+| `Ctrl/Cmd+F` | Open and focus in-document search |
+| `Enter` / `Shift+Enter` | In the search box, jump to the next / previous hit |
+| `↑` / `↓` | Move the current item in the search-results panel or command palette |
+| `Ctrl/Cmd+K` | Open the command palette; when open, focus its filter or return to the command list |
+| `Ctrl/Cmd+wheel` | Zoom the document; scroll up to zoom in and down to zoom out (trackpad pinch works too) |
+| `Esc` | Close the results panel or command palette; in the search box, close search next; with no overlay, clear selection, filters, and box-selection results |
+
+## Quick start
+
+### Requirements
+
+- **Node.js ≥ 22.12** (see `.nvmrc`; jsdom needs `require(esm)` support)
 - **Python 3.10+**
-- Python 包：`pdfplumber`、`Pillow`（见 `sidecar/requirements.txt`）；运行测试还需 `pytest`、`reportlab`
+- Python packages: `pdfplumber`, `Pillow` (see `sidecar/requirements.txt`); tests also need `pytest` and `reportlab`
 
-### 安装
+### Install
 
 ```bash
 npm ci
@@ -218,140 +242,140 @@ npm ci
 python3 -m venv .venv
 .venv/bin/pip install -r sidecar/requirements.txt
 
-# 运行 Python 测试时
+# For Python tests
 .venv/bin/pip install pytest reportlab
 ```
 
-Windows 下将 `.venv/bin/pip` 换成 `.venv\Scripts\pip`，Python 解释器对应 `.venv\Scripts\python`。
+On Windows, use `.venv\Scripts\pip` instead of `.venv/bin/pip`, and `.venv\Scripts\python` for the interpreter.
 
-### 桌面端
-
-```bash
-npm run dev      # Vite 开发服务器 + Electron（HMR）
-npm start        # 构建 main 进程并启动 Electron
-```
-
-桌面模式需要 Electron 二进制，`npm install` / `npm ci` 默认会下载。若设置了 `ELECTRON_SKIP_BINARY_DOWNLOAD=1`（例如 CI 中只为跑测试），则无法启动桌面应用。
-
-### Web 端
+### Desktop
 
 ```bash
-npm run web        # 构建 Web 前端与 HTTP 后端，然后启动服务
-npm run web:start  # 直接启动已构建的 dist-web-server/server.mjs
+npm run dev      # Vite dev server + Electron (HMR)
+npm start        # Build the main process and start Electron
 ```
 
-默认监听 <http://localhost:8080>。可用环境变量：
+Desktop mode needs an Electron binary, which `npm install` / `npm ci` downloads by default. If `ELECTRON_SKIP_BINARY_DOWNLOAD=1` is set (for example, in CI that only runs tests), the desktop app cannot launch.
 
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `HOST` | `0.0.0.0` | 监听地址；仅本机访问可设为 `127.0.0.1` |
-| `PORT` | `8080` | 监听端口 |
-| `PDF_INSPECTOR_PYTHON` | 优先使用 `.venv` 中的解释器，否则 `python3` | 启动 Python 侧车使用的解释器 |
+### Web
 
-生成演示 PDF：
+```bash
+npm run web        # Build the Web frontend and HTTP backend, then start the server
+npm run web:start  # Start the already-built dist-web-server/server.mjs
+```
+
+It listens on <http://localhost:8080> by default. Environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HOST` | `0.0.0.0` | Listen address; use `127.0.0.1` for local-only access |
+| `PORT` | `8080` | Listen port |
+| `PDF_INSPECTOR_PYTHON` | Prefer the interpreter in `.venv`, otherwise `python3` | Interpreter used to launch the Python sidecar |
+
+Generate sample PDFs:
 
 ```bash
 python scripts/generate-web-samples.py
 ```
 
-随后在 Web 界面打开 `/samples/basic.pdf`（小型示例，含表格与图片）、`/samples/large.pdf`（多页文档，便于观察字体分批分析）、`/samples/huge.pdf`（1000 页纯文本示例，用于页面列表、Go to page 与搜索索引进度）、`/samples/annotations.pdf`（两页示例，含外部/内部链接、文本注释、高亮与表单字段，用于 `Annots` 标签页）或 `/samples/raw.pdf`（两页示例，含命名字体资源、图片 XObject 与 `BT`/`Tf`/`Tj`/`Do` 操作符，用于 `Raw` 工作区）。
+Then open `/samples/basic.pdf` (small sample with a table and an image), `/samples/large.pdf` (multi-page document for batched font analysis), `/samples/huge.pdf` (1000-page text sample for the page list, Go to page, and search-index progress), `/samples/annotations.pdf` (two-page sample with external/internal links, text annotations, highlights, and form fields for `Annots`), or `/samples/raw.pdf` (two-page sample with named font resources, an image XObject, and `BT`/`Tf`/`Tj`/`Do` operators for the `Raw` workspace).
 
-Diff 的示例文件成对生成，可在对比对话框中分别选择 Old/New：
+Diff samples are generated in old/new pairs and can be selected in the comparison dialog:
 
-| 示例 | 用途 |
-|------|------|
-| `web-samples/diff-visual-old.pdf` → `web-samples/diff-visual-new.pdf` | 两页文档，第 1 页状态徽标颜色/文字、色块颜色与位置、正文数字小幅变化；第 2 页完全相同，用于 `Visual` 的 Blend/Heatmap 与像素统计。 |
-| `web-samples/diff-reordered-old.pdf` → `web-samples/diff-reordered.pdf` | 五页文档，修订 B 删除首页草稿、追加发布说明并移动页眉分隔线，产生 4 个重排配对、1 个删除页与 1 个新增页，用于页面对齐与 `--fail-on reordered`。 |
+| Sample | Purpose |
+|--------|---------|
+| `web-samples/diff-visual-old.pdf` → `web-samples/diff-visual-new.pdf` | Two pages; page 1 has small status-badge color/text, block color/position, and body-number changes; page 2 is identical. Use for `Visual` Blend/Heatmap and pixel statistics. |
+| `web-samples/diff-reordered-old.pdf` → `web-samples/diff-reordered.pdf` | Five pages; revision B removes the draft cover, appends release notes, and shifts the header rule, producing 4 reordered pairs, 1 removed page, and 1 added page. Use for page alignment and `--fail-on reordered`. |
 
-> **安全提示**：Web 服务没有身份认证，任何能访问该端口的人都可以上传/下载文档、调用解析接口。默认绑定 `0.0.0.0`，请仅在可信网络使用；本机使用时建议 `HOST=127.0.0.1 npm run web`。
+> **Security note:** the Web server has no authentication. Anyone who can reach the port can upload/download documents and call parsing endpoints. It binds to `0.0.0.0` by default; use it only on trusted networks, and prefer `HOST=127.0.0.1 npm run web` locally.
 
-## 使用说明
+## Usage
 
-1. **打开文档**：点击 Open 选择本地 PDF，或点击 Open URL 输入 `http(s)` 地址。
-2. **浏览结构**：在左侧 `Objects` 标签页展开/折叠页面节点，或切换到 `Outline` 按书签跳转；也可用工具栏的 Prev/Next 翻页。
-3. **检查对象**：在画布上悬停查看轮廓，点击后在右侧 Inspector 的 `Inspect` 标签页查看坐标、字体、颜色与原始数据。选中表格时会显示单元格网格，可悬停预览、点击选中单元格并查看其 Span 与 BBox。
-4. **筛选对象**：在 Inspector → `Filter` 中按字体/字号/颜色/类型筛选，或切到 `R` 模式拖拽框选区域，再在 `Results` 中选择相交/包含匹配。
-5. **字体分析**：切换到左侧 `Fonts` 标签页开始分析，查看进度与嵌入状态徽标；展开条目可看 Encoding、ToUnicode 等细节，点击字体条目跳转到使用页并高亮。
-6. **查看页面几何**：在 Inspector → `Page` 标签页查看页面尺寸、旋转角与五个页面框，切换 pt/mm，并按需开关各框叠加与画布标尺。
-7. **控制叠加层**：在左侧 `Layers` 标签页开关七类对象、查看当前页计数、使用 Solo 或调整透明度；`F` 可进入专注模式，隐藏左右面板。
-8. **搜索与导出**：`Ctrl/Cmd+F` 搜索；通过 Export 选择当前页/整档、JSON/CSV 与要包含的元素类型。
-9. **比较版本**：点击工具栏 `Diff` 选择 Old/New 两份 PDF，按需设置位置容差与忽略项后 Compare；在左侧变更列表选择条目查看详情，或在 Side by side / Overlay / Visual 间切换（Visual 可切 Blend/Heatmap/Boxes 并查看像素统计），`Ignore region` 可拖框屏蔽区域后再 `Apply & re-run`；`Export JSON` 保存结果。
-10. **文档体检**：点击工具栏 `Audit` 对当前文档执行整档审计，查看严重级别汇总，按严重级别/类别筛选，选中发现查看证据与建议；需要时点击 `Open page` 跳转到对应页面，或用 `Export JSON` 保存完整报告。
-11. **检查注释、链接与表单**：切换到左侧 `Annots`，默认 `Current page` 查看当前页；切到 `Whole document` 建立整档索引（显示 `Indexing annotations N/M…`），用搜索与全局 Kind/Subtype 过滤定位条目，点击行跳页并尽力选中。`Issues` 区汇总断链与表单问题，`External links` 列出可打开的 `http(s)` 目标；`Export` 可把整档索引导出为 JSON/CSV。外部链接需点击 `Open link` 才会打开，内部链接使用 `Go to page N` 跳转；表单字段不能编辑或提交。
-12. **查看原始对象与内容流**：点击工具栏 `Raw` 打开只读工作区，在左侧对象树展开 `Catalog` → `Pages` → 页面 → `Resources`，点击引用在右侧查看对象值；切换到 `Content stream` 按页查看解码后的操作符与操作数。`Back to Inspect` 返回原文档，页码与缩放保持不变。
-13. **处理大文档与多文档**：打开 `/samples/huge.pdf` 后，用左侧 Go to page 输入页码（越界会夹取），页面列表只展开当前页；`Ctrl/Cmd+F` 搜索时 SearchBox 显示 `Indexing N/1000…`，可关闭搜索取消。桌面端与 Web 端都可再打开其他文件或用 Open URL 打开远程文档，通过顶部标签切换；Web 标签按服务端 `documentId` 激活并恢复视图快照，关闭标签只删除该文档的临时副本。
+1. **Open a document:** click Open to choose a local PDF, or Open URL to enter an `http(s)` address.
+2. **Browse structure:** expand/collapse page nodes in `Objects`, or jump by bookmark in `Outline`. Prev/Next in the toolbar also changes pages.
+3. **Inspect objects:** hover the canvas for outlines; click to see coordinates, font, color, and raw data in the Inspector's `Inspect` tab. A selected table shows its cell grid; hover to preview and click to inspect span and BBox.
+4. **Filter objects:** use Inspector → `Filter` to combine font/size/color/type criteria, or press `R` and drag a region, then choose intersect or contain matching in `Results`.
+5. **Analyze fonts:** open the `Fonts` tab to start analysis, watch progress and embedding badges, expand rows for Encoding/ToUnicode, and click a font to jump to its first usage page and highlight it.
+6. **Inspect page geometry:** use Inspector → `Page` for page size, rotation, and the five page boxes; switch pt/mm, toggle box overlays, and enable canvas rulers.
+7. **Control overlays:** use `Layers` to toggle the seven object types, see current-page counts, use Solo, and adjust opacity. Press `F` for Focus mode.
+8. **Search and export:** `Ctrl/Cmd+F` opens search; use `Aa` / `W` / `.*` for case, whole-word, and regex; browse `p.N` rows with context and click to jump. `Ctrl/Cmd+K` opens the command palette for open, jump, theme, panel, Diff/Audit/Raw, export, and clear commands. Export lets you choose current page or whole document, JSON or CSV, and element types.
+9. **Compare revisions:** click `Diff`, choose Old/New PDFs, adjust position tolerance and ignores, then Compare. Select changes in the left list or switch Side by side / Overlay / Visual (Visual supports Blend/Heatmap/Boxes and pixel stats). `Ignore region` lets you mask a region, then `Apply & re-run`; `Export JSON` saves the result.
+10. **Audit a document:** click `Audit` to run whole-document checks, review the severity summary, filter by severity/category, inspect evidence and recommendations, use `Open page` when available, or `Export JSON` for the full report.
+11. **Inspect annotations, links, and forms:** open `Annots` (default `Current page`), switch to `Whole document` to build the index (`Indexing annotations N/M…`), use search and global Kind/Subtype filters, and click rows to jump and select when possible. `Issues` summarizes broken links and form issues; `External links` lists openable `http(s)` targets. `Export` writes the index as JSON/CSV. External links require `Open link`; internal links use `Go to page N`; form fields are read-only.
+12. **Inspect raw objects and content streams:** click `Raw` to open the read-only workspace. Expand `Catalog` → `Pages` → a page → `Resources` in the tree, and click references to inspect values on the right. Switch to `Content stream` for decoded operators and operands. `Back to Inspect` returns with page and zoom unchanged.
+13. **Handle large and multiple documents:** open `/samples/huge.pdf`, use Go to page (out-of-range values clamp), and keep only the current page expanded. `Ctrl/Cmd+F` shows `Indexing N/1000…`; closing search cancels the build. Both desktop and Web can open more files or URL documents and switch through the top tab bar. Web tabs activate by server `documentId` and restore their view snapshot; closing a tab removes only that document's temporary copy.
 
-## CLI 与 CI
+## CLI and CI
 
-Diff 也可以脱离界面运行。CLI 只接受本地 PDF 路径（拒绝 `http(s)` URL），输出摘要、JSON 或自包含 HTML，并按 `--fail-on` 映射退出码。
+Diff can run outside the UI. The CLI accepts local PDF paths only (rejecting `http(s)` URLs), writes summary, JSON, or self-contained HTML, and maps `--fail-on` to an exit code.
 
 ```bash
-# 直接使用 Python CLI；需要 Python 3.10+ 与 sidecar/requirements.txt
+# Direct Python CLI; requires Python 3.10+ and sidecar/requirements.txt
 python sidecar/cli.py diff old.pdf new.pdf
 
-# 通过 bin/pdf-inspector.mjs 包装器（安装/链接后可直接调用 pdf-inspector）
+# Through the bin/pdf-inspector.mjs wrapper (install/link it to call pdf-inspector)
 pdf-inspector diff old.pdf new.pdf
 npm run diff -- old.pdf new.pdf
 
-# 页序变化单独作为门禁；存在重排配对时返回 1
+# Gate page-order changes: returns 1 when reordered pairs exist
 python sidecar/cli.py diff old.pdf new.pdf --fail-on reordered
 
-# 用 JSON 区域屏蔽相交的变更（与界面绘制的区域相同）
+# Mask intersecting changes with a JSON region file (same regions as the UI)
 python sidecar/cli.py diff old.pdf new.pdf --ignore-regions regions.json --format json --output diff.json
 ```
 
-常用选项：
+Common options:
 
-| 选项 | 说明 |
-|------|------|
-| `--format` | 输出格式：`summary`（默认）/ `json` / `html` |
-| `--output PATH` | 把格式化结果同时写入文件；stdout 仍打印摘要 |
-| `--fail-on` | 决定哪些差异返回 1；默认 `any`，可选 `added` / `removed` / `modified` / `page-count` / `reordered` / `none` |
-| `--position-tolerance PT` | 位置容差（PDF pt），默认 `1.0` |
-| `--text-tolerance` | 文本比较模式：`exact` / `normalized`（默认）/ `case-insensitive` |
-| `--ignore-types TYPES` | 跳过指定对象类型，逗号分隔、可重复 |
-| `--ignore-fonts` / `--ignore-colors` / `--ignore-images` | 忽略字体/颜色/图片差异 |
-| `--ignore-regions PATH` | JSON 数组，按页与 MediaBox 坐标屏蔽相交的变更（与 UI 的 `DiffIgnoreRegion` 相同） |
-| `--quiet` | 不打印人类摘要，只保留 JSON/HTML 输出 |
+| Option | Description |
+|--------|-------------|
+| `--format` | Output format: `summary` (default) / `json` / `html` |
+| `--output PATH` | Write the formatted result to a file as well; stdout still prints the summary |
+| `--fail-on` | Choose which differences return 1; default `any`; values `added` / `removed` / `modified` / `page-count` / `reordered` / `none` |
+| `--position-tolerance PT` | Position tolerance in PDF pt; default `1.0` |
+| `--text-tolerance` | Text comparison: `exact` / `normalized` (default) / `case-insensitive` |
+| `--ignore-types TYPES` | Skip object types, comma-separated and repeatable |
+| `--ignore-fonts` / `--ignore-colors` / `--ignore-images` | Ignore font/color/image differences |
+| `--ignore-regions PATH` | JSON array masking intersecting changes by page and MediaBox coordinates (same `DiffIgnoreRegion` as the UI) |
+| `--quiet` | Suppress the human summary and keep only JSON/HTML output |
 
-退出码：`0` 表示无差异，或差异均被 `--fail-on`/忽略选项排除；`1` 表示 `--fail-on` 条件命中；`2` 表示参数、输入、解析或输出错误。`--fail-on none` 永不返回 1，但输入错误仍返回 2。`added` / `removed` 同时覆盖对象与页面，`modified` 覆盖 modified、moved 以及页面尺寸/旋转变化，`page-count` 覆盖页面增删、页数与页面几何变化，`reordered` 覆盖配对页换了页码（`pagesReordered > 0`）。
+Exit codes: `0` means no differences, or all differences were excluded by `--fail-on`/ignore options; `1` means the `--fail-on` condition matched; `2` means an argument, input, parse, or output error. `--fail-on none` never returns 1, but input errors still return 2. `added` / `removed` cover both objects and pages, `modified` covers modified/moved plus page size/rotation changes, `page-count` covers page additions/deletions, page counts, and page geometry changes, and `reordered` covers paired pages that changed page number (`pagesReordered > 0`).
 
-`--format json` 输出独立的 `DiffResult`（`schemaVersion: 1`），与检查器的对象导出 JSON 不是同一 schema；它包含 `tool` / `options` / `old` / `new` / `summary` / `pages`，每个变更带 kind、type、旧/新页码与 BBox、文本与 `details`。输出不含时间戳与绝对路径、顺序稳定，相同输入与选项产生逐字节一致的 JSON，便于提交、diff 或缓存。
+`--format json` emits a standalone `DiffResult` (`schemaVersion: 1`), not the same schema as the Inspector object export. It contains `tool` / `options` / `old` / `new` / `summary` / `pages`; each change has kind, type, old/new page and BBox, text, and `details`. Output has no timestamps or absolute paths and is stable, so identical inputs and options produce byte-identical JSON suitable for commits, diffs, or caches.
 
-### 审计 CLI
+### Audit CLI
 
-文档体检同样可以脱离界面运行，复用与界面相同的检查引擎。CLI 只接受本地 PDF 路径（拒绝 `http(s)` URL），输出摘要、`AuditReport` JSON 或单文件 HTML，并按 `--fail-on` 映射退出码。
+Document audit also runs outside the UI and reuses the same check engine. The CLI accepts local PDF paths only (rejecting `http(s)` URLs), writes a summary, `AuditReport` JSON, or single-file HTML, and maps `--fail-on` to an exit code.
 
 ```bash
-# 直接使用 Python CLI；需要 Python 3.10+ 与 sidecar/requirements.txt
+# Direct Python CLI; requires Python 3.10+ and sidecar/requirements.txt
 python sidecar/cli.py audit report.pdf
 python sidecar/cli.py audit report.pdf --format json --output report.audit.json
 python sidecar/cli.py audit report.pdf --format html --output report.audit.html
 
-# 发现 warning/error 时返回 1，适合作为质量门禁
+# Return 1 when warnings/errors are found, for a quality gate
 python sidecar/cli.py audit report.pdf --fail-on warning
 
-# 通过 bin/pdf-inspector.mjs 包装器（安装/链接后可直接调用 pdf-inspector）
+# Through the bin/pdf-inspector.mjs wrapper (install/link it to call pdf-inspector)
 pdf-inspector audit report.pdf
 node bin/pdf-inspector.mjs audit report.pdf --format json --output report.audit.json
 ```
 
-常用选项：
+Common options:
 
-| 选项 | 说明 |
-|------|------|
-| `--format` | 输出格式：`summary`（默认）/ `json` / `html` |
-| `--output PATH` | 把格式化结果同时写入文件；stdout 仍打印摘要 |
-| `--fail-on` | 决定哪些发现返回 1；默认 `none`，可选 `error` / `warning` / `none`。`warning` 同时覆盖 errors，`error` 只覆盖 errors |
-| `--quiet` | 不打印人类摘要，只保留 JSON/HTML 输出 |
+| Option | Description |
+|--------|-------------|
+| `--format` | Output format: `summary` (default) / `json` / `html` |
+| `--output PATH` | Write the formatted result to a file as well; stdout still prints the summary |
+| `--fail-on` | Choose which findings return 1; default `none`; values `error` / `warning` / `none`. `warning` includes errors; `error` includes only errors |
+| `--quiet` | Suppress the human summary and keep only JSON/HTML output |
 
-退出码：`0` 表示没有严重级别命中 `--fail-on`；`1` 表示 `--fail-on` 命中；`2` 表示参数、输入、读取或审计错误。`--fail-on none` 永不返回 1，但输入错误仍返回 2。页面提取失败是当前唯一的 `error` 来源，因此 `--fail-on error` 只会拦截真正不可读的页面。
+Exit codes: `0` means no finding reached `--fail-on`; `1` means it matched; `2` means an argument, input, read, or audit error. `--fail-on none` never returns 1, but input errors still return 2. Page extraction failure is the only current `error` source, so `--fail-on error` only blocks truly unreadable pages.
 
-`--format json` 输出 `AuditReport`（`schemaVersion: 1`），包含 `tool` / `document` / `summary` / `findings`；每条发现带类别、严重级别、页码（文档级为 `null`）、标题、说明、证据与建议。输出不含时间戳与绝对路径，顺序稳定，相同 PDF 产生逐字节一致的 JSON。HTML 报告为单文件、内联 CSS、无脚本、无外部资源，所有 PDF 文本均转义。完整 schema、检查项与阈值见 [docs/audit.md](docs/audit.md)。
+`--format json` emits `AuditReport` (`schemaVersion: 1`) with `tool` / `document` / `summary` / `findings`; each finding has category, severity, page (`null` for document-level), title, description, evidence, and recommendation. Output has no timestamps or absolute paths and is stable, so the same PDF produces byte-identical JSON. HTML reports are single-file with inline CSS, no scripts, no external resources, and all PDF text escaped. See [docs/audit.md](docs/audit.md) for the full schema, checks, and thresholds.
 
 ### Diff GitHub Action
 
-仓库提供 composite action（[`action.yml`](action.yml)），会在 runner 上安装 Python 与 sidecar 依赖后运行 diff：
+The repository provides a composite action ([`action.yml`](action.yml)) that installs Python and sidecar dependencies on the runner and then runs diff:
 
 ```yaml
 - uses: actions/checkout@v4
@@ -367,28 +391,28 @@ node bin/pdf-inspector.mjs audit report.pdf --format json --output report.audit.
     json-path: artifacts/pdf-diff.json
 ```
 
-只关心页序、并屏蔽已知区域时可以组合使用：
+To gate only page order while masking known regions:
 
 ```yaml
 - uses: <owner>/pdf-inspector@v1
   with:
     old: baseline.pdf
     new: docs/report.pdf
-    fail-on: reordered          # 仅当配对页换了页码时失败
+    fail-on: reordered          # Fail only when paired pages changed page number
     ignore-regions: ignore-regions.json
 ```
 
-action 默认 `fail-on: any`，支持 `summary` / `json` / `html`；`json-path` / `report-path` 指定 JSON/HTML payload 的文件路径（`format` 选中对应格式且未指定路径时写入 runner 临时目录），payload 不写入步骤日志。`fail-on` 可选 `any` / `added` / `removed` / `modified` / `page-count` / `reordered` / `none`；`ignore-regions` 接收与 CLI 相同的区域 JSON 路径并透传。完整输入、输出、artifact 约定见 [docs/ci.md](docs/ci.md)，Diff 2.0 的页面对齐、视觉视图与区域语义见 [docs/diff.md](docs/diff.md)。
+The action defaults to `fail-on: any` and supports `summary` / `json` / `html`. `json-path` / `report-path` set the JSON/HTML payload path (when the corresponding format is selected and no path is given, the payload goes to the runner temp directory); payloads are not written to the step log. `fail-on` accepts `any` / `added` / `removed` / `modified` / `page-count` / `reordered` / `none`; `ignore-regions` accepts the same region JSON path as the CLI. See [docs/ci.md](docs/ci.md) for full inputs, outputs, and artifact conventions, and [docs/diff.md](docs/diff.md) for Diff 2.0 page alignment, Visual mode, and region semantics.
 
-HTML 报告是单文件、内联 CSS、无脚本、无外部资源：
+The HTML report is a single file with inline CSS, no scripts, and no external resources:
 
-<img src="docs/images/diff-report.png" alt="PDF diff HTML 报告：文档 SHA-256、变更汇总、diff 选项与逐页变更表" width="560">
+<img src="docs/images/diff-report.png" alt="PDF diff HTML report: document SHA-256, change summary, diff options, and per-page change table" width="560">
 
-> Diff 的 CLI 与 action 都需要 Python 3.10+ 及 `sidecar/requirements.txt` 中的依赖，并且只读取本地路径；打包后的桌面应用不包含 CLI。
+> Diff CLI and action require Python 3.10+ and the dependencies in `sidecar/requirements.txt`, and accept local paths only. The packaged desktop app does not include the CLI.
 
-### 审计 GitHub Action
+### Audit GitHub Action
 
-仓库还提供审计 composite action（[`audit/action.yml`](audit/action.yml)），会在 runner 上安装 Python 与 sidecar 依赖后运行 `audit`：
+The repository also provides an audit composite action ([`audit/action.yml`](audit/action.yml)), which installs Python and sidecar dependencies on the runner and runs `audit`:
 
 ```yaml
 - uses: actions/checkout@v4
@@ -398,181 +422,189 @@ HTML 报告是单文件、内联 CSS、无脚本、无外部资源：
     fail-on: error
     format: html
     report-path: artifacts/pdf-audit.html
-    # 需要 JSON 时可同时指定；会额外执行一次 CLI 生成该 artifact
+    # Add a JSON artifact too; this runs the CLI one extra time
     # json-path: artifacts/pdf-audit.json
 ```
 
-action 默认 `fail-on: error`、`format: summary`，支持 `summary` / `json` / `html`；`json-path` / `report-path` 指定 JSON/HTML payload 的文件路径（`format` 选中对应格式且未指定路径时写入 runner 临时目录），payload 不写入步骤日志。输出 `exit-code` / `json-path` / `report-path`，并把退出码、`fail-on` 与 artifact 路径写入步骤摘要。非零退出码会先写入输出再让步骤失败，因此后续步骤仍可读取结果。仓库内使用 `uses: ./audit`，完整输入、输出与示例见 [docs/audit.md](docs/audit.md)。
+The action defaults to `fail-on: error` and `format: summary`, and supports `summary` / `json` / `html`. `json-path` / `report-path` set the JSON/HTML payload path (when the selected format has no path, it goes to the runner temp directory); payloads are not written to the step log. Outputs are `exit-code` / `json-path` / `report-path`, and the exit code, `fail-on`, and artifact paths are written to the step summary. A non-zero exit code is written to outputs before the step fails, so later steps can still read the result. The repository uses `uses: ./audit`; see [docs/audit.md](docs/audit.md) for inputs, outputs, and examples.
 
-## 架构
+## Architecture
 
-同一套 React 渲染层，桌面端通过 Electron IPC 访问侧车，Web 端通过 HTTP 访问 Node 后端；两侧最终都使用 stdio 上的 JSON-RPC 驱动 Python 侧车。
+The same React renderer talks to the sidecar through Electron IPC on desktop and through a Node HTTP backend on Web. Both sides ultimately drive the Python sidecar over line-delimited JSON-RPC on stdio.
 
 ```
-桌面模式
+Desktop
 ┌──────────────────────────────────────────────┐
-│ Electron Main                                │
-│ 窗口 / 原生对话框 / Python 侧车生命周期       │
+│ Electron main                                │
+│ window / native dialogs / Python lifecycle   │
 └───────────┬──────────────────────────┬───────┘
             │ IPC (contextBridge)      │ spawn
             ▼                          ▼
 ┌───────────────────────┐   ┌───────────────────────┐
-│ Renderer (React)      │   │ Python Sidecar        │
-│ PDF.js / 叠加层 / UI  │   │ pdfplumber / 页缓存   │
+│ Renderer (React)      │   │ Python sidecar        │
+│ PDF.js / overlays / UI│   │ pdfplumber / cache    │
 └───────────────────────┘   └───────────────────────┘
 
-Web 模式
+Web
 ┌──────────────────────────────────────────────┐
 │ Browser (React + PDF.js)                     │
-│ `window.pdfInspector` 由 src/web 适配器实现   │
+│ `window.pdfInspector` provided by src/web    │
 └───────────┬──────────────────────────────────┘
-            │ HTTP：/api/*、/doc/*、/samples/*
+            │ HTTP: /api/*, /doc/*, /samples/*
             ▼
 ┌──────────────────────────────────────────────┐
-│ Node HTTP Server（server/web-server.ts）      │
-│ 上传/下载临时文件、文档注册表、静态资源       │
+│ Node HTTP server (server/web-server.ts)      │
+│ uploads/downloads, document registry, assets │
 └───────────┬──────────────────────────────────┘
             │ spawn + JSON-RPC over stdio
             ▼
-      Python Sidecar（同上）
+      Python sidecar (same as above)
 ```
 
-Python 侧车通过 stdin/stdout 上的行分隔 JSON-RPC 通信，提供 `open`、`extract_page`、`extract_metadata`、`analyze_fonts`、`get_image_data`、`raw_document`、`raw_object`、`raw_page_content`、`audit_document`、`audit_pages`、`shutdown` 等方法，并用 LRU 缓存复用已解析页面。
+The Python sidecar uses line-delimited JSON-RPC over stdin/stdout and provides `open`, `extract_page`, `extract_metadata`, `analyze_fonts`, `get_image_data`, `raw_document`, `raw_object`, `raw_page_content`, `audit_document`, `audit_pages`, `shutdown`, and related methods. An LRU cache reuses parsed pages.
 
-桌面端与 Web 后端都用 `SidecarPool` 把请求路由到交互/后台两个通道：交互通道负责打开与当前页提取，后台通道懒启动并负责字体、审计、Raw 与 Diff。两个通道打开同一份文档，切换文档时重新打开，不保留 N 份解析结果。详见 [docs/large-docs.md](docs/large-docs.md)。
+Desktop and the Web backend both use `SidecarPool` to route requests to interactive and background lanes. The interactive lane opens documents and extracts the current page; the background lane starts lazily and handles fonts, audit, Raw, and Diff. Both lanes open the same document, and switching documents re-opens it rather than retaining N parsed documents. See [docs/large-docs.md](docs/large-docs.md).
 
-## 技术栈
+## Tech stack
 
-| 层 | 技术 |
-|----|------|
-| 桌面容器 | Electron 28 |
-| Web 后端 | Node.js 内置 `http`（无额外运行时依赖） |
-| 前端 | React 18 + TypeScript + Vite + Zustand + CSS Modules |
-| PDF 渲染 | pdfjs-dist 4.x |
-| 提取引擎 | Python 3 + pdfplumber（JSON-RPC over stdio 子进程） |
-| 前端测试 | Vitest + Testing Library + jsdom |
-| Python 测试 | pytest + reportlab（生成测试用 PDF） |
+| Layer | Technology |
+|-------|------------|
+| Desktop container | Electron 28 |
+| Web backend | Node.js built-in `http` (no extra runtime dependency) |
+| Frontend | React 18 + TypeScript + Vite + Zustand + CSS Modules |
+| PDF rendering | pdfjs-dist 4.x |
+| Extraction engine | Python 3 + pdfplumber (JSON-RPC over stdio subprocess) |
+| Frontend tests | Vitest + Testing Library + jsdom |
+| Python tests | pytest + reportlab (generates test PDFs) |
 
-## 项目结构
+## Project structure
 
 ```
 pdf-inspector/
 ├── src/
-│   ├── main/              # Electron 主进程：窗口、IPC、URL 下载、侧车管理
+│   ├── main/              # Electron main: window, IPC, URL downloads, sidecar lifecycle
 │   ├── preload/           # contextBridge → window.pdfInspector
-│   ├── renderer/          # React UI、PDF.js 渲染、叠加层、hooks、store、services
-│   ├── shared/            # 主进程/渲染进程共享常量与工具
-│   └── web/               # 浏览器入口与 HTTP 版 IPC 适配器
+│   ├── renderer/          # React UI, PDF.js rendering, overlays, hooks, stores, services
+│   ├── shared/            # Constants and helpers shared by main and renderer
+│   └── web/               # Browser entry and HTTP IPC adapter
 ├── server/
-│   └── web-server.ts      # 无 Electron 依赖的 Node HTTP 后端
-├── sidecar/               # Python 侧车（extractor / cache / models / main）
+│   └── web-server.ts      # Electron-free Node HTTP backend
+├── sidecar/               # Python sidecar (extractor / cache / models / main)
 │   ├── cli.py             # `pdf-inspector diff` / `audit` CLI
-│   ├── diff.py            # 对象级 diff 引擎
-│   ├── report.py          # Diff 摘要与自包含 HTML 报告
-│   ├── raw.py             # 原始对象图与内容流序列化（有界、只读）
-│   ├── audit.py           # 文档审计引擎（检查项、排序、AuditReport）
-│   ├── audit_report.py    # 审计摘要与单文件 HTML 报告
-│   ├── __tests__/         # pytest 测试
+│   ├── diff.py            # Object-level diff engine
+│   ├── report.py          # Diff summary and self-contained HTML report
+│   ├── raw.py             # Bounded, read-only raw object and content-stream serializer
+│   ├── audit.py           # Audit engine (checks, ordering, AuditReport)
+│   ├── audit_report.py    # Audit summary and single-file HTML report
+│   ├── __tests__/         # pytest tests
 │   └── requirements.txt
 ├── bin/
-│   └── pdf-inspector.mjs  # CLI 包装器（解析 Python 并转发退出码）
+│   └── pdf-inspector.mjs  # CLI wrapper (resolves Python and forwards exit codes)
 ├── scripts/
-│   ├── generate-web-samples.py  # 生成 web-samples/*.pdf
+│   ├── generate-web-samples.py  # Generates web-samples/*.pdf
 │   ├── generate-icon.js
 │   └── freeze-sidecar.sh
 ├── docs/
-│   ├── audit.md           # 文档体检：检查项、AuditReport schema、CLI 与 action
-│   ├── annotations.md     # 注释、链接与表单：整档索引、健康检查、JSON/CSV 导出与只读限制
-│   ├── raw.md             # 原始对象树与内容流：序列化语义、上限与安全边界
-│   ├── large-docs.md      # 大文档：双通道、搜索分批、页面列表、桌面/Web 文档标签与边界
-│   ├── diff.md            # Diff 2.0：页面对齐、视觉模式、忽略区域与阈值
-│   ├── ci.md              # Diff CLI 与 GitHub Action
-│   ├── packaging.md       # 打包说明
-│   ├── images/            # README 截图
-│   └── superpowers/       # 设计与实施文档（specs / plans）
-├── web-samples/           # 生成的演示 PDF（已 gitignore）
+│   ├── audit.md           # Audit: checks, AuditReport schema, CLI, and action
+│   ├── annotations.md     # Annotations: whole-document index, health checks, JSON/CSV, read-only limits
+│   ├── raw.md             # Raw objects and content streams: serialization, limits, security
+│   ├── large-docs.md      # Large documents: dual lanes, batched search, page list, desktop/Web tabs
+│   ├── search.md          # Search 2.0: options, results panel, command palette, shortcuts, verification
+│   ├── diff.md            # Diff 2.0: page alignment, Visual mode, ignore regions, thresholds
+│   ├── ci.md              # Diff CLI and GitHub Action
+│   ├── packaging.md       # Packaging notes
+│   ├── images/            # README screenshots
+│   └── superpowers/       # Design and implementation notes (specs / plans)
+├── web-samples/           # Generated demo PDFs (gitignored)
 ├── .github/workflows/ci.yml
 ├── action.yml             # PDF diff composite action
 ├── audit/action.yml       # PDF audit composite action
-├── index.html             # Electron 入口
-├── index.web.html         # 浏览器入口
-└── package.json
+├── index.html             # Electron entry
+├── index.web.html         # Browser entry
+├── package.json
+├── README.md              # English default
+└── README.zh-CN.md        # Chinese README
 ```
 
-## 开发与测试
+## Development and testing
 
 ```bash
-# TypeScript：Node/main 项目与 Web 项目
+# TypeScript: Node/main project and Web project
 npx tsc -b
 npx tsc -p tsconfig.web.json
 
-# 前端单元测试
+# Frontend unit tests
 npx vitest run
 
-# Python 侧车测试（请使用虚拟环境中的解释器，确保依赖可用）
+# Python sidecar tests (use the virtualenv interpreter so dependencies are available)
 .venv/bin/python -m pytest sidecar/__tests__ -q
 ```
 
-`npx tsc -b` 使用项目引用，会同时检查 main、preload、renderer 与 shared。提交前建议执行上面的全部命令。
+`npx tsc -b` uses project references and checks main, preload, renderer, and shared together. Run all of the commands above before submitting.
 
-CI 由 `.github/workflows/ci.yml` 定义：在推送到 `main`、推送 `v*` 标签、Pull Request 及手动触发时，执行上述类型检查与测试，并构建桌面端、Web 前端、Web 后端及生成演示 PDF；此外还有 diff CLI、diff action、audit CLI 与 audit action 的端到端任务。
+CI is defined in `.github/workflows/ci.yml`. It runs on pushes to `main`, `v*` tags, pull requests, and manual dispatch; it runs the type checks and tests above, builds the desktop app, Web frontend, and Web backend, generates demo PDFs, and includes end-to-end jobs for the diff CLI/action and audit CLI/action.
 
-## 打包发布
+## Packaging
 
 ```bash
-npm run freeze:sidecar   # PyInstaller 冻结 Python 侧车
-npm run dist             # 当前平台安装包（electron-builder）
+npm run freeze:sidecar   # Freeze the Python sidecar with PyInstaller
+npm run dist             # Installer for the current platform (electron-builder)
 npm run dist:win         # Windows
 npm run dist:mac         # macOS
 npm run dist:linux       # Linux
 ```
 
-打包产物包含冻结后的侧车，最终用户无需安装 Python。PyInstaller 不支持交叉编译，每个平台需在对应宿主上构建。详细步骤、平台依赖与产物说明见 [docs/packaging.md](docs/packaging.md)。
+Packaged builds include the frozen sidecar, so end users do not need Python. PyInstaller does not cross-compile; build each platform on its own host. See [docs/packaging.md](docs/packaging.md) for detailed steps, platform dependencies, and artifacts.
 
-## 配置与安全
+## Configuration and security
 
-- **Electron 桌面端**只通过 IPC 与本机侧车通信，不监听网络端口。
-- **Web 端**默认监听 `0.0.0.0:8080`，没有认证与访问控制；请用 `HOST` 限制监听地址，或放在带认证的反向代理之后。
-- Web 端的活动文档及上传/下载文件存放在系统临时目录，正常关闭时清理；崩溃或强杀进程可能残留。
-- URL 打开仅接受 `http(s)`，下载受超时限制。
-- 侧车请求有超时保护；桌面端会自动重启侧车，Web 后端会在请求时自动拉起进程，并提供 `/api/restart` 接口。
-- 测试或 CI 中可用 `ELECTRON_SKIP_BINARY_DOWNLOAD=1` 跳过 Electron 二进制下载（仅影响桌面端启动）。
+- **Electron desktop** talks to the local sidecar only through IPC and does not listen on a network port.
+- **Web** listens on `0.0.0.0:8080` by default with no authentication or access control. Restrict the listen address with `HOST`, or put it behind an authenticated reverse proxy.
+- Web active documents and uploaded/downloaded files live in the system temporary directory and are cleaned up on normal shutdown; crashes or forced kills may leave files behind.
+- Opening a URL accepts `http(s)` only, and downloads are subject to timeouts.
+- Sidecar requests have timeout protection. Desktop restarts the sidecar automatically; the Web backend starts it on demand and exposes `/api/restart`.
+- In tests or CI, `ELECTRON_SKIP_BINARY_DOWNLOAD=1` skips the Electron binary download (desktop launch only).
 
-## 已知限制
+## Known limitations
 
-- 侧车一次处理一个请求；单批字体分析执行期间，其他解析请求需要等待，批次之间会插入处理。
-- 字体分析按 10 页一批顺序执行，超大文档需要较长时间，但可分页浏览并查看进度。
-- 旋转页面（`/Rotate` 为 90/180/270）仍显示页面框与标尺，但对象叠加层不可用：对象坐标按未旋转页面映射，无法可靠对齐；Diff 的并排/叠加对象框同样隐藏，旋转页也不能绘制忽略区域（`Visual` 视图仍会渲染页面，但对象框与区域遮罩可能偏移）。
-- 当 CropBox 小于 MediaBox 时，页面框与标尺以 MediaBox 作为页面框架，而 PDF.js 按 CropBox 渲染，因此页面与内容边距的视觉表现可能不同；Diff 的叠加框也以 MediaBox 为基准，可能同样偏移。
-- Diff 的对象配对是启发式的：重复出现的相同对象（重复文字、相同几何的线条/矩形）只能按距离或阅读顺序贪心匹配；对象同时移动且内容改变、超出位置容差时，可能被报告为 `removed` + `added` 而不是 `modified` / `moved`。可调整 `--position-tolerance`、文本容差或忽略相应类型来减少噪声。
-- Diff 只比较提取出的对象及其元数据，不做渲染后的像素级 diff 或 OCR；扫描页面上的文字不会被识别为文本对象。`Visual` 视图的像素对比只在浏览器 UI 中运行，CLI、JSON、HTML 与 action 仍然是对象级、无渲染依赖。
-- 视觉对比固定使用通道差 > 24 的阈值，并把位图按上限缩放后比较（数值是采样统计，不是逐设备像素的精确值）；阈值与位图上限不暴露为设置项，CLI 也不提供 headless 视觉 diff。
-- 忽略区域是只读的页面坐标矩形：以 MediaBox 的 PDF pt 记录，按“变更 BBox 与区域相交”过滤，因此一个覆盖整块区域的矩形可能同时屏蔽该区域内多个对象（包括表格整体）；区域只对当前这次比较生效，切换文件或重置后清空，不能跨运行共享。
-- `match` 与 `pagesReordered` 是 `DiffResult` 的新增字段，`schemaVersion` 仍为 `1`；旧消费者可以忽略这些字段，但读取方不应假定字段集合完全固定。
-- 页面对齐基于内容指纹 + `SequenceMatcher`：移动页可能被报告为“删除 + 新增”，只有被配对的页才会标记 `reordered`；重复页按顺序配对，不能识别真正的“交换”语义。
-- Diff CLI 需要 Python 3.10+ 与 sidecar 依赖，且只接受本地路径；`--fail-on` 只决定差异是否返回 1，参数/输入/解析错误始终返回 2，`none` 不会抑制错误。打包后的桌面应用不包含 CLI。
-- 文档体检的检查是启发式的：基于提取出的对象、字体信息、页面框与 catalog 元数据，可能出现误报或漏报；`--fail-on` 与 action 阈值应结合项目实际情况设置。
-- 文档体检不做 PDF/A 合规认证，也不验证数字签名；“未标记 PDF”只是诊断提示，不代表合规结论。
-- 文档体检不做 OCR，也不识别扫描页中的文字；扫描页只能得到“有图片但无可提取文本”的提示。
-- 旋转页或 CropBox 偏移页上的审计发现只到页面级，无法给出对象级高亮；带页码的发现仍可跳转到对应页面。
-- 文档体检按 10 页一批串行执行（与字体分析相同），超大文档需要较长时间；页面提取失败是当前唯一的 `error` 来源。CLI 与 action 同样需要 Python 3.10+ 与 sidecar 依赖，且只接受本地路径，打包后的桌面应用不包含 CLI。
-- 注释、链接与表单的整档索引按 10 页一批顺序读取，超大文档需要较长时间；单页读取失败会中止整次索引并显示该页错误，`Retry` 从头重建，没有断点续建或部分结果。索引期间翻页与当前页检查仍可用。
-- 文档模式不承诺为未激活页绘制注释框：`Show boxes` 只在 `Current page` 生效，点击列表行跳页后由当前页正常加载并尽力选中（无 id 或 id 不一致时只跳页）。
-- 注释、链接与表单只读：不能新建、编辑或删除注释，不能填写、重置或提交表单，也不导入 XFA 数据；签名字段只显示为字段，不做数字签名验证。
-- 注释、链接与表单只在 `Annots → Whole document` 中导出，不写入对象导出的 JSON/CSV，也不参与 Diff、Audit 或 CLI；Pipeline 中如需这些信息需要另行读取 PDF。
-- 外部链接只在用户点击 `Open link` 时打开，且仅支持 `http(s)`；`mailto:`、`file:`、`data:`、`javascript:` 等目标只显示、不打开。整档索引只对目标分类，不会自动打开、探测或批量请求外部 URL。内部链接只跳转到解析出的页码，不恢复滚动位置，未解析的目标保持只读展示。
-- 注释健康检查是启发式的：`Issues` 依据 PDF.js 解析出的链接与表单数据给出提示，不做 PDF 合规认证；未命名 Widget 与同名字段类型冲突是 warning，跨页同名只是 info。单个链接目标解析失败只影响该条记录。
-- 旋转页（`/Rotate` 为 90/180/270）只提供注释列表与详情，不绘制画布框与命中测试；CropBox 与 MediaBox 不一致的页面，注释框以 MediaBox 为基准，可能整体偏移（与对象叠加层一致）。
-- 原始对象视图是只读的：不能编辑对象、重写流、解密或执行内容流，也不提供 raw diff、导出或 CLI；需要修改 PDF 时请使用其他工具。
-- 原始对象视图只返回有界数据：嵌套、条目、字符串、操作符与内容流数量都有上限，超限标记 `truncated` 并在界面提示；二进制流只显示长度、过滤器与 Subtype 等元数据，不提供字节预览。
-- 原始对象视图不是完整 PDF 解析器：不遍历整个对象图，不解析 XFA 或结构树，也没有对象搜索/查询语言；大文档需要按引用逐层展开。
-- Raw 不使用左侧第六个标签页：它通过工具栏打开独立工作区，并与 Diff、Audit 互斥；与 Inspect 的切换不会改变文档状态，但 Raw 自身不保存展开状态，重新打开从 trailer 根开始。
-- Web 多文档是会话级、单 sidecar 实现：sidecar 中始终只有活动文档，切换是串行重新打开，不能同时分析多份文档，也没有每文档 sidecar。注册表最多 8 份文档 / 总 512 MiB，超出时按最近最少激活淘汰非活动文档；被淘汰的标签需重新打开。Web 端仍没有认证、多用户隔离或按用户的文档边界，多文档不改变这一信任模型。
-- Web 关闭活动标签时必须先激活邻居：服务端拒绝在仍有兄弟时删除活动文档；激活失败会保留原标签与文档。关闭最后一个标签时，只有服务端也只剩这一份登记文档才会删除活动文档并回到空状态；刷新遗留的登记文档会让 `DELETE` 返回 409，标签保留。
-- 桌面与 Web 标签都只保存视图快照：页码、缩放、叠加层、左右面板标签与查询字符串会恢复；字体、审计、Raw 结果与搜索索引不跨标签保留，切回后需重新运行。桌面 URL 标签重新激活会重新下载，Web URL 文档由服务端保留并按 `sourceUrl` 去重；标签状态均不写入 localStorage，刷新或重启后不恢复。
-- 后台 sidecar 通道懒启动但本阶段不做空闲自动退出；使用过字体/审计/Raw/Diff 后会保留第二个 Python 进程直到退出或重启。
-- 搜索索引只保存每页文本，没有按字节的上限；1000 页可接受，极大文档仍需依靠取消、关闭搜索或切换文档释放。
-- 页面列表使用 CSS `content-visibility` 窗口化，DOM 中仍保留每页一个行节点；若未来出现数千页的滚动卡顿，再评估真正的虚拟列表。
-- 搜索框展开时，工具栏优先保证输入框、计数、上/下与关闭按钮完整可见；窗口宽度 ≤1280px 时隐藏文件名（不是控件，标题仍可在打开对话框与状态栏查看），>1280px 时文件名继续显示。1280/1440/1600 打开搜索均无横向溢出。
-- 临时文件清理为尽力而为，异常退出后可能需要手动清理系统临时目录。
-- Web 模式需先构建 `dist-web` 与 `dist-web-server`；未构建时服务会提示构建后刷新。
+- The sidecar handles one request at a time; while a font batch is running, other parsing requests wait. Batches interleave processing.
+- Font analysis runs sequentially in 10-page batches and can take a long time on very large documents; page-by-page viewing and progress remain available.
+- Rotated pages (`/Rotate` 90/180/270) still show page boxes and rulers, but object overlays are unavailable because object coordinates are mapped to the unrotated page and cannot be aligned reliably. Diff side-by-side/overlay object boxes are hidden on rotated pages, and ignore regions cannot be drawn there (`Visual` still renders the page, but boxes and region masks may be offset).
+- When CropBox is smaller than MediaBox, page boxes and rulers use MediaBox as the page frame while PDF.js renders CropBox, so margins may look different. Diff overlays also use MediaBox and may be similarly offset.
+- Diff object pairing is heuristic: repeated identical objects (repeated text, identical lines/rectangles) are matched greedily by distance or reading order. Objects that move and change content beyond the position tolerance may be reported as `removed` + `added` rather than `modified` / `moved`. Tune `--position-tolerance`, text tolerance, or ignore types to reduce noise.
+- Diff compares extracted objects and their metadata only; it does not perform rendered pixel diffing or OCR. Text on scanned pages is not recognized as text objects. `Visual` pixel comparison runs only in the browser UI; CLI, JSON, HTML, and actions remain object-level and render-free.
+- Visual comparison uses a fixed channel-difference threshold of > 24 and compares a bounded, scaled bitmap; numbers are sampled statistics, not exact per-device-pixel values. The threshold and bitmap limit are not configurable, and the CLI has no headless visual diff.
+- Ignore regions are read-only page-coordinate rectangles recorded in PDF pt relative to MediaBox and filtered by “change BBox intersects region”. A rectangle covering a broad area can mask several objects (including an entire table). Regions apply only to the current comparison; changing files or resetting clears them, and they cannot be shared across runs.
+- `match` and `pagesReordered` are additions to `DiffResult`; `schemaVersion` remains `1`. Older consumers can ignore them, but readers should not assume the field set is fixed.
+- Page alignment uses content fingerprints plus `SequenceMatcher`: moved pages may be reported as removed + added, and only paired pages are marked `reordered`; repeated pages are paired in order and true “swap” semantics are not detected.
+- Diff CLI requires Python 3.10+ and sidecar dependencies, and accepts local paths only. `--fail-on` only decides whether differences return 1; argument/input/parse errors always return 2, and `none` does not suppress errors. The packaged desktop app does not include the CLI.
+- Diff page signatures intentionally recognize “same drawing program + same resources”. Resaved or re-encoded pages with rewritten content streams fall back to a full comparison (still correct, just slower). Pages whose signatures cannot be computed use a unique marker and are never treated as unchanged. Unchanged pages are not object-validated because byte-identical sides cannot differ.
+- Diff safely skips unchanged pages, but a changed page still needs a full extraction. A diff run keeps at most 50,000 changes (`MAX_DIFF_CHANGES`) and sets `truncated` / `summary.changesTruncated` when the cap is reached.
+- The 300s Diff budget is a no-progress budget, not a total-time limit; progress and the 5-second heartbeat renew it. A timeout may leave the Python computation alive, so desktop and Web restart only the background lane and return the original timeout error (Web 504); restart failure is logged without masking the error.
+- The UI hides character-level diffs by default (`ignoreTypes: ["char"]`) because character diffs of large text PDFs can produce huge change lists. Enable `Character-level changes` to compare `char` objects; the engine and CLI compare all types by default.
+- Audit checks are heuristic: they use extracted objects, font information, page boxes, and catalog metadata and can produce false positives or false negatives. Tune `--fail-on` and action thresholds for your project.
+- Audit does not certify PDF/A compliance or verify digital signatures; an “untagged PDF” finding is diagnostic, not a compliance conclusion.
+- Audit does not perform OCR or recognize text on scanned pages; scanned pages only get the “image but no extractable text” hint.
+- Audit findings on rotated pages or CropBox-offset pages are page-level only and cannot highlight objects; findings with page numbers can still jump to the page.
+- Audit runs sequentially in 10-page batches (like font analysis) and can take a long time on very large documents; page extraction failure is the only current `error` source. CLI and action also require Python 3.10+ and sidecar dependencies, accept local paths only, and are not included in the packaged desktop app.
+- The whole-document annotation index reads in 10-page batches and can take a long time on very large documents. A single-page read failure aborts the whole index and shows that page's error; `Retry` starts over with no resume or partial results. Paging and current-page inspection remain available during indexing.
+- Document mode does not promise annotation boxes on inactive pages: `Show boxes` applies only to `Current page`. Clicking a list row jumps pages and then selects when possible; a missing or mismatched id only jumps.
+- Annotations, links, and forms are read-only: annotations cannot be created, edited, or deleted; forms cannot be filled, reset, or submitted; XFA data is not imported; signature fields are shown as fields and are not signature-verified.
+- Annotations, links, and forms are exported only from `Annots → Whole document`. They are not included in object-export JSON/CSV, Diff, Audit, or CLI; pipelines that need them must read the PDF separately.
+- External links open only when the user clicks `Open link`, and only `http(s)` is supported. `mailto:`, `file:`, `data:`, and `javascript:` targets are displayed but not opened. The whole-document index only classifies targets; it never opens, probes, or bulk-requests external URLs. Internal links jump to the resolved page but do not restore scroll position; unresolved targets remain read-only.
+- Annotation health checks are heuristic: `Issues` derives hints from PDF.js link and form data and does not certify PDF compliance. Unnamed widgets and duplicate field-name type conflicts are warnings; the same name across pages is only info. A single link-target resolution failure affects only that record.
+- Rotated pages (`/Rotate` 90/180/270) provide annotation lists and details but no canvas boxes or hit testing. On pages where CropBox and MediaBox differ, annotation boxes use MediaBox and may be offset (consistent with object overlays).
+- Raw object view is read-only: objects cannot be edited, streams rewritten, encryption removed, or content executed. There is no raw diff, export, or CLI; use another tool to modify PDFs.
+- Raw object view returns bounded data only: nesting, items, strings, operators, and content-stream counts have limits. Over-limit data is marked `truncated` in the UI. Binary streams show only metadata such as length, filters, and Subtype, with no byte preview.
+- Raw object view is not a complete PDF parser: it does not traverse the whole object graph, parse XFA or structure trees, or provide object search/query language. Large documents must be expanded reference by reference.
+- Raw does not use a sixth left-panel tab: it opens a separate toolbar workspace, mutually exclusive with Diff and Audit. Switching to/from Inspect does not change document state, but Raw does not persist expanded state; reopening starts at the trailer root.
+- Web multi-document is session-scoped and uses one sidecar: only the active document is open in the sidecar, switching is a serialized reopen, multiple documents cannot be analyzed at once, and there is no per-document sidecar. The registry holds at most 8 documents / 512 MiB total and evicts least-recently-active inactive documents; evicted tabs must be reopened. Web still has no authentication, multiuser isolation, or per-user document boundary; multi-document does not change that trust model.
+- Closing an active Web tab requires activating a neighbor first: the server refuses to delete an active document while siblings remain, and a failed activation keeps the tab and document. Closing the last tab deletes the active document only if the server has no other registered documents; stale registered documents from a refresh make `DELETE` return 409 and the tab stays.
+- Desktop and Web tabs store view snapshots only: page, zoom, overlays, left/right panel tabs, and query are restored; font, audit, Raw results, and search indexes do not survive tab switches and must run again. Reactivating a desktop URL tab downloads again; Web URL documents are retained by the registry and deduplicated by `sourceUrl`. Tab state is not written to localStorage and is not restored after refresh or restart.
+- The background sidecar lane starts lazily but has no idle shutdown in this phase. After font/audit/Raw/Diff is used, the second Python process remains until exit or restart.
+- The search index stores per-page text only and has no byte cap; 1000 pages is acceptable. Closing search cancels an in-progress build, but a completed index is reused for the lifetime of the current SearchBox; switching documents or leaving Inspect rebuilds and releases it. Very large documents should be released by switching documents or leaving Inspect.
+- Search 2.0 is still local, current-document text search: no cross-document search, search history, OCR, or annotation/form/link search. Results are capped at 5,000 and cannot be exported. The command palette lists registered commands only and has no user-defined commands or shortcut editor.
+- The page list uses CSS `content-visibility`; the DOM still contains one row per page. If thousands of pages cause scrolling jank, a true virtual list can be evaluated.
+- When search is open, the toolbar keeps the input, count, previous/next, and close controls fully visible. At ≤1280px the file name is hidden (not a control; it remains available in dialogs and the status bar), while >1280px shows it. Search at 1280/1440/1600 has no horizontal overflow.
+- Temporary-file cleanup is best-effort; an abnormal exit may require manually clearing the system temp directory.
+- Web mode requires building `dist-web` and `dist-web-server`; without a build, the server prompts you to build and refresh.
