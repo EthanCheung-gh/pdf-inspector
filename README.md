@@ -28,8 +28,9 @@ PDF Inspector is a developer-focused PDF structure viewer. It overlays coordinat
 | ![Ignore region: dashed rectangle, region list, and re-run button](docs/images/diff-regions.png) | **Ignore regions**<br>Turn on `Ignore region`, drag a rectangle on either page, and review page/side/bbox rows on the left with a synchronized dashed outline. `Apply & re-run` filters intersecting changes. |
 | ![Page alignment: Old 2 → New 1, Old 3 → New 2, and a new page 5 marked added](docs/images/diff-reordered.png) | **Page alignment and reordering**<br>Pages are paired by content fingerprints; the list and page bar show `Old 2 → New 1` style old/new numbers. Inserted/deleted pages stay one-sided, and `--fail-on reordered` can gate page-order changes in CI. |
 | ![Diff page list: collapsible per-page groups, Go to page input, Expand all/Collapse all](docs/images/diff-page-groups.png) | **Collapsible Diff page groups**<br>Each page is an independent collapsible group whose header keeps its status and change count. `Go to page` clamps and reveals the target page; `Expand all` / `Collapse all` control the list. |
-| ![Audit workspace: severity summary, filters, findings list, selected finding details](docs/images/audit-workspace.png) | **Document audit**<br>Whole-document checks across fonts, pages, images, metadata, structure, and security. Filter by severity/category, inspect evidence and recommendations, and jump to the referenced page. |
+| ![Audit workspace: severity summary, filters, findings list, selected finding details](docs/images/audit-workspace.png) | **Document audit**<br>Whole-document checks across fonts, pages, images, metadata, structure, and security. Filter by severity/category, inspect evidence and recommendations, and jump to the referenced page. Switch to `Resources` for attachments, JavaScript, actions, signatures, encryption, and permissions. |
 | ![PDF audit HTML report: document information, severity summary, and findings](docs/images/audit-report.png) | **Audit report (HTML)**<br>CLI `audit --format html` writes a single-file report with document information, severity summary, and findings (evidence and recommendations). Inline CSS, no scripts, no external resources. |
+| ![Document security resources: Audit Resources view with attachment, JavaScript, action, signature, encryption, and XFA cards, notes.txt attachment, script previews, risky actions, signature field, and security findings](docs/images/security-resources.png) | **Document security resources**<br>The Audit header switches between `Findings` and `Resources`. `Resources` shows attachment, JavaScript, action, signature, encryption, and XFA cards, then the `notes.txt` attachment, inert script previews, risky actions, the unverified signature field, and security finding counts. Attachments are metadata only and cannot be opened or downloaded. |
 | ![Annotations, links, and forms: Annots list, canvas boxes, and read-only form details](docs/images/annotations.png) | **Annotations, links, and forms (current page)**<br>`Annots` in `Current page` mode lists links, form fields, markup, and annotations on the current page. Canvas boxes stay in sync; select one to inspect values, options, and link targets in the Inspector. |
 | ![Whole-document annotation index: all annotations, Issues, and External links](docs/images/annotations-index.png) | **Whole-document annotation index**<br>Switch to `Whole document` to read the entire PDF in 10-page batches. The header shows `7 annotations · 1 page · 2 links · 3 form fields`; `Issues` opens by default, `External links` is collapsed, and the list supports page targeting, search, and global filters. |
 | ![Annotation export dialog: Export annotations, JSON selection, editable file name](docs/images/annotations-export.png) | **Annotation export**<br>After indexing, `Export` opens a dialog for JSON or CSV with an editable file name. JSON includes document information, summary, per-page annotations, link/form issues, and merged fields, and never writes local absolute paths. |
@@ -42,7 +43,7 @@ PDF Inspector is a developer-focused PDF structure viewer. It overlays coordinat
 | ![Desktop document tabs: two URL-opened tabs, switched back to basic.pdf with toolbar 1 / 4](docs/images/large-doc-tabs.png) | **Desktop document tabs**<br>The desktop app keeps multiple document tabs and restores page, zoom, overlays, and panel tabs when switching. Web tabs activate a server-side `documentId` instead. |
 | ![Web document tabs: basic.pdf and large.pdf tabs, active large.pdf showing 1 / 120](docs/images/web-tabs.png) | **Web document tabs**<br>Web and desktop both show the document tab bar. Switching activates by `documentId` and restores the view snapshot; inactive documents remain readable at `/doc/:id`, and closing a tab removes only that document's temporary copy. |
 
-*Screenshots come from the Web build and a real Electron desktop build. Page list / Search 2.0 / command palette, annotation index/export, themes, export dialogs, Chinese UI, and Diff/Audit/Raw are 1440×900. Desktop tabs were captured from Electron + `xvfb` through CDP at a 1440×900 viewport. See [docs/export.md](docs/export.md), [docs/themes-i18n.md](docs/themes-i18n.md), [docs/search.md](docs/search.md), [docs/large-docs.md](docs/large-docs.md), and [docs/annotations.md](docs/annotations.md).*
+*Screenshots come from the Web build and a real Electron desktop build. Page list / Search 2.0 / command palette, annotation index/export, themes, export dialogs, Chinese UI, Diff/Audit/Raw, and Audit Resources are 1440×900. Desktop tabs were captured from Electron + `xvfb` through CDP at a 1440×900 viewport. See [docs/export.md](docs/export.md), [docs/themes-i18n.md](docs/themes-i18n.md), [docs/search.md](docs/search.md), [docs/large-docs.md](docs/large-docs.md), and [docs/annotations.md](docs/annotations.md).*
 
 ## Features
 
@@ -227,6 +228,14 @@ The current Diff combines the 2.0 page-alignment and visual-review workflow with
 - **Reports and integration:** CLI supports `summary` / `json` / `html`. HTML is a single file with inline CSS and no scripts. `audit/action.yml` runs the audit in CI and uses `fail-on` to decide the step result. See [docs/audit.md](docs/audit.md).
 - **Heuristic checks:** audit uses extracted objects, font information, page boxes, and catalog metadata. It does not certify PDF/A, verify signatures, or perform OCR. Findings on rotated or CropBox-offset pages are page-level only.
 
+### Document security and attachments
+
+- **Audit `Resources` view:** the Audit workspace switches between `Findings` and `Resources` with a segmented control. `Audit → Resources` shows summary cards for attachments, JavaScript, actions, signatures, encryption, and XFA, followed by an attachment table (name, description, size, MIME, modification date, SHA-256, risk), inert JavaScript previews, action and signature tables, and encryption/permissions with `Allowed` / `Denied` / `Unknown` badges. `Refresh` re-reads the document, `Export security JSON` writes the full `SecurityReport` (suggested `<name>.security.json`), and `View in Findings` jumps back with the category filter set to `security`. The report is cached per file; switching files or Audit `Re-run` drops it.
+- **Read-only inventory:** embedded attachments (metadata only), JavaScript sources as bounded previews, Launch/URI/SubmitForm/ImportData actions, XFA forms, signature fields, and encryption/permissions — without executing scripts, following actions, opening or downloading attachments, decrypting streams, or verifying signatures. Attachments cannot be opened or downloaded, and no attachment bytes are exported.
+- **Findings and severities:** the same inventory feeds `security` category findings into the audit engine. JavaScript (especially OpenAction/`/AA`), Launch/SubmitForm/ImportData, XFA, encryption, and risky attachment names are warnings; embedded files and signature fields are info. Signature fields are always reported as present (`verified: false`) and are never cryptographically verified.
+- **Engine and CLI:** the same engine backs `pdf-inspector security` with summary, deterministic JSON, and single-file HTML output. See [docs/security.md](docs/security.md) and the [Security CLI](#security-cli) section below.
+- **Bounded and heuristic:** name trees, actions, script previews, and attachment hashing are capped; malformed objects degrade to `null` or are skipped instead of failing the report.
+
 ### Opening documents
 
 - Open a local PDF, or open a remote document through an `http(s)` URL (downloaded to a temporary directory before parsing).
@@ -326,7 +335,7 @@ Diff samples are generated in old/new pairs and can be selected in the compariso
 7. **Control overlays:** use `Layers` to toggle the seven object types, see current-page counts, use Solo, and adjust opacity. Press `F` for Focus mode.
 8. **Search and export:** `Ctrl/Cmd+F` opens search; use `Aa` / `W` / `.*` for case, whole-word, and regex; browse `p.N` rows with context and click to jump. `Ctrl/Cmd+K` opens the command palette for open, jump, theme, language, panel, Diff/Audit/Raw, export, and clear commands. `Export` writes current-page or whole-document JSON/CSV; the toolbar's `View…` (`Export view…` in the command palette) writes the current page or selected region as PNG/SVG; `Report…` (`Share report…` in the palette) writes a self-contained HTML inspection report.
 9. **Compare revisions:** click `Diff`, choose Old/New PDFs, adjust position tolerance and ignores, then Compare. Select changes in the left list or switch Side by side / Overlay / Visual (Visual supports Blend/Heatmap/Boxes and pixel stats). `Ignore region` lets you mask a region, then `Apply & re-run`; `Export JSON` saves the result.
-10. **Audit a document:** click `Audit` to run whole-document checks, review the severity summary, filter by severity/category, inspect evidence and recommendations, use `Open page` when available, or `Export JSON` for the full report.
+10. **Audit a document:** click `Audit` to run whole-document checks, review the severity summary, filter by severity/category, inspect evidence and recommendations, use `Open page` when available, or `Export JSON` for the full report. Switch to `Resources` for attachments, JavaScript, actions, signatures, encryption, and permissions; use `Refresh` to re-read, `Export security JSON` for the full `SecurityReport`, or `View in Findings` to jump back with the `security` category filter.
 11. **Inspect annotations, links, and forms:** open `Annots` (default `Current page`), switch to `Whole document` to build the index (`Indexing annotations N/M…`), use search and global Kind/Subtype filters, and click rows to jump and select when possible. `Issues` summarizes broken links and form issues; `External links` lists openable `http(s)` targets. `Export` writes the index as JSON/CSV. External links require `Open link`; internal links use `Go to page N`; form fields are read-only.
 12. **Inspect raw objects and content streams:** click `Raw` to open the read-only workspace. Expand `Catalog` → `Pages` → a page → `Resources` in the tree, and click references to inspect values on the right. Switch to `Content stream` for decoded operators and operands. `Back to Inspect` returns with page and zoom unchanged.
 13. **Handle large and multiple documents:** open `/samples/huge.pdf`, use Go to page (out-of-range values clamp), and keep only the current page expanded. `Ctrl/Cmd+F` shows `Indexing N/1000…`; closing search cancels the build. Both desktop and Web can open more files or URL documents and switch through the top tab bar. Web tabs activate by server `documentId` and restore their view snapshot; closing a tab removes only that document's temporary copy.
@@ -398,6 +407,30 @@ Common options:
 Exit codes: `0` means no finding reached `--fail-on`; `1` means it matched; `2` means an argument, input, read, or audit error. `--fail-on none` never returns 1, but input errors still return 2. Page extraction failure is the only current `error` source, so `--fail-on error` only blocks truly unreadable pages.
 
 `--format json` emits `AuditReport` (`schemaVersion: 1`) with `tool` / `document` / `summary` / `findings`; each finding has category, severity, page (`null` for document-level), title, description, evidence, and recommendation. Output has no timestamps or absolute paths and is stable, so the same PDF produces byte-identical JSON. HTML reports are single-file with inline CSS, no scripts, no external resources, and all PDF text escaped. See [docs/audit.md](docs/audit.md) for the full schema, checks, and thresholds.
+
+### Security CLI
+
+`security` inspects one local PDF and reuses the same engine that produces the audit `security` findings. It never executes JavaScript, follows actions, opens attachments, or verifies signatures.
+
+```bash
+# Direct Python CLI; requires Python 3.10+ and sidecar/requirements.txt
+python sidecar/cli.py security report.pdf
+python sidecar/cli.py security report.pdf --format json --output report.security.json
+python sidecar/cli.py security report.pdf --format html --output report.security.html
+
+# Return 1 when warnings/errors are found, for a distribution gate
+python sidecar/cli.py security report.pdf --fail-on warning
+
+# Through the bin/pdf-inspector.mjs wrapper (install/link it to call pdf-inspector)
+pdf-inspector security report.pdf
+node bin/pdf-inspector.mjs security report.pdf --format json --output report.security.json
+```
+
+Options are the same as `audit`: `--format summary|json|html` (default `summary`), `--output PATH`, `--fail-on error|warning|none` (default `none`; `warning` includes errors), and `--quiet`. Exit codes are `0` (no threshold matched), `1` (`--fail-on` matched), and `2` (argument, input, read, or report error). `http(s)` URLs, directories, and non-PDF inputs are rejected before the engine runs; `--output` cannot overwrite the input PDF.
+
+`--format json` emits `SecurityReport` (`schemaVersion: 1`) with `tool` / `document` / `attachments` / `javascript` / `actions` / `signatures` / `encryption` / `findings` / `summary`. The JSON has no timestamps or absolute paths and is byte-identical for the same PDF. HTML is a single file with inline CSS, no scripts, no external resources, and all PDF text escaped. The summary shows document facts, resource counts, severity counts, and at most 20 findings ordered severity-first.
+
+A deterministic sample is committed at `web-samples/security-sample.pdf` and can be regenerated with `python scripts/generate-security-sample.py`. See [docs/security.md](docs/security.md) for every check, the resource limits, permission bits, and the full schema.
 
 ### Diff GitHub Action
 
@@ -516,22 +549,26 @@ pdf-inspector/
 ├── server/
 │   └── web-server.ts      # Electron-free Node HTTP backend
 ├── sidecar/               # Python sidecar (extractor / cache / models / main)
-│   ├── cli.py             # `pdf-inspector diff` / `audit` CLI
+│   ├── cli.py             # `pdf-inspector diff` / `audit` / `security` CLI
 │   ├── diff.py            # Object-level diff engine
 │   ├── report.py          # Diff summary and self-contained HTML report
 │   ├── raw.py             # Bounded, read-only raw object and content-stream serializer
 │   ├── audit.py           # Audit engine (checks, ordering, AuditReport)
 │   ├── audit_report.py    # Audit summary and single-file HTML report
+│   ├── security.py        # Read-only document security resource collector
+│   ├── security_report.py # Security summary and single-file HTML report
 │   ├── __tests__/         # pytest tests
 │   └── requirements.txt
 ├── bin/
 │   └── pdf-inspector.mjs  # CLI wrapper (resolves Python and forwards exit codes)
 ├── scripts/
 │   ├── generate-web-samples.py  # Generates web-samples/*.pdf
+│   ├── generate-security-sample.py  # Generates the committed security sample
 │   ├── generate-icon.js
 │   └── freeze-sidecar.sh
 ├── docs/
 │   ├── audit.md           # Audit: checks, AuditReport schema, CLI, and action
+│   ├── security.md        # Security: resources, limits, SecurityReport schema, CLI
 │   ├── annotations.md     # Annotations: whole-document index, health checks, JSON/CSV, read-only limits
 │   ├── raw.md             # Raw objects and content streams: serialization, limits, security
 │   ├── large-docs.md      # Large documents: dual lanes, batched search, page list, desktop/Web tabs
@@ -543,7 +580,7 @@ pdf-inspector/
 │   ├── packaging.md       # Packaging notes
 │   ├── images/            # README screenshots
 │   └── superpowers/       # Design and implementation notes (specs / plans)
-├── web-samples/           # Generated demo PDFs (gitignored)
+├── web-samples/           # Generated demo PDFs (gitignored; security-sample.pdf is committed)
 ├── .github/workflows/ci.yml
 ├── action.yml             # PDF diff composite action
 ├── audit/action.yml       # PDF audit composite action
@@ -570,7 +607,7 @@ npx vitest run
 
 `npx tsc -b` uses project references and checks main, preload, renderer, and shared together. Run all of the commands above before submitting.
 
-CI is defined in `.github/workflows/ci.yml`. It runs on pushes to `main`, `v*` tags, pull requests, and manual dispatch; it runs the type checks and tests above, builds the desktop app, Web frontend, and Web backend, generates demo PDFs, and includes end-to-end jobs for the diff CLI/action and audit CLI/action.
+CI is defined in `.github/workflows/ci.yml`. It runs on pushes to `main`, `v*` tags, pull requests, and manual dispatch; it runs the type checks and tests above, builds the desktop app, Web frontend, and Web backend, generates demo PDFs, and includes end-to-end jobs for the diff CLI/action, audit CLI/action, and security CLI.
 
 ## Packaging
 
@@ -615,6 +652,7 @@ Packaged builds include the frozen sidecar, so end users do not need Python. PyI
 - Audit does not perform OCR or recognize text on scanned pages; scanned pages only get the “image but no extractable text” hint.
 - Audit findings on rotated pages or CropBox-offset pages are page-level only and cannot highlight objects; findings with page numbers can still jump to the page.
 - Audit runs sequentially in 10-page batches (like font analysis) and can take a long time on very large documents; page extraction failure is the only current `error` source. CLI and action also require Python 3.10+ and sidecar dependencies, accept local paths only, and are not included in the packaged desktop app.
+- Security inspection is read-only and heuristic: it never executes JavaScript, follows actions, opens or extracts attachments, decrypts streams, or verifies signatures. Attachment size, MIME type, and dates are PDF metadata and may be missing or wrong; signatures are reported as present only (`verified: false`). The inventory is capped, and malformed objects degrade to `null` or are skipped.
 - The whole-document annotation index reads in 10-page batches and can take a long time on very large documents. A single-page read failure aborts the whole index and shows that page's error; `Retry` starts over with no resume or partial results. Paging and current-page inspection remain available during indexing.
 - Document mode does not promise annotation boxes on inactive pages: `Show boxes` applies only to `Current page`. Clicking a list row jumps pages and then selects when possible; a missing or mismatched id only jumps.
 - Annotations, links, and forms are read-only: annotations cannot be created, edited, or deleted; forms cannot be filled, reset, or submitted; XFA data is not imported; signature fields are shown as fields and are not signature-verified.

@@ -26,8 +26,9 @@
 | ![忽略区域：在并排页面上拖动矩形后显示虚线框、区域列表与重新运行按钮](docs/images/diff-regions.png) | **忽略区域**<br>打开 `Ignore region` 后在任一页拖动矩形，左侧列出页码/侧/bbox，虚线框同步绘制；`Apply & re-run` 重新比较并过滤相交的变更。 |
 | ![页面重排：页面列表显示 Old 2 → New 1、Old 3 → New 2 等对齐结果与新页 5 为 added](docs/images/diff-reordered.png) | **页面对齐与重排**<br>页面按内容指纹配对，列表与页面栏显示 `Old 2 → New 1` 等旧/新页码；插入/删除页保持单侧，`--fail-on reordered` 可把这些配对作为 CI 门禁。 |
 | ![Diff 页列表：按页折叠的变更组、Go to page 输入与 Expand all/Collapse all](docs/images/diff-page-groups.png) | **按页分组的 Diff 结果**<br>左侧每个页面是独立可折叠组，标题保留状态与变更数；`Go to page` 输入支持夹取跳转并自动展开目标页，`Expand all` / `Collapse all` 批量控制。 |
-| ![文档体检工作区：严重级别汇总、筛选器、发现列表与右侧选中发现详情](docs/images/audit-workspace.png) | **文档体检**<br>跨字体、页面、图片、元数据、结构与安全的整档审计；按严重级别汇总，可按严重级别/类别筛选，选中条目查看证据与修复建议，并可跳转到对应页面。 |
+| ![文档体检工作区：严重级别汇总、筛选器、发现列表与右侧选中发现详情](docs/images/audit-workspace.png) | **文档体检**<br>跨字体、页面、图片、元数据、结构与安全的整档审计；按严重级别汇总，可按严重级别/类别筛选，选中条目查看证据与修复建议，并可跳转到对应页面。切换到 `Resources` 可查看附件、JavaScript、动作、签名、加密与权限。 |
 | ![PDF 审计 HTML 报告：文档信息、严重级别汇总与逐条发现](docs/images/audit-report.png) | **审计报告（HTML）**<br>CLI `audit --format html` 生成单文件报告：文档信息、严重级别汇总与逐条发现（证据、建议）；内联 CSS、无脚本、无外部资源。 |
+| ![文档安全资源：Audit 的 Resources 视图，包含附件、JavaScript、动作、签名、加密与 XFA 汇总卡、notes.txt 附件、脚本预览、风险动作、签名字段与安全发现](docs/images/security-resources.png) | **文档安全资源**<br>Audit 顶部可在 `发现` 与 `资源` 之间切换。`资源` 显示附件、JavaScript、动作、签名、加密与 XFA 汇总卡，并列出 `notes.txt` 附件、只读脚本预览、风险动作、未验证签名字段与安全发现计数；附件仅展示元数据，不能打开或下载。 |
 | ![注释、链接与表单：Annots 列表、画布框选与 Inspector 只读表单详情](docs/images/annotations.png) | **注释、链接与表单（当前页）**<br>`Annots` 的 `Current page` 模式列出当前页的链接、表单字段、标记与注释；画布同步绘制只读框，选中后在 Inspector 查看字段值、选项与链接目标。 |
 | ![整档注释索引：Whole document 模式下列出全部注释、Issues 与 External links 清单](docs/images/annotations-index.png) | **整档注释索引**<br>切到 `Whole document` 后按 10 页一批读取整份文档：顶部汇总 `7 annotations · 1 page · 2 links · 3 form fields`；`Issues` 默认展开、`External links` 折叠，列表按页定位并支持搜索与全局过滤。 |
 | ![导出注释对话框：Export annotations、JSON 选中与可编辑文件名](docs/images/annotations-export.png) | **注释导出**<br>索引完成后 `Export` 打开对话框，可选 JSON/CSV 并修改文件名；JSON 包含文档信息、summary、按页注释、链接/表单问题与合并字段，且不写入本地绝对路径。 |
@@ -40,7 +41,7 @@
 | ![桌面文档标签栏：两个通过 URL 打开的文档标签，切换到 basic.pdf 后工具栏显示 1 / 4](docs/images/large-doc-tabs.png) | **桌面文档标签**<br>桌面端可同时保留多个文档标签，切换时恢复页码、缩放、叠加层与面板标签；Web 端通过服务端 `documentId` 激活标签。 |
 | ![Web 文档标签栏：basic.pdf 与 large.pdf 两个标签，当前 large.pdf 显示 1 / 120](docs/images/web-tabs.png) | **Web 文档标签**<br>Web 与桌面端都显示文档标签栏；切换按 `documentId` 激活并恢复视图快照，未激活文档的 `/doc/:id` 仍可读取，关闭标签只删除该文档的临时副本。 |
 
-*截图来自 Web 构建与真实 Electron 桌面构建；页面列表/搜索 2.0/命令面板、注释整档索引/导出、主题、导出对话框、中文界面与 Diff/Audit/Raw 为 1440×900，桌面标签为 Electron + xvfb 实测（CDP 1440×900 视口）。详见 [docs/export.md](docs/export.md)、[docs/themes-i18n.md](docs/themes-i18n.md)、[docs/search.md](docs/search.md)、[docs/large-docs.md](docs/large-docs.md) 与 [docs/annotations.md](docs/annotations.md)。*
+*截图来自 Web 构建与真实 Electron 桌面构建；页面列表/搜索 2.0/命令面板、注释整档索引/导出、主题、导出对话框、中文界面、Diff/Audit/Raw 与 Audit Resources 为 1440×900，桌面标签为 Electron + xvfb 实测（CDP 1440×900 视口）。详见 [docs/export.md](docs/export.md)、[docs/themes-i18n.md](docs/themes-i18n.md)、[docs/search.md](docs/search.md)、[docs/large-docs.md](docs/large-docs.md) 与 [docs/annotations.md](docs/annotations.md)。*
 
 ## 功能特性
 
@@ -219,6 +220,14 @@
 - **报告与集成**：CLI 支持 `summary` / `json` / `html` 三种格式，HTML 为单文件、内联 CSS、无脚本；`audit/action.yml` 可在 CI 中运行审计并按 `fail-on` 决定步骤成败。详见 [docs/audit.md](docs/audit.md)。
 - **启发式检查**：审计基于提取出的对象、字体信息、页面框与 catalog 元数据，不做 PDF/A 认证或签名验证，也不做 OCR；旋转页或 CropBox 偏移页上的发现只到页面级。
 
+### 文档安全与附件
+
+- **Audit 的 `Resources` 视图**：Audit 工作区用分段控件在 `Findings` 与 `Resources` 之间切换。`Audit → Resources` 顶部显示附件、JavaScript、动作、签名、加密与 XFA 汇总卡，下方依次是附件表（名称、描述、大小、MIME、修改时间、SHA-256、风险）、只读 JavaScript 预览、动作与签名表，以及带 `Allowed` / `Denied` / `Unknown` 徽标的加密与权限。`Refresh` 重新读取文档，`Export security JSON` 保存完整 `SecurityReport`（建议文件名 `<pdf 文件名>.security.json`），`View in Findings` 切回 `Findings` 并把类别筛选设为 `security`。报告按文件缓存；切换文件或 Audit `Re-run` 会清空缓存。
+- **只读资源清单**：内嵌附件（仅元数据）、JavaScript 有界预览、Launch/URI/SubmitForm/ImportData 动作、XFA、签名字段与加密/权限；不执行脚本、不跟随动作、不打开或下载附件、不解密流、不验证签名。附件不能打开或下载，也不会导出附件字节。
+- **发现与严重级别**：同一份清单也以 `security` 类别并入文档体检。JavaScript（尤其是 OpenAction/`/AA`）、Launch/SubmitForm/ImportData、XFA、加密与风险附件名属于 warning；内嵌文件与签名字段属于 info。签名字段只报告“存在”（`verified: false`），且从不做密码学验证。
+- **引擎与 CLI**：同一引擎支撑 `pdf-inspector security` 的摘要、确定性 JSON 与单文件 HTML。详见 [docs/security.md](docs/security.md) 和下方[安全 CLI](#安全-cli)。
+- **有界且启发式**：名称树、动作、脚本预览与附件哈希都有上限；畸形对象降级为 `null` 或直接跳过，不会让整份报告失败。
+
 ### 打开方式
 
 - 打开本地 PDF，或通过 `http(s)` URL 打开远程文档（先下载到临时目录再解析）。
@@ -318,7 +327,7 @@ Diff 的示例文件成对生成，可在对比对话框中分别选择 Old/New�
 7. **控制叠加层**：在左侧 `Layers` 标签页开关七类对象、查看当前页计数、使用 Solo 或调整透明度；`F` 可进入专注模式，隐藏左右面板。
 8. **搜索与导出**：`Ctrl/Cmd+F` 打开搜索，输入查询后可用 `Aa` / `W` / `.*` 切换大小写、整词与正则，在结果面板中按页查看 `p.N` 与上下文并点击跳转；`Ctrl/Cmd+K` 打开命令面板执行打开、跳页、主题、语言、面板、Diff/Audit/Raw 等命令。`Export` 导出当前页/整档 JSON/CSV；工具栏的 `视图…`（命令面板中的 `Export view…`）把当前页或选中区域导出为 PNG/SVG；`报告…`（命令面板中的 `Share report…`）生成自包含 HTML 检查报告。
 9. **比较版本**：点击工具栏 `Diff` 选择 Old/New 两份 PDF，按需设置位置容差与忽略项后 Compare；在左侧变更列表选择条目查看详情，或在 Side by side / Overlay / Visual 间切换（Visual 可切 Blend/Heatmap/Boxes 并查看像素统计），`Ignore region` 可拖框屏蔽区域后再 `Apply & re-run`；`Export JSON` 保存结果。
-10. **文档体检**：点击工具栏 `Audit` 对当前文档执行整档审计，查看严重级别汇总，按严重级别/类别筛选，选中发现查看证据与建议；需要时点击 `Open page` 跳转到对应页面，或用 `Export JSON` 保存完整报告。
+10. **文档体检**：点击工具栏 `Audit` 对当前文档执行整档审计，查看严重级别汇总，按严重级别/类别筛选，选中发现查看证据与建议；需要时点击 `Open page` 跳转到对应页面，或用 `Export JSON` 保存完整报告。切换到 `Resources` 可查看附件、JavaScript、动作、签名、加密与权限；`Refresh` 重新读取，`Export security JSON` 保存完整 `SecurityReport`，`View in Findings` 切回并自动套用 `security` 类别筛选。
 11. **检查注释、链接与表单**：切换到左侧 `Annots`，默认 `Current page` 查看当前页；切到 `Whole document` 建立整档索引（显示 `Indexing annotations N/M…`），用搜索与全局 Kind/Subtype 过滤定位条目，点击行跳页并尽力选中。`Issues` 区汇总断链与表单问题，`External links` 列出可打开的 `http(s)` 目标；`Export` 可把整档索引导出为 JSON/CSV。外部链接需点击 `Open link` 才会打开，内部链接使用 `Go to page N` 跳转；表单字段不能编辑或提交。
 12. **查看原始对象与内容流**：点击工具栏 `Raw` 打开只读工作区，在左侧对象树展开 `Catalog` → `Pages` → 页面 → `Resources`，点击引用在右侧查看对象值；切换到 `Content stream` 按页查看解码后的操作符与操作数。`Back to Inspect` 返回原文档，页码与缩放保持不变。
 13. **处理大文档与多文档**：打开 `/samples/huge.pdf` 后，用左侧 Go to page 输入页码（越界会夹取），页面列表只展开当前页；`Ctrl/Cmd+F` 搜索时 SearchBox 显示 `Indexing N/1000…`，可关闭搜索取消。桌面端与 Web 端都可再打开其他文件或用 Open URL 打开远程文档，通过顶部标签切换；Web 标签按服务端 `documentId` 激活并恢复视图快照，关闭标签只删除该文档的临时副本。
@@ -390,6 +399,30 @@ node bin/pdf-inspector.mjs audit report.pdf --format json --output report.audit.
 退出码：`0` 表示没有严重级别命中 `--fail-on`；`1` 表示 `--fail-on` 命中；`2` 表示参数、输入、读取或审计错误。`--fail-on none` 永不返回 1，但输入错误仍返回 2。页面提取失败是当前唯一的 `error` 来源，因此 `--fail-on error` 只会拦截真正不可读的页面。
 
 `--format json` 输出 `AuditReport`（`schemaVersion: 1`），包含 `tool` / `document` / `summary` / `findings`；每条发现带类别、严重级别、页码（文档级为 `null`）、标题、说明、证据与建议。输出不含时间戳与绝对路径，顺序稳定，相同 PDF 产生逐字节一致的 JSON。HTML 报告为单文件、内联 CSS、无脚本、无外部资源，所有 PDF 文本均转义。完整 schema、检查项与阈值见 [docs/audit.md](docs/audit.md)。
+
+### 安全 CLI
+
+`security` 对一份本地 PDF 做文档级安全资源检查，复用产生审计 `security` 发现的同一引擎。它不执行 JavaScript、不跟随动作、不打开附件，也不验证签名。
+
+```bash
+# 直接使用 Python CLI；需要 Python 3.10+ 与 sidecar/requirements.txt
+python sidecar/cli.py security report.pdf
+python sidecar/cli.py security report.pdf --format json --output report.security.json
+python sidecar/cli.py security report.pdf --format html --output report.security.html
+
+# 发现 warning/error 时返回 1，适合作为分发前门禁
+python sidecar/cli.py security report.pdf --fail-on warning
+
+# 通过 bin/pdf-inspector.mjs 包装器（安装/链接后可直接调用 pdf-inspector）
+pdf-inspector security report.pdf
+node bin/pdf-inspector.mjs security report.pdf --format json --output report.security.json
+```
+
+选项与 `audit` 相同：`--format summary|json|html`（默认 `summary`）、`--output PATH`、`--fail-on error|warning|none`（默认 `none`，`warning` 同时覆盖 errors）、`--quiet`。退出码：`0` 表示没有严重级别命中阈值，`1` 表示命中，`2` 表示参数、输入、读取或报告错误。`http(s)` URL、目录与非 PDF 输入会在引擎运行前以退出码 2 拒绝；`--output` 不允许覆盖输入 PDF。
+
+`--format json` 输出 `SecurityReport`（`schemaVersion: 1`），包含 `tool` / `document` / `attachments` / `javascript` / `actions` / `signatures` / `encryption` / `findings` / `summary`。JSON 不含时间戳与绝对路径，相同 PDF 产生逐字节一致的输出。HTML 为单文件、内联 CSS、无脚本、无外部资源，所有 PDF 文本均转义。摘要包含文档事实、资源计数、严重级别计数，以及最多 20 条按严重级别优先排序的发现。
+
+仓库提交了一份确定性样例 `web-samples/security-sample.pdf`，可用 `python scripts/generate-security-sample.py` 重新生成。检查项、资源上限、权限位与完整 schema 见 [docs/security.md](docs/security.md)。
 
 ### Diff GitHub Action
 
@@ -508,22 +541,26 @@ pdf-inspector/
 ├── server/
 │   └── web-server.ts      # 无 Electron 依赖的 Node HTTP 后端
 ├── sidecar/               # Python 侧车（extractor / cache / models / main）
-│   ├── cli.py             # `pdf-inspector diff` / `audit` CLI
+│   ├── cli.py             # `pdf-inspector diff` / `audit` / `security` CLI
 │   ├── diff.py            # 对象级 diff 引擎
 │   ├── report.py          # Diff 摘要与自包含 HTML 报告
 │   ├── raw.py             # 原始对象图与内容流序列化（有界、只读）
 │   ├── audit.py           # 文档审计引擎（检查项、排序、AuditReport）
 │   ├── audit_report.py    # 审计摘要与单文件 HTML 报告
+│   ├── security.py        # 只读的文档安全资源采集
+│   ├── security_report.py # 安全摘要与单文件 HTML 报告
 │   ├── __tests__/         # pytest 测试
 │   └── requirements.txt
 ├── bin/
 │   └── pdf-inspector.mjs  # CLI 包装器（解析 Python 并转发退出码）
 ├── scripts/
 │   ├── generate-web-samples.py  # 生成 web-samples/*.pdf
+│   ├── generate-security-sample.py  # 生成已提交的安全样例
 │   ├── generate-icon.js
 │   └── freeze-sidecar.sh
 ├── docs/
 │   ├── audit.md           # 文档体检：检查项、AuditReport schema、CLI 与 action
+│   ├── security.md        # 文档安全：资源、上限、SecurityReport schema、CLI
 │   ├── annotations.md     # 注释、链接与表单：整档索引、健康检查、JSON/CSV 导出与只读限制
 │   ├── raw.md             # 原始对象树与内容流：序列化语义、上限与安全边界
 │   ├── large-docs.md      # 大文档：双通道、搜索分批、页面列表、桌面/Web 文档标签与边界
@@ -535,7 +572,7 @@ pdf-inspector/
 │   ├── packaging.md       # 打包说明
 │   ├── images/            # README 截图
 │   └── superpowers/       # 设计与实施文档（specs / plans）
-├── web-samples/           # 生成的演示 PDF（已 gitignore）
+├── web-samples/           # 生成的演示 PDF（已 gitignore；security-sample.pdf 已提交）
 ├── .github/workflows/ci.yml
 ├── action.yml             # PDF diff composite action
 ├── audit/action.yml       # PDF audit composite action
@@ -560,7 +597,7 @@ npx vitest run
 
 `npx tsc -b` 使用项目引用，会同时检查 main、preload、renderer 与 shared。提交前建议执行上面的全部命令。
 
-CI 由 `.github/workflows/ci.yml` 定义：在推送到 `main`、推送 `v*` 标签、Pull Request 及手动触发时，执行上述类型检查与测试，并构建桌面端、Web 前端、Web 后端及生成演示 PDF；此外还有 diff CLI、diff action、audit CLI 与 audit action 的端到端任务。
+CI 由 `.github/workflows/ci.yml` 定义：在推送到 `main`、推送 `v*` 标签、Pull Request 及手动触发时，执行上述类型检查与测试，并构建桌面端、Web 前端、Web 后端及生成演示 PDF；此外还有 diff CLI、diff action、audit CLI、audit action 与 security CLI 的端到端任务。
 
 ## 打包发布
 
@@ -601,6 +638,7 @@ npm run dist:linux       # Linux
 - 文档体检不做 OCR，也不识别扫描页中的文字；扫描页只能得到“有图片但无可提取文本”的提示。
 - 旋转页或 CropBox 偏移页上的审计发现只到页面级，无法给出对象级高亮；带页码的发现仍可跳转到对应页面。
 - 文档体检按 10 页一批串行执行（与字体分析相同），超大文档需要较长时间；页面提取失败是当前唯一的 `error` 来源。CLI 与 action 同样需要 Python 3.10+ 与 sidecar 依赖，且只接受本地路径，打包后的桌面应用不包含 CLI。
+- 文档安全与附件检查是只读且启发式的：不执行 JavaScript、不跟随动作、不打开或解压附件、不解密流，也不验证签名。附件大小、MIME 与日期来自 PDF 元数据，可能缺失或不可信；签名只报告“存在”（`verified: false`）。资源枚举有上限，畸形对象会降级为 `null` 或被跳过。
 - 注释、链接与表单的整档索引按 10 页一批顺序读取，超大文档需要较长时间；单页读取失败会中止整次索引并显示该页错误，`Retry` 从头重建，没有断点续建或部分结果。索引期间翻页与当前页检查仍可用。
 - 文档模式不承诺为未激活页绘制注释框：`Show boxes` 只在 `Current page` 生效，点击列表行跳页后由当前页正常加载并尽力选中（无 id 或 id 不一致时只跳页）。
 - 注释、链接与表单只读：不能新建、编辑或删除注释，不能填写、重置或提交表单，也不导入 XFA 数据；签名字段只显示为字段，不做数字签名验证。
