@@ -1,3 +1,5 @@
+<p align="center"><img src="build/icon.png" alt="PDF Inspector 应用图标：深色圆角底上的 PDF 页面、蓝/橙/绿对象框与青色检查镜，上方为金色弧线" width="96" height="96"></p>
+
 # PDF Inspector
 
 [English](README.md) | 简体中文
@@ -5,7 +7,8 @@
 面向开发者的 PDF 结构检查工具——在 PDF.js 渲染结果之上叠加 pdfplumber 的坐标级对象数据，直观检查字符、单词、线条、曲线、矩形、表格和图片，并以只读方式检查注释、链接、表单字段、原始对象树与内容流。可把当前页或选中区域导出为 PNG/SVG、生成自包含 HTML 检查报告，并在 Dark / Islands / Light / System 四种主题与 English / 简体中文之间切换。提供 Electron 桌面应用与浏览器（Node HTTP 后端）两种运行方式。
 
 [![CI](https://github.com/EthanCheung-gh/pdf-inspector/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/EthanCheung-gh/pdf-inspector/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-v0.3.0-blue.svg)](https://github.com/EthanCheung-gh/pdf-inspector)
+[![Version](https://img.shields.io/badge/version-v0.3.1-blue.svg)](https://github.com/EthanCheung-gh/pdf-inspector)
+[![Tag](https://img.shields.io/badge/tag-v0.3.1-blue.svg)](https://github.com/EthanCheung-gh/pdf-inspector/releases/tag/v0.3.1)
 [GitHub](https://github.com/EthanCheung-gh/pdf-inspector) · [GitCode](https://gitcode.com/EthanCheung/pdf-inspector)
 
 |  |  |

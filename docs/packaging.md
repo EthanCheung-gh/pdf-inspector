@@ -58,12 +58,12 @@ tag-driven:
 ```sh
 # 1. Bump "version" in package.json and package-lock.json, then commit.
 # 2. Tag the commit and push the tag:
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.3.1
+git push origin v0.3.1
 ```
 
 Pushing a `v*` tag starts the workflow. The tag name becomes the release tag, so
-keep it in sync with `version` in `package.json` (currently `0.3.0`).
+keep it in sync with `version` in `package.json` (currently `0.3.1`).
 
 The build job matrix is `ubuntu-latest`, `windows-latest`, and
 `macos-latest` with `fail-fast: false` and a 45-minute timeout. Each runner

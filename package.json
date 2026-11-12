@@ -1,6 +1,6 @@
 {
   "name": "pdf-inspector",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Developer-focused PDF structure viewer for inspecting objects, fonts, accessibility, security, and diffs.",
   "homepage": "https://github.com/EthanCheung-gh/pdf-inspector",
