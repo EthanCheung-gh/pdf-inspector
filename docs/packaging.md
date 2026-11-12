@@ -49,6 +49,31 @@ into `release/`. Publication is handled exclusively by the release workflow's
 | Linux    | `.AppImage`, `.deb` |
 | macOS    | `.dmg` |
 
+## Linux packages run Electron with `--no-sandbox`
+
+Linux builds set `linux.executableArgs: ["--no-sandbox"]` in
+[`electron-builder.yml`](../electron-builder.yml), so the generated launchers
+start Electron without the Chromium sandbox.
+
+Reason: the install prefix is derived from the product name, which contains a
+space (`/opt/PDF Inspector`). Chromium's zygote helper cannot `execvp` a path
+containing spaces, so a sandboxed launch dies with
+`LaunchProcess: failed to execvp: /opt/PDF` followed by
+`FATAL:zygote_host_impl_linux.cc(201) Check failed: Invalid argument (22)`.
+Passing `--no-sandbox` avoids the zygote re-exec entirely.
+
+The deb desktop entry therefore contains:
+
+```
+Exec="/opt/PDF Inspector/pdf-inspector" --no-sandbox %U
+```
+
+This is a packaging-level flag only — no application code is involved. The
+AppImage target already passed `--no-sandbox` by default (electron-builder's
+fallback when `executableArgs` is unset); declaring it explicitly keeps both
+Linux targets identical and makes the deb desktop entry work when launched from
+the desktop environment or directly.
+
 ## Release workflow (GitHub Actions)
 
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) builds the
@@ -58,12 +83,12 @@ tag-driven:
 ```sh
 # 1. Bump "version" in package.json and package-lock.json, then commit.
 # 2. Tag the commit and push the tag:
-git tag v0.3.1
-git push origin v0.3.1
+git tag v0.3.2
+git push origin v0.3.2
 ```
 
 Pushing a `v*` tag starts the workflow. The tag name becomes the release tag, so
-keep it in sync with `version` in `package.json` (currently `0.3.1`).
+keep it in sync with `version` in `package.json` (currently `0.3.2`).
 
 The build job matrix is `ubuntu-latest`, `windows-latest`, and
 `macos-latest` with `fail-fast: false` and a 45-minute timeout. Each runner

@@ -26,6 +26,11 @@ linux:
     - deb
   icon: build/icon.png
   category: Office
+  # The install prefix is /opt/PDF Inspector (spaces in the product name), which
+  # Chromium's zygote cannot exec; start Electron without the sandbox so the
+  # generated .desktop entry launches. AppImage already defaults to this flag.
+  executableArgs:
+    - --no-sandbox
 mac:
   target:
     - dmg
