@@ -74,6 +74,44 @@ fallback when `executableArgs` is unset); declaring it explicitly keeps both
 Linux targets identical and makes the deb desktop entry work when launched from
 the desktop environment or directly.
 
+### deb launcher wrapper (`scripts/deb-after-install.sh`)
+
+The desktop entry alone is not enough on desktops that cache it. GNOME Shell
+keeps the entry it first saw, so after upgrading from a build whose `Exec` had
+no flag, the shell re-launches `/opt/PDF Inspector/pdf-inspector` **without**
+`--no-sandbox` and the zygote crash above returns — the entry on disk already
+contains the flag, but the shell never re-reads it.
+
+To make such stale `Exec` lines work, `deb.afterInstall` points at
+[`scripts/deb-after-install.sh`](../scripts/deb-after-install.sh), which on every
+install/upgrade/reinstall:
+
+1. moves the real Electron binary `/opt/PDF Inspector/pdf-inspector` to
+   `/opt/PDF Inspector/pdf-inspector-bin` (mode preserved);
+2. writes a POSIX `sh` wrapper at `/opt/PDF Inspector/pdf-inspector` (mode 755)
+   that always appends the flag:
+   ```sh
+   exec "/opt/PDF Inspector/pdf-inspector-bin" --no-sandbox "$@"
+   ```
+
+So whichever form of the path a launcher uses — the desktop entry, the
+`update-alternatives` link in `/usr/bin/pdf-inspector`, or a hand-typed command
+— Electron always starts unsandboxed. Arguments are forwarded, so `%U` file
+arguments still reach the app.
+
+`electron-builder` has a single post-install hook: setting `deb.afterInstall`
+**replaces** its `templates/linux/after-install.tpl`. The script therefore
+reproduces that template's logic verbatim before adding the wrapper —
+`update-alternatives` registration of `/usr/bin/pdf-inspector`, the SUID bit on
+`chrome-sandbox`, and the `update-mime-database` / `update-desktop-database`
+refreshes — so the custom hook is additive, not a replacement of that behaviour.
+
+The script is idempotent: if `pdf-inspector` is already the wrapper it is left
+untouched (it is never overwritten with itself or made to recurse), and a
+missing `pdf-inspector-bin`, a `pdf-inspector-bin` that is not an executable, or
+a launcher that is neither the wrapper nor an ELF binary aborts the postinst with
+a clear message instead of installing a broken launcher.
+
 ## Release workflow (GitHub Actions)
 
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) builds the
@@ -83,12 +121,12 @@ tag-driven:
 ```sh
 # 1. Bump "version" in package.json and package-lock.json, then commit.
 # 2. Tag the commit and push the tag:
-git tag v0.3.2
-git push origin v0.3.2
+git tag v0.3.3
+git push origin v0.3.3
 ```
 
 Pushing a `v*` tag starts the workflow. The tag name becomes the release tag, so
-keep it in sync with `version` in `package.json` (currently `0.3.2`).
+keep it in sync with `version` in `package.json` (currently `0.3.3`).
 
 The build job matrix is `ubuntu-latest`, `windows-latest`, and
 `macos-latest` with `fail-fast: false` and a 45-minute timeout. Each runner

@@ -31,6 +31,14 @@ linux:
   # generated .desktop entry launches. AppImage already defaults to this flag.
   executableArgs:
     - --no-sandbox
+# deb.afterInstall REPLACES electron-builder's generated postinst, so the script
+# below re-implements that template's update-alternatives / chrome-sandbox
+# logic and then splits the launcher into pdf-inspector-bin (real Electron
+# binary) + a sh wrapper that always passes --no-sandbox. That keeps launches
+# working when the desktop environment still serves a cached .desktop entry from
+# an older install (Exec without the flag).
+deb:
+  afterInstall: scripts/deb-after-install.sh
 mac:
   target:
     - dmg
