@@ -2,7 +2,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-PDF Inspector is a developer-focused PDF structure viewer. It overlays coordinate-level pdfplumber object data on PDF.js rendering so you can inspect characters, words, lines, curves, rectangles, tables, and images, and read annotations, links, form fields, the raw object tree, and content streams without editing the PDF. It runs as an Electron desktop app or in a browser backed by a Node HTTP server.
+PDF Inspector is a developer-focused PDF structure viewer. It overlays coordinate-level pdfplumber object data on PDF.js rendering so you can inspect characters, words, lines, curves, rectangles, tables, and images, and read annotations, links, form fields, the raw object tree, and content streams without editing the PDF. Export the current page or a selected region as PNG/SVG, generate a self-contained HTML inspection report, choose Dark / Islands / Light / System themes, and switch the UI between English and Simplified Chinese. It runs as an Electron desktop app or in a browser backed by a Node HTTP server.
 
 [![CI](https://github.com/EthanCheung-gh/pdf-inspector/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/EthanCheung-gh/pdf-inspector/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-v0.2.0-blue.svg)](https://github.com/EthanCheung-gh/pdf-inspector)
@@ -13,10 +13,13 @@ PDF Inspector is a developer-focused PDF structure viewer. It overlays coordinat
 |  |  |
 | :---: | :---: |
 | ![Workspace overview: Objects / Outline / Fonts / Layers tabs and adjustable panels](docs/images/overview.png) | ![Object inspection](docs/images/inspector.png) |
-| ![Islands theme: toolbar, side panels, canvas, and status bar as rounded floating cards with gaps](docs/images/theme-islands.png) | **Dark / Islands themes**<br>The `Theme` button on the right side of the toolbar switches between the default `Dark` theme and the VS Code-inspired `Islands` theme. Islands turns major panels into floating cards with 1px borders, rounded corners, and soft shadows; Diff / Audit / Raw workspaces use the same treatment. |
+| ![Light theme: white panels, blue accent, and the PDF page on a light canvas](docs/images/theme-light.png) | **Four themes**<br>A native `Theme` select on the right side of the toolbar offers `Dark`, `Islands`, `Light`, and `System`. `System` follows `prefers-color-scheme`; the choice persists across restarts, and `data-theme` carries the resolved palette. |
 | ![Font analysis: embedding badges and Standard 14 summary](docs/images/fonts.png) | ![Open URL dialog](docs/images/url-dialog.png) |
 | ![Layers panel](docs/images/layers.png) | **Layers**<br>Seven object-type toggles with counts, All/None, Solo, and opacity. |
 | ![Export by element type](docs/images/export-dialog.png) | **Export by element type**<br>Choose current page or whole document, JSON or CSV, the element types to include, and an editable file name. Unchecked types are omitted. |
+| ![Export view dialog: selected region, PNG, overlays, scale, object types, and editable file name](docs/images/export-view-dialog.png) | **Export view (PNG/SVG)**<br>Export the current page or a selected region at 1x/2x/3x, with Objects / Annotations / Page boxes overlays and an object-type filter. PNG is saved as binary; SVG embeds a PNG raster base plus vector overlays. |
+| ![Share report dialog: editable HTML file name and a no-script, no-external-resources note](docs/images/share-report-dialog.png) | **Share report (HTML)**<br>Generate a self-contained HTML inspection report for the current page with a screenshot, page composition, fonts, annotation index/issues, and audit findings. Inline CSS, no scripts, no external resources. |
+| ![Chinese UI: toolbar, document tab, panel tabs, canvas, status bar, and theme selector in Simplified Chinese](docs/images/i18n-zh.png) | **English / 简体中文**<br>The toolbar language control switches between `EN` and `中文`; English is the default and the choice persists. UI strings are translated, while command names, JSON/CSV fields, and sidecar/CLI errors stay English. |
 | ![Table cell grid with a selected cell](docs/images/table-cells.png) | **Table cells**<br>Select a table to see a cell grid with merged/missing markers and the selected cell's BBox. Hovering or clicking a cell highlights it on the canvas. |
 | ![Page geometry: five page boxes and rulers](docs/images/page-geometry.png) | **Page geometry**<br>The `Page` tab lists MediaBox / CropBox / TrimBox / BleedBox / ArtBox, with pt/mm switching and canvas rulers. |
 | ![Diff workspace: old/new pages side by side, change summary and list, selected change details](docs/images/diff-workspace.png) | **PDF Diff**<br>Compare old and new pages side by side. The left side summarizes changes per page; selecting an item shows old/new text, BBoxes, and field differences on the right. Old/new files can be changed and the result exported as JSON. |
@@ -39,7 +42,7 @@ PDF Inspector is a developer-focused PDF structure viewer. It overlays coordinat
 | ![Desktop document tabs: two URL-opened tabs, switched back to basic.pdf with toolbar 1 / 4](docs/images/large-doc-tabs.png) | **Desktop document tabs**<br>The desktop app keeps multiple document tabs and restores page, zoom, overlays, and panel tabs when switching. Web tabs activate a server-side `documentId` instead. |
 | ![Web document tabs: basic.pdf and large.pdf tabs, active large.pdf showing 1 / 120](docs/images/web-tabs.png) | **Web document tabs**<br>Web and desktop both show the document tab bar. Switching activates by `documentId` and restores the view snapshot; inactive documents remain readable at `/doc/:id`, and closing a tab removes only that document's temporary copy. |
 
-*Screenshots come from the Web build and a real Electron desktop build. Page list / Search 2.0 / command palette, annotation index/export, themes, and Diff/Audit/Raw are 1440×900. Desktop tabs were captured from Electron + `xvfb` through CDP at a 1440×900 viewport. See [docs/search.md](docs/search.md), [docs/large-docs.md](docs/large-docs.md), and [docs/annotations.md](docs/annotations.md).*
+*Screenshots come from the Web build and a real Electron desktop build. Page list / Search 2.0 / command palette, annotation index/export, themes, export dialogs, Chinese UI, and Diff/Audit/Raw are 1440×900. Desktop tabs were captured from Electron + `xvfb` through CDP at a 1440×900 viewport. See [docs/export.md](docs/export.md), [docs/themes-i18n.md](docs/themes-i18n.md), [docs/search.md](docs/search.md), [docs/large-docs.md](docs/large-docs.md), and [docs/annotations.md](docs/annotations.md).*
 
 ## Features
 
@@ -67,11 +70,19 @@ PDF Inspector is a developer-focused PDF structure viewer. It overlays coordinat
 
 ### Themes
 
-- The `Theme: Dark` / `Theme: Islands` button on the right side of the toolbar switches themes. The label always shows the current theme, and `aria-pressed` exposes the Islands active state.
-- `Dark` is the default and keeps the compact, seamless panel look. `Islands` uses a near-black gradient canvas and turns the toolbar, document tab bar, side panels, canvas, Inspector, Diff / Audit / Raw workspaces, and status bar into floating cards with 1px borders, rounded corners, and soft shadows.
-- Islands is appearance-only: panel widths, splitter dragging, Focus mode, and layout dimensions at 1280 / 1440 / 1600 remain unchanged, with no horizontal overflow.
-- The theme is persisted under `pdf-inspector:theme:v1` in localStorage and written to `document.documentElement.dataset.theme` before the first frame. If storage is unavailable (private mode, jsdom, etc.), it falls back to `Dark`.
+- The toolbar has a native `Theme` select with four options: `Dark`, `Islands`, `Light`, and `System`. The selected label is the preference; the applied palette is written separately to `data-theme`.
+- `Dark` is the default and keeps the compact, seamless panel look. `Islands` uses a near-black gradient canvas and turns the toolbar, document tab bar, side panels, canvas, Inspector, Diff / Audit / Raw workspaces, and status bar into floating cards with 1px borders, rounded corners, and soft shadows. `Light` uses white panels, light gray surfaces, and a blue accent for bright rooms.
+- `System` is a mode, not a palette: it follows `prefers-color-scheme` and resolves to `Dark` or `Light`, updating live when the OS appearance changes. `data-theme-mode="system"` keeps the user's choice visible while `data-theme="dark|light|islands"` drives the CSS tokens.
+- Themes are appearance-only: panel widths, splitter dragging, Focus mode, and layout dimensions at 1280 / 1440 / 1600 remain unchanged, with no horizontal overflow.
+- The preference is persisted under `pdf-inspector:theme:v1` in localStorage and applied before the first frame. The old `dark` / `islands` values remain valid; if storage is unavailable (private mode, jsdom, etc.), it falls back to `Dark`.
 - Structural colors live in CSS variables in `src/renderer/theme.css`; PDF page white, object-type colors, annotation-type colors, and page-box colors do not change with the theme.
+
+### Language and i18n
+
+- The toolbar language control shows `EN` or `中文`. English is the default; the choice is explicit and is not inferred from the browser language, so first runs and screenshots stay stable.
+- The locale is persisted under `pdf-inspector:locale:v1`, mirrored to `<html lang="en|zh-CN">` and `data-locale`, and restored before the first render. A reload keeps the selected language.
+- `Ctrl/Cmd+K` also exposes `Language: English` and `Language: 简体中文`, alongside the four theme commands. Toolbar, document tabs, panel tabs, status bar, dialogs, workspaces, empty states, and command palette strings are translated.
+- Intentionally English: command identifiers and API names, JSON/CSV schema fields and PDF object identifiers, raw PDF syntax, sidecar/CLI error text, and the body prose of the generated HTML report. Those are data or protocol boundaries, not UI copy. See [docs/themes-i18n.md](docs/themes-i18n.md) for the architecture and how to add a key or theme.
 
 ### Search and export
 
@@ -83,10 +94,25 @@ PDF Inspector is a developer-focused PDF structure viewer. It overlays coordinat
 - JSON export adds optional fields: `metadata.fontInfo` (embedding details), per-page `page.boxes` / `page.rotation`, table `table.cellBoxes` / `table.cellSpans`, and image `content_hash` (SHA-256 when available). CSV section schemas are unchanged.
 - Annotations, links, and forms have a separate whole-document export: use `Export` in `Annots → Whole document` to write JSON or CSV without changing the object-export schema.
 
+### Export view (PNG/SVG)
+
+- The toolbar's `View…` button opens a dialog for the current page or the current region selection. The label is short to keep the toolbar on one line; its accessible name, tooltip and the command palette entry (`Export view…`) keep the full wording. The region option is enabled only when a region has been dragged.
+- Choose PNG or SVG, `1x` / `2x` / `3x`, and any combination of `Objects` / `Annotations` / `Page boxes` overlays. The object type selector reuses the same seven types as the Layers tab, with Select all / Clear.
+- The default file name is `<document>-p<N>.png|.svg` (or `-region` for a crop) and stays editable. Desktop uses the native save dialog; Web starts a browser download.
+- PNG is written as binary: the renderer captures to an off-screen canvas, sends base64 over the save channel, and the desktop/browser adapter decodes it back to bytes. SVG is a self-contained document with the PNG as a raster `<image>` base plus vector overlay rectangles; it is not a vector re-render of the PDF content.
+- Captures are independent of the current zoom. The requested scale is clamped to a longest side of 8192 px and 32 MP total; an empty region falls back to the full page with a warning. Rotated pages omit object/annotation overlays and report that limitation instead of drawing misaligned boxes.
+
+### Share report (HTML)
+
+- The toolbar's `Report…` button (command palette: `Share report…`) builds a single self-contained HTML file for the current page. As with `View…`, only the visible toolbar label is shortened; the accessible name and tooltip are still `Share report…`. The file name defaults to `<document>-report.html` and is editable.
+- Sections: document summary, page snapshot, page composition (object counts and page boxes), fonts when font analysis is available, current-page annotations plus the document index/link/form issues when that index belongs to the open document, and audit findings when the report belongs to the current file. Missing analysis degrades to a note.
+- The report is safe to attach to an email or ticket: inline CSS, one `data:image/png;base64` screenshot, no `<script>`, no external fonts/images/links, a restrictive CSP, and HTML-escaped document/annotation text.
+- Limits: current page only, screenshot longest side targeted at 2400 px (capture scale 1–2), and a 20 MB report cap. The dialog is localized, but report section labels and prose are English.
+
 ### Command palette
 
 - `Ctrl/Cmd+K` opens a command palette grouped by `File` / `Navigate` / `View` / `Analyze` / `Export`. It focuses the filter input on open; type a title or keyword (for example `page`) to filter. `↑/↓` moves, `Enter` runs, and `Escape` closes.
-- Commands cover Open PDF, Open URL, Search document, Go to page, Theme, Focus mode, left/right panels, Layers, Diff, Audit, Raw, Export, Clear selection, and Close palette. `Go to page…` switches to a page-number subview that clamps input to `1..pageCount`.
+- Commands cover Open PDF, Open URL, Search document, Go to page, the four themes plus Cycle theme, Language: English / 简体中文, Focus mode, left/right panels, Layers, Diff, Audit, Raw, Export objects, Export view, Share report, Clear selection, and Close palette. `Go to page…` switches to a page-number subview that clamps input to `1..pageCount`.
 - Commands are registered by the components that own the handler. The palette only calls existing handlers and stores, so there is no duplicated IPC, file-open, or export logic. Document-dependent commands are shown disabled when no document or workspace permits them.
 - Registration is explicit: there are no user-defined commands, plugins, or shortcut editor. `Ctrl/Cmd+F` still opens search directly; `Ctrl/Cmd+K` only handles the command palette.
 
@@ -298,7 +324,7 @@ Diff samples are generated in old/new pairs and can be selected in the compariso
 5. **Analyze fonts:** open the `Fonts` tab to start analysis, watch progress and embedding badges, expand rows for Encoding/ToUnicode, and click a font to jump to its first usage page and highlight it.
 6. **Inspect page geometry:** use Inspector → `Page` for page size, rotation, and the five page boxes; switch pt/mm, toggle box overlays, and enable canvas rulers.
 7. **Control overlays:** use `Layers` to toggle the seven object types, see current-page counts, use Solo, and adjust opacity. Press `F` for Focus mode.
-8. **Search and export:** `Ctrl/Cmd+F` opens search; use `Aa` / `W` / `.*` for case, whole-word, and regex; browse `p.N` rows with context and click to jump. `Ctrl/Cmd+K` opens the command palette for open, jump, theme, panel, Diff/Audit/Raw, export, and clear commands. Export lets you choose current page or whole document, JSON or CSV, and element types.
+8. **Search and export:** `Ctrl/Cmd+F` opens search; use `Aa` / `W` / `.*` for case, whole-word, and regex; browse `p.N` rows with context and click to jump. `Ctrl/Cmd+K` opens the command palette for open, jump, theme, language, panel, Diff/Audit/Raw, export, and clear commands. `Export` writes current-page or whole-document JSON/CSV; the toolbar's `View…` (`Export view…` in the command palette) writes the current page or selected region as PNG/SVG; `Report…` (`Share report…` in the palette) writes a self-contained HTML inspection report.
 9. **Compare revisions:** click `Diff`, choose Old/New PDFs, adjust position tolerance and ignores, then Compare. Select changes in the left list or switch Side by side / Overlay / Visual (Visual supports Blend/Heatmap/Boxes and pixel stats). `Ignore region` lets you mask a region, then `Apply & re-run`; `Export JSON` saves the result.
 10. **Audit a document:** click `Audit` to run whole-document checks, review the severity summary, filter by severity/category, inspect evidence and recommendations, use `Open page` when available, or `Export JSON` for the full report.
 11. **Inspect annotations, links, and forms:** open `Annots` (default `Current page`), switch to `Whole document` to build the index (`Indexing annotations N/M…`), use search and global Kind/Subtype filters, and click rows to jump and select when possible. `Issues` summarizes broken links and form issues; `External links` lists openable `http(s)` targets. `Export` writes the index as JSON/CSV. External links require `Open link`; internal links use `Go to page N`; form fields are read-only.
@@ -510,6 +536,8 @@ pdf-inspector/
 │   ├── raw.md             # Raw objects and content streams: serialization, limits, security
 │   ├── large-docs.md      # Large documents: dual lanes, batched search, page list, desktop/Web tabs
 │   ├── search.md          # Search 2.0: options, results panel, command palette, shortcuts, verification
+│   ├── export.md          # Object JSON/CSV, PNG/SVG view export, self-contained HTML report
+│   ├── themes-i18n.md     # Theme registry, Light/System, i18n catalogs, persistence
 │   ├── diff.md            # Diff 2.0: page alignment, Visual mode, ignore regions, thresholds
 │   ├── ci.md              # Diff CLI and GitHub Action
 │   ├── packaging.md       # Packaging notes
@@ -591,6 +619,9 @@ Packaged builds include the frozen sidecar, so end users do not need Python. PyI
 - Document mode does not promise annotation boxes on inactive pages: `Show boxes` applies only to `Current page`. Clicking a list row jumps pages and then selects when possible; a missing or mismatched id only jumps.
 - Annotations, links, and forms are read-only: annotations cannot be created, edited, or deleted; forms cannot be filled, reset, or submitted; XFA data is not imported; signature fields are shown as fields and are not signature-verified.
 - Annotations, links, and forms are exported only from `Annots → Whole document`. They are not included in object-export JSON/CSV, Diff, Audit, or CLI; pipelines that need them must read the PDF separately.
+- View export is a read-only snapshot of one page or one region: there is no whole-document image export, no PDF editing, and no vector re-render. SVG uses a raster PNG base with vector overlay boxes, so PDF text and artwork inside the base image remain raster. On rotated pages, object and annotation boxes are omitted from captures (page boxes still work) and a warning is returned; an empty region falls back to the full page.
+- The HTML share report covers the current page only. Audit findings and the annotation index are included only when they belong to the open document; the report body is English even when the UI is Chinese. The report has a 20 MB cap and targets a 2400 px longest side for its screenshot.
+- UI language covers renderer copy only. Default locale and theme are user preferences that survive reload; they do not change JSON/CSV schema fields, PDF object identifiers, sidecar/CLI errors, or generated report prose.
 - External links open only when the user clicks `Open link`, and only `http(s)` is supported. `mailto:`, `file:`, `data:`, and `javascript:` targets are displayed but not opened. The whole-document index only classifies targets; it never opens, probes, or bulk-requests external URLs. Internal links jump to the resolved page but do not restore scroll position; unresolved targets remain read-only.
 - Annotation health checks are heuristic: `Issues` derives hints from PDF.js link and form data and does not certify PDF compliance. Unnamed widgets and duplicate field-name type conflicts are warnings; the same name across pages is only info. A single link-target resolution failure affects only that record.
 - Rotated pages (`/Rotate` 90/180/270) provide annotation lists and details but no canvas boxes or hit testing. On pages where CropBox and MediaBox differ, annotation boxes use MediaBox and may be offset (consistent with object overlays).
@@ -605,6 +636,6 @@ Packaged builds include the frozen sidecar, so end users do not need Python. PyI
 - The search index stores per-page text only and has no byte cap; 1000 pages is acceptable. Closing search cancels an in-progress build, but a completed index is reused for the lifetime of the current SearchBox; switching documents or leaving Inspect rebuilds and releases it. Very large documents should be released by switching documents or leaving Inspect.
 - Search 2.0 is still local, current-document text search: no cross-document search, search history, OCR, or annotation/form/link search. Results are capped at 5,000 and cannot be exported. The command palette lists registered commands only and has no user-defined commands or shortcut editor.
 - The page list uses CSS `content-visibility`; the DOM still contains one row per page. If thousands of pages cause scrolling jank, a true virtual list can be evaluated.
-- When search is open, the toolbar keeps the input, count, previous/next, and close controls fully visible. At ≤1280px the file name is hidden (not a control; it remains available in dialogs and the status bar), while >1280px shows it. Search at 1280/1440/1600 has no horizontal overflow.
+- The full-width toolbar (including Export / View / Report, search, language and theme) uses a compact 3px gap and an 84px theme selector, so its fixed controls fit at 1280px. The file name is visible at 1440px and wider and hidden below 1440px (not a control; it remains available in dialogs, document tabs and the status bar), so 1280/1440/1600 have no horizontal overflow in English or Chinese. When search is open, its input, count, previous/next and close controls stay fully visible.
 - Temporary-file cleanup is best-effort; an abnormal exit may require manually clearing the system temp directory.
 - Web mode requires building `dist-web` and `dist-web-server`; without a build, the server prompts you to build and refresh.

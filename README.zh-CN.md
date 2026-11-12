@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-面向开发者的 PDF 结构检查工具——在 PDF.js 渲染结果之上叠加 pdfplumber 的坐标级对象数据，直观检查字符、单词、线条、曲线、矩形、表格和图片，并以只读方式检查注释、链接、表单字段、原始对象树与内容流。提供 Electron 桌面应用与浏览器（Node HTTP 后端）两种运行方式。
+面向开发者的 PDF 结构检查工具——在 PDF.js 渲染结果之上叠加 pdfplumber 的坐标级对象数据，直观检查字符、单词、线条、曲线、矩形、表格和图片，并以只读方式检查注释、链接、表单字段、原始对象树与内容流。可把当前页或选中区域导出为 PNG/SVG、生成自包含 HTML 检查报告，并在 Dark / Islands / Light / System 四种主题与 English / 简体中文之间切换。提供 Electron 桌面应用与浏览器（Node HTTP 后端）两种运行方式。
 
 [![CI](https://github.com/EthanCheung-gh/pdf-inspector/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/EthanCheung-gh/pdf-inspector/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-v0.2.0-blue.svg)](https://github.com/EthanCheung-gh/pdf-inspector)
@@ -11,10 +11,13 @@
 |  |  |
 | :---: | :---: |
 | ![工作区总览：Objects / Outline / Fonts / Layers 标签与可调整面板](docs/images/overview.png) | ![对象检查](docs/images/inspector.png) |
-| ![Islands 主题：工具栏、左右面板、画布与状态栏作为圆角浮动卡片，中间留出间隙](docs/images/theme-islands.png) | **Dark / Islands 主题**<br>工具栏右侧的 `Theme` 按钮在默认 `Dark` 与 VS Code 风格 `Islands` 之间切换；Islands 把主要面板变成带 1px 边框、圆角与柔和阴影的浮动卡片，Diff / Audit / Raw 工作区同样适用。 |
+| ![浅色主题：白色面板、蓝色强调色与浅色画布上的 PDF 页面](docs/images/theme-light.png) | **四种主题**<br>工具栏右侧的原生 `Theme` 下拉框提供 `Dark`、`Islands`、`Light` 与 `System`。`System` 跟随 `prefers-color-scheme`，选择会持久化，`data-theme` 写入实际解析后的配色。 |
 | ![字体分析：嵌入状态徽标与 Standard 14 汇总](docs/images/fonts.png) | ![URL 打开](docs/images/url-dialog.png) |
 | ![图层面板](docs/images/layers.png) | **Layers**<br>七类对象开关、计数、All/None、Solo 与透明度。 |
 | ![按元素类型导出](docs/images/export-dialog.png) | **按元素类型导出**<br>选择当前页/整档、JSON/CSV 与要包含的元素类型；未勾选的类型不会写入文件。 |
+| ![导出视图对话框：选中区域、PNG、叠加层、缩放、对象类型与可编辑文件名](docs/images/export-view-dialog.png) | **导出视图（PNG/SVG）**<br>把当前页或选中区域按 1x/2x/3x 导出，可选 Objects / Annotations / Page boxes 叠加层与对象类型过滤。PNG 以二进制保存；SVG 以 PNG 为栅格底图并叠加矢量框。 |
+| ![分享报告对话框：可编辑 HTML 文件名与无脚本、无外部资源说明](docs/images/share-report-dialog.png) | **分享报告（HTML）**<br>为当前页生成自包含 HTML 检查报告，包含截图、页面组成、字体、注释索引/问题与审计发现；内联 CSS、无脚本、无外部资源。 |
+| ![中文界面：工具栏、文档标签、面板标签、画布、状态栏与主题选择器均为简体中文](docs/images/i18n-zh.png) | **English / 简体中文**<br>工具栏语言按钮在 `EN` 与 `中文` 之间切换；默认英文，选择会持久化。UI 文案会翻译，命令名、JSON/CSV 字段与 sidecar/CLI 错误保持英文。 |
 | ![表格单元格网格与选中单元格](docs/images/table-cells.png) | **表格单元格**<br>选中表格后显示单元格网格、合并/缺失标记与选中单元格的 BBox；悬停或点击单元格时画布同步高亮。 |
 | ![页面几何：五个页面框与标尺](docs/images/page-geometry.png) | **页面几何**<br>`Page` 标签页列出 MediaBox / CropBox / TrimBox / BleedBox / ArtBox，可切换 pt/mm 并显示标尺。 |
 | ![Diff 工作区：并排旧/新页面、变更摘要与列表、右侧选中变更详情](docs/images/diff-workspace.png) | **PDF Diff**<br>并排查看旧/新页面；左侧按页汇总变更，选中条目后右侧显示旧/新文本、BBox 与字段差异，顶部可重新选择旧/新文件或导出 JSON。 |
@@ -37,7 +40,7 @@
 | ![桌面文档标签栏：两个通过 URL 打开的文档标签，切换到 basic.pdf 后工具栏显示 1 / 4](docs/images/large-doc-tabs.png) | **桌面文档标签**<br>桌面端可同时保留多个文档标签，切换时恢复页码、缩放、叠加层与面板标签；Web 端通过服务端 `documentId` 激活标签。 |
 | ![Web 文档标签栏：basic.pdf 与 large.pdf 两个标签，当前 large.pdf 显示 1 / 120](docs/images/web-tabs.png) | **Web 文档标签**<br>Web 与桌面端都显示文档标签栏；切换按 `documentId` 激活并恢复视图快照，未激活文档的 `/doc/:id` 仍可读取，关闭标签只删除该文档的临时副本。 |
 
-*截图来自 Web 构建与真实 Electron 桌面构建；页面列表/搜索 2.0/命令面板、注释整档索引/导出、主题与 Diff/Audit/Raw 为 1440×900，桌面标签为 Electron + xvfb 实测（CDP 1440×900 视口）。详见 [docs/search.md](docs/search.md)、[docs/large-docs.md](docs/large-docs.md) 与 [docs/annotations.md](docs/annotations.md)。*
+*截图来自 Web 构建与真实 Electron 桌面构建；页面列表/搜索 2.0/命令面板、注释整档索引/导出、主题、导出对话框、中文界面与 Diff/Audit/Raw 为 1440×900，桌面标签为 Electron + xvfb 实测（CDP 1440×900 视口）。详见 [docs/export.md](docs/export.md)、[docs/themes-i18n.md](docs/themes-i18n.md)、[docs/search.md](docs/search.md)、[docs/large-docs.md](docs/large-docs.md) 与 [docs/annotations.md](docs/annotations.md)。*
 
 ## 功能特性
 
@@ -65,11 +68,19 @@
 
 ### 主题与外观
 
-- 工具栏右侧的 `Theme: Dark` / `Theme: Islands` 按钮切换界面主题，按钮文字始终显示当前主题，并通过 `aria-pressed` 暴露 Islands 的激活状态。
-- `Dark` 是默认主题，保持原有的紧凑、无缝面板外观；`Islands` 使用近黑色渐变画布，把工具栏、文档标签栏、左右面板、画布、Inspector、Diff / Audit / Raw 工作区与状态栏都变成带 1px 边框、圆角与柔和阴影的浮动卡片，面板之间保留间隙。
-- Islands 只改变外观：面板宽度、分隔条拖拽、Focus 模式与 1280 / 1440 / 1600 下的布局尺寸保持不变，不会产生横向溢出。
-- 主题持久化在 localStorage 的 `pdf-inspector:theme:v1`，启动时在第一帧渲染前写入 `document.documentElement.dataset.theme`；存储不可用（隐私模式、jsdom 等）时回退到 `Dark`，不影响使用。
+- 工具栏提供原生 `Theme` 下拉框，包含 `Dark`、`Islands`、`Light` 与 `System` 四个选项；下拉框显示的是用户偏好，实际配色单独写入 `data-theme`。
+- `Dark` 是默认主题，保持原有的紧凑、无缝面板外观；`Islands` 使用近黑色渐变画布，把工具栏、文档标签栏、左右面板、画布、Inspector、Diff / Audit / Raw 工作区与状态栏都变成带 1px 边框、圆角与柔和阴影的浮动卡片；`Light` 使用白色面板、浅灰表面与蓝色强调色，适合明亮环境。
+- `System` 是模式而不是配色：跟随 `prefers-color-scheme` 解析为 `Dark` 或 `Light`，系统外观变化时实时更新。`data-theme-mode="system"` 保留用户选择，`data-theme="dark|light|islands"` 驱动 CSS token。
+- 主题只改变外观：面板宽度、分隔条拖拽、Focus 模式与 1280 / 1440 / 1600 下的布局尺寸保持不变，不会产生横向溢出。
+- 主题持久化在 localStorage 的 `pdf-inspector:theme:v1`，首帧前应用；旧的 `dark` / `islands` 值仍然有效。存储不可用（隐私模式、jsdom 等）时回退到 `Dark`，不影响使用。
 - 结构色集中在 `src/renderer/theme.css` 的 CSS 变量中；PDF 页面白底、PDF 对象类型色、注释类型色与页面框颜色不随主题变化。
+
+### 语言与 i18n
+
+- 工具栏语言按钮显示 `EN` 或 `中文`。默认英文，且不会根据浏览器语言自动切换，保证首次运行与截图稳定。
+- 语言偏好持久化在 `pdf-inspector:locale:v1`，同步到 `<html lang="en|zh-CN">` 与 `data-locale`，首帧前恢复；刷新后保持所选语言。
+- `Ctrl/Cmd+K` 命令面板还提供 `Language: English` 与 `Language: 简体中文`，以及四个主题命令。工具栏、文档标签、面板标签、状态栏、对话框、各工作区、空状态与命令面板文案都会翻译。
+- 有意保持英文：命令标识与 API 名称、JSON/CSV schema 字段与 PDF 对象标识、原始 PDF 语法、sidecar/CLI 错误文本，以及生成 HTML 报告的正文。这些属于数据或协议边界，不是 UI 文案。架构与新增 key/主题的方法见 [docs/themes-i18n.md](docs/themes-i18n.md)。
 
 ### 搜索与导出
 
@@ -81,10 +92,25 @@
 - JSON 导出新增可选字段：`metadata.fontInfo`（字体嵌入详情）、每页的 `page.boxes` / `page.rotation`、表格的 `table.cellBoxes` / `table.cellSpans`，以及图片的 `content_hash`（可读取时的 SHA-256）；CSV 各段的列定义保持不变。
 - 注释、链接与表单有独立的整档导出：在 `Annots → Whole document` 中点 `Export` 选择 JSON/CSV，不改变上面的对象导出 schema。
 
+### 导出视图（PNG/SVG）
+
+- 工具栏的 `视图…` 按钮打开对话框，可导出当前页或当前选中区域。按钮只显示短标签以避免工具栏换行；可访问名称、tooltip 与命令面板条目仍是完整的 `Export view…` / `导出视图…`。只有拖出区域后 `Selected region` 才可用。
+- 可选 PNG 或 SVG、`1x` / `2x` / `3x`，以及 `Objects` / `Annotations` / `Page boxes` 任意组合的叠加层。对象类型选择器复用 Layers 的七种类型，并提供 Select all / Clear。
+- 默认文件名为 `<文档>-p<N>.png|.svg`（区域导出带 `-region`），可编辑。桌面端使用原生保存对话框，Web 端触发浏览器下载。
+- PNG 以二进制保存：渲染层在离屏 canvas 截图，以 base64 通过保存通道传递，桌面/浏览器适配器再解码为字节。SVG 是自包含文档，以 PNG 作为 `<image>` 栅格底图并叠加矢量框，不是把 PDF 内容重新矢量化的 SVG。
+- 截图独立于当前缩放；缩放会夹取到最长边 8192 px、总像素 32 MP。空区域回退整页并给出警告；旋转页不绘制对象/注释框，而是返回限制提示，避免错位。
+
+### 分享报告（HTML）
+
+- 工具栏的 `报告…` 按钮（命令面板：`Share report…` / `分享报告…`）为当前页生成单个自包含 HTML 文件。与 `视图…` 一样，只有可见的工具栏标签缩短，可访问名称与 tooltip 仍是完整名称。文件名默认 `<文档>-report.html`，可编辑。
+- 报告包含：文档摘要、页面截图、页面组成（对象计数与页面框）、字体分析（可用时）、当前页注释以及属于当前文档的整档注释索引/链接与表单问题、属于当前文件的审计发现；缺失的分析会降级为说明文字。
+- 适合作为邮件或工单附件：内联 CSS、一张 `data:image/png;base64` 截图、无 `<script>`、无外部字体/图片/链接、限制性 CSP，并对文档与注释文本做 HTML 转义。
+- 限制：仅当前页；截图最长边目标 2400 px（截图缩放 1–2）；报告上限 20 MB。对话框会随 UI 语言切换，但报告小节标题与正文为英文。
+
 ### 命令面板
 
 - `Ctrl/Cmd+K` 打开命令面板，按 `File` / `Navigate` / `View` / `Analyze` / `Export` 分组显示已注册命令；打开时自动聚焦过滤框，输入标题或关键词（例如 `page`）即可过滤，`↑/↓` 移动、`Enter` 执行、`Escape` 关闭。
-- 命令覆盖 Open PDF、Open URL、Search document、Go to page、Theme、Focus mode、左右面板、Layers、Diff、Audit、Raw、Export、Clear selection 与 Close palette；`Go to page…` 会进入页码子视图，输入值夹取到 `1..pageCount`。
+- 命令覆盖 Open PDF、Open URL、Search document、Go to page、四个主题与 Cycle theme、Language: English / 简体中文、Focus mode、左右面板、Layers、Diff、Audit、Raw、Export objects、Export view、Share report、Clear selection 与 Close palette；`Go to page…` 会进入页码子视图，输入值夹取到 `1..pageCount`。
 - 命令由实际持有 handler 的组件按 owner 注册，面板只调用现有 handler/store，不复制 IPC 或文件打开/导出逻辑；无文档或当前工作区不允许时，依赖文档的命令显示为禁用。
 - 命令注册是显式的，不提供用户自定义命令、插件系统或快捷键编辑器；`Ctrl/Cmd+F` 仍直接打开搜索，`Ctrl/Cmd+K` 只负责命令面板。
 
@@ -290,7 +316,7 @@ Diff 的示例文件成对生成，可在对比对话框中分别选择 Old/New�
 5. **字体分析**：切换到左侧 `Fonts` 标签页开始分析，查看进度与嵌入状态徽标；展开条目可看 Encoding、ToUnicode 等细节，点击字体条目跳转到使用页并高亮。
 6. **查看页面几何**：在 Inspector → `Page` 标签页查看页面尺寸、旋转角与五个页面框，切换 pt/mm，并按需开关各框叠加与画布标尺。
 7. **控制叠加层**：在左侧 `Layers` 标签页开关七类对象、查看当前页计数、使用 Solo 或调整透明度；`F` 可进入专注模式，隐藏左右面板。
-8. **搜索与导出**：`Ctrl/Cmd+F` 打开搜索，输入查询后可用 `Aa` / `W` / `.*` 切换大小写、整词与正则，在结果面板中按页查看 `p.N` 与上下文并点击跳转；`Ctrl/Cmd+K` 打开命令面板执行打开、跳页、主题、面板、Diff/Audit/Raw 等命令；通过 Export 选择当前页/整档、JSON/CSV 与要包含的元素类型。
+8. **搜索与导出**：`Ctrl/Cmd+F` 打开搜索，输入查询后可用 `Aa` / `W` / `.*` 切换大小写、整词与正则，在结果面板中按页查看 `p.N` 与上下文并点击跳转；`Ctrl/Cmd+K` 打开命令面板执行打开、跳页、主题、语言、面板、Diff/Audit/Raw 等命令。`Export` 导出当前页/整档 JSON/CSV；工具栏的 `视图…`（命令面板中的 `Export view…`）把当前页或选中区域导出为 PNG/SVG；`报告…`（命令面板中的 `Share report…`）生成自包含 HTML 检查报告。
 9. **比较版本**：点击工具栏 `Diff` 选择 Old/New 两份 PDF，按需设置位置容差与忽略项后 Compare；在左侧变更列表选择条目查看详情，或在 Side by side / Overlay / Visual 间切换（Visual 可切 Blend/Heatmap/Boxes 并查看像素统计），`Ignore region` 可拖框屏蔽区域后再 `Apply & re-run`；`Export JSON` 保存结果。
 10. **文档体检**：点击工具栏 `Audit` 对当前文档执行整档审计，查看严重级别汇总，按严重级别/类别筛选，选中发现查看证据与建议；需要时点击 `Open page` 跳转到对应页面，或用 `Export JSON` 保存完整报告。
 11. **检查注释、链接与表单**：切换到左侧 `Annots`，默认 `Current page` 查看当前页；切到 `Whole document` 建立整档索引（显示 `Indexing annotations N/M…`），用搜索与全局 Kind/Subtype 过滤定位条目，点击行跳页并尽力选中。`Issues` 区汇总断链与表单问题，`External links` 列出可打开的 `http(s)` 目标；`Export` 可把整档索引导出为 JSON/CSV。外部链接需点击 `Open link` 才会打开，内部链接使用 `Go to page N` 跳转；表单字段不能编辑或提交。
@@ -502,6 +528,8 @@ pdf-inspector/
 │   ├── raw.md             # 原始对象树与内容流：序列化语义、上限与安全边界
 │   ├── large-docs.md      # 大文档：双通道、搜索分批、页面列表、桌面/Web 文档标签与边界
 │   ├── search.md          # 搜索 2.0：选项、结果面板、命令面板、快捷键与验证
+│   ├── export.md          # 对象 JSON/CSV、PNG/SVG 视图导出与自包含 HTML 报告
+│   ├── themes-i18n.md     # 主题注册表、Light/System、i18n 目录与持久化
 │   ├── diff.md            # Diff 2.0：页面对齐、视觉模式、忽略区域与阈值
 │   ├── ci.md              # Diff CLI 与 GitHub Action
 │   ├── packaging.md       # 打包说明
@@ -577,6 +605,9 @@ npm run dist:linux       # Linux
 - 文档模式不承诺为未激活页绘制注释框：`Show boxes` 只在 `Current page` 生效，点击列表行跳页后由当前页正常加载并尽力选中（无 id 或 id 不一致时只跳页）。
 - 注释、链接与表单只读：不能新建、编辑或删除注释，不能填写、重置或提交表单，也不导入 XFA 数据；签名字段只显示为字段，不做数字签名验证。
 - 注释、链接与表单只在 `Annots → Whole document` 中导出，不写入对象导出的 JSON/CSV，也不参与 Diff、Audit 或 CLI；Pipeline 中如需这些信息需要另行读取 PDF。
+- 视图导出是单页/单区域的只读快照：不支持整档图片导出、PDF 编辑或矢量重排。SVG 以 PNG 栅格底图加矢量叠加框组成，底图中的 PDF 文字与图形仍是位图。旋转页会省略对象/注释框（页面框仍可用）并返回警告；空区域回退整页。
+- HTML 分享报告只覆盖当前页；审计发现与注释索引只有在属于当前打开文档时才写入。UI 切到中文时，报告正文仍为英文。报告上限 20 MB，截图最长边目标 2400 px。
+- UI 语言只覆盖渲染层文案。默认主题与语言是用户偏好，刷新后保留；它们不改变 JSON/CSV schema 字段、PDF 对象标识、sidecar/CLI 错误或生成报告的正文。
 - 外部链接只在用户点击 `Open link` 时打开，且仅支持 `http(s)`；`mailto:`、`file:`、`data:`、`javascript:` 等目标只显示、不打开。整档索引只对目标分类，不会自动打开、探测或批量请求外部 URL。内部链接只跳转到解析出的页码，不恢复滚动位置，未解析的目标保持只读展示。
 - 注释健康检查是启发式的：`Issues` 依据 PDF.js 解析出的链接与表单数据给出提示，不做 PDF 合规认证；未命名 Widget 与同名字段类型冲突是 warning，跨页同名只是 info。单个链接目标解析失败只影响该条记录。
 - 旋转页（`/Rotate` 为 90/180/270）只提供注释列表与详情，不绘制画布框与命中测试；CropBox 与 MediaBox 不一致的页面，注释框以 MediaBox 为基准，可能整体偏移（与对象叠加层一致）。
@@ -591,6 +622,6 @@ npm run dist:linux       # Linux
 - 搜索索引只保存每页文本，没有按字节的上限；1000 页可接受。关闭搜索会取消正在进行的构建，但已完成索引会在当前 SearchBox 生命周期内复用；切换文档或离开 Inspect 才会重建并释放。极大文档仍应通过切换文档/离开 Inspect 释放索引。
 - 搜索 2.0 仍是当前文档的本地文本搜索：不跨文档、不保存搜索历史、不做 OCR，也不搜索注释/表单/链接；结果最多 5,000 条且不支持结果导出。命令面板只列出已注册命令，不支持用户自定义命令或快捷键编辑器。
 - 页面列表使用 CSS `content-visibility` 窗口化，DOM 中仍保留每页一个行节点；若未来出现数千页的滚动卡顿，再评估真正的虚拟列表。
-- 搜索框展开时，工具栏优先保证输入框、计数、上/下与关闭按钮完整可见；窗口宽度 ≤1280px 时隐藏文件名（不是控件，标题仍可在打开对话框与状态栏查看），>1280px 时文件名继续显示。1280/1440/1600 打开搜索均无横向溢出。
+- 完整工具栏（含 Export / View / Report、搜索、语言与主题）使用 3px 紧凑间距与 84px 主题选择器，固定控件在 1280px 下也能完整显示；1440px 及以上同时显示文件名，窄于 1440px 时隐藏文件名（不是控件，标题仍可在打开对话框、文档标签与状态栏查看），因此 1280/1440/1600 的英文与中文界面均无横向溢出。搜索框展开时，输入框、计数、上/下与关闭按钮始终完整可见。
 - 临时文件清理为尽力而为，异常退出后可能需要手动清理系统临时目录。
 - Web 模式需先构建 `dist-web` 与 `dist-web-server`；未构建时服务会提示构建后刷新。
