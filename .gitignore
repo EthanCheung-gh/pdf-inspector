@@ -7,6 +7,9 @@ dist-web-server/
 web-samples/*
 # The security CLI/CI sample is generated deterministically and committed.
 !web-samples/security-sample.pdf
+# The accessibility samples are generated deterministically and committed.
+!web-samples/accessibility-valid.pdf
+!web-samples/accessibility-broken.pdf
 sidecar/build/
 .venv/
 .superpowers/

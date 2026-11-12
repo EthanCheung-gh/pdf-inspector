@@ -9,6 +9,12 @@ category (``fonts``, ``pages``, ``images``, ``metadata``, ``structure``,
 ``security``), then page ascending (document-level findings first), then title,
 so two runs over the same file produce byte-identical JSON.
 
+The ``structure`` category combines the original "not tagged" hint with the
+heuristic accessibility checks in :func:`accessibility_findings`, which consume
+the read-only resources collected by :mod:`accessibility`.  That inventory
+(and the structure tree) is never added to ``AuditReport``; the same findings
+are also available on their own through :func:`accessibility_report`.
+
 Document-level checks only read the info dictionary, the catalog and the page
 dictionaries through ``PdfExtractor.get_metadata()`` / ``_page_geometry()``, so
 they stay cheap on long documents.  Page-level checks call
@@ -37,6 +43,16 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping, Optional, Sequence, Union
 
 try:  # imported as ``sidecar.audit`` (namespace package)
+    from .accessibility import (
+        MAX_ATTRIBUTES as MAX_STRUCTURE_ATTRIBUTES,
+        MAX_CHILDREN as MAX_STRUCTURE_CHILDREN,
+        MAX_DEPTH as MAX_STRUCTURE_DEPTH,
+        MAX_NODES as MAX_STRUCTURE_NODES,
+        MAX_PARENT_TREE,
+        MAX_ROLE_MAP,
+        MAX_SCANNED,
+        collect_accessibility,
+    )
     from .diff import TOOL_NAME, tool_version
     from .extractor import PAGE_BOX_KEYS, STANDARD_14_FONTS, PdfExtractor
     from .security import (
@@ -48,6 +64,16 @@ try:  # imported as ``sidecar.audit`` (namespace package)
         collect_security_with_meta,
     )
 except ImportError:  # executed as a script with ``sidecar/`` on sys.path
+    from accessibility import (
+        MAX_ATTRIBUTES as MAX_STRUCTURE_ATTRIBUTES,
+        MAX_CHILDREN as MAX_STRUCTURE_CHILDREN,
+        MAX_DEPTH as MAX_STRUCTURE_DEPTH,
+        MAX_NODES as MAX_STRUCTURE_NODES,
+        MAX_PARENT_TREE,
+        MAX_ROLE_MAP,
+        MAX_SCANNED,
+        collect_accessibility,
+    )
     from diff import TOOL_NAME, tool_version
     from extractor import PAGE_BOX_KEYS, STANDARD_14_FONTS, PdfExtractor
     from security import (
@@ -805,23 +831,685 @@ def security_report(extractor: Any) -> dict[str, Any]:
     }
 
 
-def _structure_findings(document: Mapping[str, Any]) -> list[dict[str, Any]]:
-    if document.get('tagged'):
+# --- accessibility findings -------------------------------------------------
+
+# Standard structure types (ISO 32000-1 Table 333).  A resolved role outside
+# this set is only reported when the RoleMap does not define it either.
+STANDARD_STRUCTURE_ROLES = frozenset({
+    'Document', 'Part', 'Art', 'Sect', 'Div', 'BlockQuote', 'Caption', 'TOC',
+    'TOCI', 'Index', 'NonStruct', 'Private',
+    'P', 'H', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+    'L', 'LI', 'Lbl', 'LBody',
+    'Table', 'TR', 'TH', 'TD', 'THead', 'TBody', 'TFoot',
+    'Span', 'Quote', 'Note', 'Reference', 'BibEntry', 'Code', 'Link', 'Annot',
+    'Ruby', 'RB', 'RT', 'RP', 'Warichu', 'WT', 'WP',
+    'Figure', 'Formula', 'Form',
+})
+
+# Heading roles that carry an explicit level (the generic /H does not).
+HEADING_LEVELS = {f'H{level}': level for level in range(1, 7)}
+
+# Evidence lines name at most this many affected nodes.
+MAX_EVIDENCE_NODES = 3
+# Distinct unknown role names reported individually; the rest are summarised.
+MAX_UNKNOWN_ROLE_FINDINGS = 20
+# Per-page /StructParents findings; longer documents get a bounded list.
+MAX_PAGE_FINDINGS = 10
+
+# Resource limit shown next to each non-zero counter, for context.
+_STRUCTURE_LIMITS = {
+    'nodes': MAX_STRUCTURE_NODES,
+    'depth': MAX_STRUCTURE_DEPTH,
+    'children': MAX_STRUCTURE_CHILDREN,
+    'attributes': MAX_STRUCTURE_ATTRIBUTES,
+    'scanned': MAX_SCANNED,
+    'roleMap': MAX_ROLE_MAP,
+    'parentTree': MAX_PARENT_TREE,
+}
+
+# Counters that mean the structure tree itself was cut short.
+_TREE_TRUNCATION_KEYS = (
+    'nodes', 'depth', 'children', 'attributes', 'scanned', 'cycles'
+)
+# Counters that mean a structure listing (RoleMap/ParentTree) was cut short.
+# RoleMap cycles have their own finding and are not a listing cap.
+_LIST_TRUNCATION_KEYS = ('roleMap', 'parentTree')
+
+
+def _iter_structure_nodes(nodes: Sequence[Any]) -> Iterator[Mapping[str, Any]]:
+    """Depth-first, pre-order walk over the structure forest.
+
+    The collector emits an acyclic, ordered forest; the ``id`` guard only keeps
+    this helper safe if a caller passes hand-built data with a cycle.
+    """
+    stack = [node for node in reversed(nodes) if isinstance(node, Mapping)]
+    seen: set[int] = set()
+    while stack:
+        node = stack.pop()
+        identity = id(node)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        yield node
+        children = node.get('children')
+        if isinstance(children, (list, tuple)):
+            for child in reversed(children):
+                if isinstance(child, Mapping):
+                    stack.append(child)
+
+
+def _child_roles(node: Mapping[str, Any]) -> list[str]:
+    children = node.get('children')
+    if not isinstance(children, (list, tuple)):
         return []
+    return [
+        _text(child.get('role'))
+        for child in children
+        if isinstance(child, Mapping)
+    ]
+
+
+def _table_has_rows(node: Mapping[str, Any]) -> bool:
+    """True when the table has a TR child, directly or in a THead/TBody/TFoot."""
+    children = node.get('children')
+    if not isinstance(children, (list, tuple)):
+        return False
+    for child in children:
+        if not isinstance(child, Mapping):
+            continue
+        role = _text(child.get('role'))
+        if role == 'TR':
+            return True
+        if role in ('THead', 'TBody', 'TFoot') and 'TR' in _child_roles(child):
+            return True
+    return False
+
+
+def _first_page(nodes: Sequence[Mapping[str, Any]]) -> Optional[int]:
+    """Page of the first affected node that carries one."""
+    for node in nodes:
+        page = node.get('page')
+        if isinstance(page, int) and not isinstance(page, bool):
+            return page
+    return None
+
+
+def _node_label(node: Mapping[str, Any]) -> str:
+    identity = _text(node.get('id')) or '?'
+    role = _text(node.get('role')) or '?'
+    page = node.get('page')
+    if isinstance(page, int) and not isinstance(page, bool):
+        return f'{identity} ({role}, page {page})'
+    return f'{identity} ({role})'
+
+
+def _node_evidence(
+    nodes: Sequence[Mapping[str, Any]],
+    limit: int = MAX_EVIDENCE_NODES,
+) -> str:
+    """Bounded evidence naming the first few affected node ids/roles/pages."""
+    labels = [_node_label(node) for node in nodes[:limit]]
+    text = 'nodes=' + ', '.join(labels) if labels else 'nodes=0'
+    if len(nodes) > limit:
+        text += f'; +{len(nodes) - limit} more'
+    return text[:MAX_TEXT]
+
+
+def _node_finding(
+    severity: str,
+    title: str,
+    detail: str,
+    nodes: Sequence[Mapping[str, Any]],
+    recommendation: Optional[str],
+) -> dict[str, Any]:
+    """One aggregate finding for every node matching a condition."""
+    affected = list(nodes)
+    label = 'node' if len(affected) == 1 else 'nodes'
+    return _finding(
+        'structure',
+        severity,
+        _first_page(affected),
+        title,
+        f'{detail.rstrip()} {len(affected)} {label} affected.',
+        _node_evidence(affected),
+        recommendation,
+    )
+
+
+def _not_tagged_finding(document: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
+    """The single "not tagged" hint, softened for an unreadable StructTreeRoot.
+
+    ``document['hasStructTreeRoot']`` stays true when the catalog key exists but
+    cannot be resolved, while ``tagged`` is false in that case: the document is
+    not usable as tagged, but claiming that no /StructTreeRoot exists would be
+    wrong.  The title and the one-finding contract never change.
+    """
+    has_unreadable_root = isinstance(document, Mapping) and bool(
+        document.get('hasStructTreeRoot')
+    )
+    if has_unreadable_root:
+        detail = (
+            'No readable /StructTreeRoot entry and no /MarkInfo /Marked true '
+            'was found, so the document cannot be used as a tagged PDF. This '
+            'is a diagnostic hint, not a PDF/A certification.'
+        )
+    else:
+        detail = (
+            'No /StructTreeRoot and no /MarkInfo /Marked true was found, so the '
+            'document is not a tagged PDF. This is a diagnostic hint, not a '
+            'PDF/A certification.'
+        )
+    return _finding(
+        'structure',
+        'info',
+        None,
+        'PDF is not tagged',
+        detail,
+        None,
+        'Tag the document if it must be accessible or its reading order must '
+        'be machine readable.',
+    )
+
+
+def _page_struct_parent_findings(
+    document: Mapping[str, Any],
+    truncation: Optional[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Pages that have content but cannot point into the ParentTree.
+
+    The collector's ``pagesMissingStructParents`` fact is authoritative: it is
+    emitted only for a tagged document with a ``/ParentTree``, lists the first
+    content pages without ``/StructParents`` (bounded) and is absent when there
+    is no such page.  The fact is therefore exactly what this check needs:
+
+    * present list -- name those pages (filtered to the page range,
+      de-duplicated and bounded by ``MAX_PAGE_FINDINGS``);
+    * ``pagesMissingStructParentsTotal`` -- when present, the real number of
+      affected pages, so the "Only the first 10 of N" suffix is correct even
+      though the list itself is capped.  Older collector records without it fall
+      back to ``len(pagesMissingStructParents)``;
+    * present but unreadable -- treat as unknown and skip rather than guess;
+    * absent -- no content page is missing an entry, so emit nothing.  Pages
+      without content are intentionally ignored by the collector, so a
+      document-level "every page is missing" claim would be wrong.
+
+    When no collector record is supplied at all, the fact is unavailable and
+    the check is skipped.
+    """
+    if not isinstance(truncation, Mapping):
+        return []
+    if 'pagesMissingStructParents' not in truncation:
+        return []
+    pages = document.get('pages')
+    if not isinstance(pages, int) or isinstance(pages, bool) or pages <= 0:
+        return []
+
+    raw_missing = truncation.get('pagesMissingStructParents')
+    if not isinstance(raw_missing, (list, tuple)):
+        return []
+    missing = sorted({
+        page
+        for page in raw_missing
+        if isinstance(page, int)
+        and not isinstance(page, bool)
+        and 1 <= page <= pages
+    })
+    listed = missing[:MAX_PAGE_FINDINGS]
+
+    # The total is only trusted when it is a sane bound: at least the pages
+    # actually listed and no more than the document's page count.
+    raw_total = truncation.get('pagesMissingStructParentsTotal')
+    if (
+        isinstance(raw_total, int)
+        and not isinstance(raw_total, bool)
+        and len(missing) <= raw_total <= pages
+    ):
+        total_affected = raw_total
+        total_fact = f'; pagesMissingStructParentsTotal={raw_total}'
+    else:
+        total_affected = len(missing)
+        total_fact = ''
+    evidence = (
+        f'pages={pages}; pagesMissingStructParents={len(missing)}'
+        f'{total_fact}; listed={len(listed)}'
+    )
+
+    findings: list[dict[str, Any]] = []
+    for page in listed:
+        detail = (
+            f'Page {page} has no /StructParents entry while the document has a '
+            '/ParentTree, so its content items cannot be mapped to structure '
+            'elements.'
+        )
+        if total_affected > len(listed):
+            detail += (
+                f' Only the first {len(listed)} of {total_affected} affected '
+                'pages are listed.'
+            )
+        findings.append(
+            _finding(
+                'structure',
+                'warning',
+                page,
+                f'Page {page} has no structure parent entry',
+                detail,
+                evidence,
+                'Add a /StructParents entry to every page that has content.',
+            )
+        )
+    return findings
+
+
+def _heading_skip_findings(
+    nodes: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """A heading level may go down freely but not up by more than one.
+
+    A skip is only reported after a previous heading in tree order.  A document
+    that starts at H2 is not flagged: the missing H1 may live in a part of the
+    publication that is not in this tagged tree.
+    """
+    skips: list[tuple[int, int, Mapping[str, Any]]] = []
+    previous: Optional[int] = None
+    for node in nodes:
+        level = HEADING_LEVELS.get(_text(node.get('role')))
+        if level is None:
+            continue
+        if previous is not None and level > previous + 1:
+            skips.append((previous, level, node))
+        previous = level
+    if not skips:
+        return []
+
+    parts = [
+        f'H{previous} -> H{level} at {_node_label(node)}'
+        for previous, level, node in skips[:MAX_EVIDENCE_NODES]
+    ]
+    evidence = '; '.join(parts)
+    if len(skips) > MAX_EVIDENCE_NODES:
+        evidence += f'; +{len(skips) - MAX_EVIDENCE_NODES} more'
+    label = 'gap' if len(skips) == 1 else 'gaps'
     return [
         _finding(
             'structure',
-            'info',
-            None,
-            'PDF is not tagged',
-            'No /StructTreeRoot and no /MarkInfo /Marked true was found, so the '
-            'document is not a tagged PDF. This is a diagnostic hint, not a '
-            'PDF/A certification.',
-            None,
-            'Tag the document if it must be accessible or its reading order must '
-            'be machine readable.',
+            'warning',
+            _first_page([node for _, _, node in skips]),
+            'Heading levels are skipped',
+            f'Heading levels jump by more than one in tree order '
+            f'({len(skips)} {label}), so the outline has missing levels.',
+            evidence[:MAX_TEXT],
+            'Use consecutive heading levels (H1, H2, H3, ...) in reading order.',
         )
     ]
+
+
+def _accessibility_truncation_findings(
+    truncation: Optional[Mapping[str, Any]],
+    document: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Explicit findings for capped structure parsing and skipped entries."""
+    findings: list[dict[str, Any]] = []
+
+    tree_counts = {
+        key: _truncation_count(truncation, key) for key in _TREE_TRUNCATION_KEYS
+    }
+    list_counts = {
+        key: _truncation_count(truncation, key) for key in _LIST_TRUNCATION_KEYS
+    }
+    tree_counts = {key: value for key, value in tree_counts.items() if value}
+    list_counts = {key: value for key, value in list_counts.items() if value}
+
+    if tree_counts or list_counts:
+        parts = []
+        for key, value in {**tree_counts, **list_counts}.items():
+            limit = _STRUCTURE_LIMITS.get(key)
+            parts.append(
+                f'{key}={value}' + (f' (limit {limit})' if limit else '')
+            )
+        if tree_counts:
+            detail = (
+                'The structure tree hit a resource limit, so some elements are '
+                'missing and the accessibility checks may be incomplete.'
+            )
+        else:
+            detail = (
+                'The RoleMap or ParentTree listing hit a limit, so some entries '
+                'are missing and the accessibility checks may be incomplete.'
+            )
+        findings.append(
+            _finding(
+                'structure',
+                'warning',
+                None,
+                'Structure tree truncated',
+                detail,
+                '; '.join(parts)[:MAX_TEXT],
+                'Review the structure tree with another tool if every element '
+                'must be inspected.',
+            )
+        )
+
+    skipped = _truncation_count(truncation, 'skipped')
+    if not skipped:
+        # The document block carries the same counter when only it was passed.
+        skipped = _truncation_count(document, 'skipped')
+    if skipped:
+        label = 'element' if skipped == 1 else 'elements'
+        findings.append(
+            _finding(
+                'structure',
+                'warning',
+                None,
+                f'Accessibility parse skipped {skipped} {label}',
+                'Malformed or unreadable structure entries were skipped, so the '
+                'structure tree may be incomplete.',
+                f'skipped={skipped}',
+                'Check the structure tree with another tool if every element '
+                'must be inspectable.',
+            )
+        )
+
+    return findings
+
+
+def accessibility_findings(
+    resources: Mapping[str, Any],
+    truncation: Optional[Mapping[str, Any]] = None,
+) -> list[dict[str, Any]]:
+    """Turn the accessibility resources into ``structure`` findings.
+
+    Every check is heuristic: the result says "this common PDF/UA requirement
+    looks unmet", never that the document is or is not PDF/UA conformant.  The
+    page-level ``/StructParents`` check consumes the collector's exact
+    ``pagesMissingStructParents`` fact (see
+    :func:`_page_struct_parent_findings`) and is skipped when that fact is
+    unavailable instead of guessing.
+
+    Findings are aggregated per condition: evidence names the first few node
+    ids/roles/pages (bounded by ``MAX_EVIDENCE_NODES``) instead of one finding
+    per node.  Distinct unknown role names are listed individually up to
+    ``MAX_UNKNOWN_ROLE_FINDINGS``; the remainder becomes one summary finding.
+    The single "PDF is not tagged" finding replaces the whole check set for an
+    untagged document, so it is never duplicated.
+
+    ``truncation`` carries the collector's internal record: truncation counters
+    plus presence facts such as ``pagesMissingStructParents``.  Non-zero
+    truncation counters become explicit findings so a capped parse can never
+    look clean, while facts only refine a check's evidence.  ``roleMapCycles``
+    is always consumed by the dedicated RoleMap finding and is never part of
+    the generic truncation counters, whichever category the collector records
+    it under.
+    """
+    if not isinstance(resources, Mapping):
+        resources = {}
+    document = resources.get('document')
+    if not isinstance(document, Mapping):
+        document = {}
+
+    if not document.get('tagged'):
+        return [_not_tagged_finding(document)]
+
+    structure = resources.get('structure')
+    if not isinstance(structure, (list, tuple)):
+        structure = []
+    nodes = list(_iter_structure_nodes(list(structure)))
+
+    findings: list[dict[str, Any]] = []
+
+    has_root = bool(document.get('hasStructTreeRoot'))
+    has_parent_tree = bool(document.get('hasParentTree'))
+
+    if has_root and not has_parent_tree:
+        findings.append(
+            _finding(
+                'structure',
+                'warning',
+                None,
+                'Structure tree has no ParentTree',
+                'The catalog has a /StructTreeRoot but no /ParentTree, so '
+                'assistive technology cannot map content items (MCIDs) back to '
+                'their structure elements.',
+                'hasStructTreeRoot=true; hasParentTree=false',
+                'Add a /ParentTree number tree (and a /StructParents entry per '
+                'page) when producing the PDF.',
+            )
+        )
+    elif has_root and has_parent_tree:
+        findings.extend(_page_struct_parent_findings(document, truncation))
+
+    role_map = document.get('roleMap')
+    if not isinstance(role_map, Mapping):
+        role_map = {}
+
+    missing_role = [
+        node
+        for node in nodes
+        if node.get('kind') == 'element' and not _text(node.get('role'))
+    ]
+    if missing_role:
+        findings.append(
+            _node_finding(
+                'warning',
+                'Structure element has no role',
+                'Structure elements have no readable /S role, so their '
+                'semantics are unknown.',
+                missing_role,
+                'Assign a standard structure role (/S) to every structure '
+                'element.',
+            )
+        )
+
+    unknown: dict[str, list[Mapping[str, Any]]] = {}
+    for node in nodes:
+        if node.get('kind') != 'element':
+            # MCID/OBJR content placeholders are roles in the tree shape, not
+            # structure elements, and must never look like unknown roles.
+            continue
+        role = _text(node.get('role'))
+        if not role:
+            continue
+        raw_role = _text(node.get('rawRole')) or role
+        if raw_role in role_map or role in STANDARD_STRUCTURE_ROLES:
+            continue
+        unknown.setdefault(role, []).append(node)
+    for role in sorted(unknown)[:MAX_UNKNOWN_ROLE_FINDINGS]:
+        affected = unknown[role]
+        findings.append(
+            _finding(
+                'structure',
+                'warning',
+                _first_page(affected),
+                f'Unknown structure role: {role}',
+                f'Role {role!r} is not a standard structure role and is not '
+                'defined in the RoleMap.',
+                _node_evidence(affected),
+                'Map custom roles to a standard role in /RoleMap, or use a '
+                'standard role.',
+            )
+        )
+    extra_roles = sorted(unknown)[MAX_UNKNOWN_ROLE_FINDINGS:]
+    if extra_roles:
+        names = ', '.join(extra_roles[:MAX_EVIDENCE_NODES])
+        findings.append(
+            _finding(
+                'structure',
+                'warning',
+                None,
+                'Unknown structure roles',
+                f'{len(extra_roles)} more role name(s) are not standard and are '
+                f'not defined in the RoleMap: {names}.',
+                f'roles={len(extra_roles)}; first={names}'[:MAX_TEXT],
+                'Map custom roles to a standard role in /RoleMap, or use a '
+                'standard role.',
+            )
+        )
+
+    # Read from the collector's internal record.  O1 may report the cycle count
+    # as a presence fact rather than a truncation counter; either way it only
+    # feeds this dedicated finding and never the generic truncation finding.
+    role_map_cycles = _truncation_count(truncation, 'roleMapCycles')
+    if role_map_cycles:
+        findings.append(
+            _finding(
+                'structure',
+                'warning',
+                None,
+                'RoleMap cycle',
+                'RoleMap entries resolve in a cycle, so some roles cannot be '
+                'mapped to a standard role.',
+                f'cycles={role_map_cycles}',
+                'Fix the RoleMap so every custom role resolves to a standard '
+                'role.',
+            )
+        )
+
+    for role, title, detail, recommendation in (
+        (
+            'Figure',
+            'Figure has no alternative text',
+            'Figure elements have no /Alt text, so a screen reader cannot '
+            'describe the image.',
+            'Add /Alt text to every Figure element, or mark the image as an '
+            'artifact.',
+        ),
+        (
+            'Formula',
+            'Formula has no alternative text',
+            'Formula elements have no /Alt text, so a screen reader cannot '
+            'describe the formula.',
+            'Add /Alt text to every Formula element, or mark it as an artifact.',
+        ),
+    ):
+        affected = [
+            node
+            for node in nodes
+            if node.get('role') == role and not node.get('alt')
+        ]
+        if affected:
+            findings.append(
+                _node_finding('warning', title, detail, affected, recommendation)
+            )
+
+    links = [
+        node
+        for node in nodes
+        if node.get('role') == 'Link'
+        and not (node.get('alt') or node.get('actualText') or node.get('title'))
+    ]
+    if links:
+        findings.append(
+            _node_finding(
+                'warning',
+                'Link has no alternate description',
+                'Link elements have no /Alt, /ActualText or /T description, so '
+                'a screen reader cannot explain the link target.',
+                links,
+                'Add /Alt, /ActualText or /T to every Link element.',
+            )
+        )
+
+    findings.extend(_heading_skip_findings(nodes))
+
+    lists = [
+        node
+        for node in nodes
+        if node.get('role') == 'L' and 'LI' not in _child_roles(node)
+    ]
+    if lists:
+        findings.append(
+            _node_finding(
+                'warning',
+                'List has no list items',
+                'List (L) elements have no LI children, so the list has no '
+                'readable items.',
+                lists,
+                'Add LI children (each with an LBody) to every L element.',
+            )
+        )
+
+    list_items = [
+        node
+        for node in nodes
+        if node.get('role') == 'LI' and 'LBody' not in _child_roles(node)
+    ]
+    if list_items:
+        findings.append(
+            _node_finding(
+                'info',
+                'List item has no LBody',
+                'List item (LI) elements have no LBody child, so the item text '
+                'is not grouped.',
+                list_items,
+                'Wrap the item text in an LBody inside every LI element.',
+            )
+        )
+
+    tables = [
+        node
+        for node in nodes
+        if node.get('role') == 'Table' and not _table_has_rows(node)
+    ]
+    if tables:
+        findings.append(
+            _node_finding(
+                'warning',
+                'Table has no rows',
+                'Table elements have no TR children, so the table has no '
+                'readable rows.',
+                tables,
+                'Add TR rows (with TH/TD cells) to every Table element.',
+            )
+        )
+
+    def _has_scope(node: Mapping[str, Any]) -> bool:
+        attributes = node.get('attributes')
+        return (
+            isinstance(attributes, Mapping)
+            and attributes.get('Scope') is not None
+        )
+
+    header_cells = [
+        node
+        for node in nodes
+        if node.get('role') == 'TH' and not _has_scope(node)
+    ]
+    if header_cells:
+        findings.append(
+            _node_finding(
+                'info',
+                'Table header cell has no scope',
+                'Table header (TH) elements have no /Scope attribute, so the '
+                'header/row relationship is ambiguous.',
+                header_cells,
+                'Set /Scope (Row, Column, Both) on every TH element.',
+            )
+        )
+
+    findings.extend(_accessibility_truncation_findings(truncation, document))
+
+    seen: set[tuple] = set()
+    unique: list[dict[str, Any]] = []
+    for finding in findings:
+        key = _sort_key(finding)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(finding)
+    return sort_findings(unique)
+
+
+def accessibility_report(extractor: Any) -> dict[str, Any]:
+    """The complete ``AccessibilityReport``: resources, findings and summary."""
+    resources, truncation = collect_accessibility(extractor)
+    findings = accessibility_findings(resources, truncation)
+    return {
+        'schemaVersion': SCHEMA_VERSION,
+        'tool': tool(),
+        'document': resources['document'],
+        'structure': resources['structure'],
+        'findings': findings,
+        'summary': summarize_findings(findings),
+    }
 
 
 # --- document-level page geometry ------------------------------------------
@@ -978,6 +1666,8 @@ def _document_findings(
     document: Mapping[str, Any],
     security_resources: Optional[Mapping[str, Any]] = None,
     security_truncation: Optional[Mapping[str, Any]] = None,
+    accessibility_resources: Optional[Mapping[str, Any]] = None,
+    accessibility_truncation: Optional[Mapping[str, Any]] = None,
 ) -> list[dict[str, Any]]:
     if not isinstance(security_resources, Mapping):
         # Callers that only have the audit document block still get the single
@@ -997,11 +1687,36 @@ def _document_findings(
             },
         }
 
+    if not isinstance(accessibility_resources, Mapping):
+        # Callers that only have the audit document block still get the single
+        # "PDF is not tagged" hint; the full audit paths pass the collected
+        # resources so every accessibility check can run.
+        accessibility_resources = {
+            'document': {'tagged': bool(document.get('tagged'))},
+            'structure': [],
+        }
+        accessibility_truncation = None
+    else:
+        accessibility_document = accessibility_resources.get('document')
+        if not isinstance(accessibility_document, Mapping):
+            accessibility_document = {}
+        tagged = bool(document.get('tagged'))
+        if bool(accessibility_document.get('tagged')) != tagged:
+            # The audit's document block is the shared, already-resolved flag.
+            # Keep both halves agreeing so an unreadable root cannot hide the
+            # not-tagged hint or invent one.
+            accessibility_resources = {
+                **accessibility_resources,
+                'document': {**accessibility_document, 'tagged': tagged},
+            }
+
     findings: list[dict[str, Any]] = []
     findings.extend(_font_findings(metadata))
     findings.extend(_metadata_findings(document))
     findings.extend(security_findings(security_resources, security_truncation))
-    findings.extend(_structure_findings(document))
+    findings.extend(
+        accessibility_findings(accessibility_resources, accessibility_truncation)
+    )
     findings.extend(_page_geometry_findings(extractor))
     return findings
 
@@ -1190,22 +1905,26 @@ def _page_findings(
 def audit_document(extractor: Any) -> dict[str, Any]:
     """Document-level audit: ``{tool, document, findings}``.
 
-    Reads only the info dictionary, the catalog and the page dictionaries, so it
-    is cheap enough to run before the page batches.  The security resources are
-    collected once and merged as ``security`` findings; the inventory itself is
-    not part of the audit report.
+    Reads only the info dictionary, the catalog, the page dictionaries and the
+    structure tree, so it is cheap enough to run before the page batches.  The
+    security and accessibility resources are collected once and merged as
+    ``security``/``structure`` findings; neither inventory is part of the audit
+    report.
     """
     metadata = extractor.get_metadata() or {}
     if not isinstance(metadata, Mapping):
         metadata = {}
     document = _document_info(extractor, metadata)
     security_resources, security_truncation = collect_security_with_meta(extractor)
+    accessibility_resources, accessibility_truncation = collect_accessibility(extractor)
     findings = _document_findings(
         extractor,
         metadata,
         document,
         security_resources,
         security_truncation,
+        accessibility_resources,
+        accessibility_truncation,
     )
     return {
         'tool': tool(),
@@ -1261,6 +1980,9 @@ def audit_file(path: Union[str, Path]) -> dict[str, Any]:
             metadata = {}
         document = _document_info(extractor, metadata)
         security_resources, security_truncation = collect_security_with_meta(extractor)
+        accessibility_resources, accessibility_truncation = collect_accessibility(
+            extractor
+        )
         findings = list(
             _document_findings(
                 extractor,
@@ -1268,6 +1990,8 @@ def audit_file(path: Union[str, Path]) -> dict[str, Any]:
                 document,
                 security_resources,
                 security_truncation,
+                accessibility_resources,
+                accessibility_truncation,
             )
         )
 
@@ -1296,6 +2020,9 @@ __all__ = [
     'MIN_IMAGE_DPI',
     'PAGE_BATCH_SIZE',
     'SCHEMA_VERSION',
+    'STANDARD_STRUCTURE_ROLES',
+    'accessibility_findings',
+    'accessibility_report',
     'audit_document',
     'audit_file',
     'audit_pages',
