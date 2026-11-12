@@ -4,6 +4,7 @@ import type { SaveFileRequest } from '../../shared/constants';
 import type { OpenExternalResult } from '../../shared/external-url';
 import type { AuditDocumentResult, AuditPagesResult } from '../../shared/audit-types';
 import type { SecurityReport } from '../../shared/security-types';
+import type { AccessibilityReport } from '../../shared/accessibility-types';
 import type {
   DiffOptionsInput,
   DiffResult,
@@ -46,6 +47,12 @@ export type {
   SecurityReport,
   SecuritySignature,
 } from '../../shared/security-types';
+export type {
+  AccessibilityDocumentInfo,
+  AccessibilityReport,
+  StructureNode,
+  StructureNodeKind,
+} from '../../shared/accessibility-types';
 export type {
   DiffChange,
   DiffChangeKind,
@@ -178,6 +185,16 @@ export interface IpcApi {
    * resource scan cannot affect an existing audit report.
    */
   securityDocument(): Promise<SecurityReport>;
+  /**
+   * Read the document's tagged structure tree and accessibility findings.
+   *
+   * Read-only and document-scoped like `securityDocument`: it inspects the
+   * document the sidecar already has open, never edits a tag, executes a content
+   * stream or resolves an external resource, and its findings are heuristics
+   * rather than a PDF/UA compliance verdict. Independent of the audit so a failed
+   * structure parse cannot affect an existing audit report.
+   */
+  accessibilityDocument(): Promise<AccessibilityReport>;
   /**
    * Diff two PDFs without touching the currently open document.
    *

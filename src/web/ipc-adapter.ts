@@ -35,6 +35,7 @@ import { UNSAFE_EXTERNAL_URL_ERROR, toSafeExternalUrl } from '../shared/external
 import type { OpenExternalResult } from '../shared/external-url';
 import type { AuditDocumentResult, AuditPagesResult } from '../shared/audit-types';
 import type { SecurityReport } from '../shared/security-types';
+import type { AccessibilityReport } from '../shared/accessibility-types';
 import { isFileSource } from '../shared/diff-types';
 import type {
   DiffOptionsInput,
@@ -540,6 +541,11 @@ export function createWebIpc(): IpcApi {
     // Document security resources: a plain allowlisted RPC on the document the
     // backend already has open. Read-only, and independent of the audit.
     securityDocument: () => rpc<SecurityReport>('security_document'),
+
+    // Tagged-PDF structure tree and accessibility findings: a plain allowlisted
+    // RPC on the document the backend already has open. Read-only, and
+    // independent of the audit.
+    accessibilityDocument: () => rpc<AccessibilityReport>('accessibility_document'),
 
     diffPdfs,
 

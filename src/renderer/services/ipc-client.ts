@@ -3,6 +3,7 @@ import type { RawRef } from '../types/raw-pdf';
 import type { DiffOptionsInput, DiffSide, DiffSource } from '../../shared/diff-types';
 import type { OpenExternalResult } from '../../shared/external-url';
 import {
+  ACCESSIBILITY_RENDERER_TIMEOUT_MS,
   ANALYZE_FONTS_RENDERER_TIMEOUT_MS,
   AUDIT_RENDERER_TIMEOUT_MS,
   EXTRACT_PAGE_RENDERER_TIMEOUT_MS,
@@ -248,6 +249,17 @@ export const ipc = {
       () => window.pdfInspector.securityDocument(),
       'securityDocument',
       SECURITY_RENDERER_TIMEOUT_MS,
+    ),
+  // The structure parse walks the whole tagged tree (bounded to 5000 nodes in
+  // the sidecar), so it gets the same kind of dedicated budget as the audit:
+  // the renderer must stay patient longer than main so main's clear timeout
+  // message wins the race. A timeout restarts and retries once, and the retry is
+  // safe because the parse is read-only and takes no arguments.
+  accessibilityDocument: () =>
+    callWithTimeout(
+      () => window.pdfInspector.accessibilityDocument(),
+      'accessibilityDocument',
+      ACCESSIBILITY_RENDERER_TIMEOUT_MS,
     ),
   // No renderer timer: a diff's budget is an INACTIVITY budget in the backend
   // (main process / web server), rearmed by every progress report the sidecar

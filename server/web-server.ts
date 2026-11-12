@@ -44,6 +44,7 @@ import {
   parsePdfUrl,
 } from '../src/main/pdf-url';
 import {
+  ACCESSIBILITY_TIMEOUT_MS,
   ANALYZE_FONTS_TIMEOUT_MS,
   AUDIT_TIMEOUT_MS,
   DIFF_TIMEOUT_MS,
@@ -104,6 +105,10 @@ const RPC_ALLOWLIST = new Set([
   // signatures and encryption of the document already open here. Separate from
   // the audit, so a failed scan cannot affect an audit report.
   'security_document',
+  // Tagged-PDF structure tree and accessibility findings (read-only): the
+  // structure tree, RoleMap and ParentTree of the document already open here.
+  // Separate from the audit, so a failed parse cannot affect an audit report.
+  'accessibility_document',
   'get_image_data',
   // Raw PDF reading (read-only): the trailer roots, one indirect object and one
   // page's decoded content streams of the document already open here.
@@ -130,6 +135,7 @@ const RPC_TIMEOUTS: Record<string, number> = {
   audit_document: AUDIT_TIMEOUT_MS,
   audit_pages: AUDIT_TIMEOUT_MS,
   security_document: SECURITY_TIMEOUT_MS,
+  accessibility_document: ACCESSIBILITY_TIMEOUT_MS,
   raw_document: RAW_TIMEOUT_MS,
   raw_object: RAW_TIMEOUT_MS,
   raw_page_content: RAW_TIMEOUT_MS,
@@ -321,10 +327,10 @@ interface PendingRequest {
  * - stdout is line-buffered; the first `{"ready":true}` line resolves start;
  * - `stdin` writes are serialized, but responses may arrive out of order;
  * - every request has an INACTIVITY budget (30s default; 120s for `open`,
- *   `extract_page`, analyze_fonts, both audit methods, `security_document` and
- *   the raw readers; the diff endpoint passes 300s). A progress line from the
- *   sidecar rearms the timer, so a long diff is bounded by silence rather than
- *   total time;
+ *   `extract_page`, analyze_fonts, both audit methods, `security_document`,
+ *   `accessibility_document` and the raw readers; the diff endpoint passes
+ *   300s). A progress line from the sidecar rearms the timer, so a long diff is
+ *   bounded by silence rather than total time;
  * - an exit rejects all pending requests and clears the running state;
  * - `send()` lazily starts the sidecar once, unless stop() was requested;
  * - `restart()` shuts the old process down, spawns a new one and re-opens the
@@ -766,9 +772,9 @@ export interface SidecarPoolOptions {
  * The browser backend's two-lane pool.
  *
  * Mirrors `src/main/sidecar-pool.ts`: the interactive lane owns page
- * navigation/opening, the background lane owns fonts/audit/raw/diff and is
- * created lazily. Route selection comes from the shared `laneForMethod`, so the
- * desktop and web backends cannot drift.
+ * navigation/opening, the background lane owns fonts/audit/security/
+ * accessibility/raw/diff and is created lazily. Route selection comes from the
+ * shared `laneForMethod`, so the desktop and web backends cannot drift.
  *
  * Difference from desktop: the web `SidecarManager` restores the tracked
  * document itself (`setDocumentPath` + `restoreDocument`), so the pool only has
@@ -2409,9 +2415,10 @@ async function handleRpc(
   const params = body.params ?? {};
   if (!isRecord(params)) throw new HttpError(400, '"params" must be an object');
 
-  // Page extraction, raw reads, font analysis, both audit passes and the
-  // document security scan walk or decode large parts of the document; every
-  // other allowlisted method keeps the default budget.
+  // Page extraction, raw reads, font analysis, both audit passes, the document
+  // security scan and the accessibility structure parse walk or decode large
+  // parts of the document; every other allowlisted method keeps the default
+  // budget.
   const timeoutMs = RPC_TIMEOUTS[method] ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
   // The sidecar holds one document. Once the last one is closed (or a restore

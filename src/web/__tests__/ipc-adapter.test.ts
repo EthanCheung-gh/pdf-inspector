@@ -166,6 +166,7 @@ describe('web ipc adapter', () => {
   it('implements every IpcApi method', () => {
     expect(Object.keys(api()).sort()).toEqual(
       [
+        'accessibilityDocument',
         'activatePdfDocument',
         'analyzeFonts',
         'auditDocument',

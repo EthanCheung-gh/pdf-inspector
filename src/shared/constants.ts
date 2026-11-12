@@ -169,6 +169,31 @@ export const SECURITY_TIMEOUT_MS = 120_000;
 export const SECURITY_RENDERER_TIMEOUT_MS = SECURITY_TIMEOUT_MS + 5_000;
 
 /**
+ * Timeout for one `accessibility_document` request.
+ *
+ * The accessibility pass walks the catalog's /StructTreeRoot, its /RoleMap and
+ * /ParentTree, then every structure element (bounded to 5000 nodes), so it is
+ * document-wide like the audit and the security scan and gets the same generous
+ * budget instead of the 30s default. It is a per-request budget: a structure
+ * scan can never extend or shorten the budget of an extract/audit call.
+ */
+export const ACCESSIBILITY_TIMEOUT_MS = 120_000;
+
+/**
+ * Renderer-side budget for `accessibilityDocument`.
+ *
+ * Larger than the main-process budget for the same reason as
+ * `ANALYZE_FONTS_RENDERER_TIMEOUT_MS`: the renderer's timer starts one IPC hop
+ * earlier, so with an equal budget it would always fire first and turn a
+ * legitimately slow structure parse into a restart-triggering
+ * "Sidecar timeout", hiding main's clear
+ * `Request "accessibility_document" timed out after 120s` error. The extra
+ * headroom means main's timeout surfaces first and no restart is attempted; the
+ * renderer timer is only a backstop for a main process that never answers.
+ */
+export const ACCESSIBILITY_RENDERER_TIMEOUT_MS = ACCESSIBILITY_TIMEOUT_MS + 5_000;
+
+/**
  * Timeout for one `extract_page` request.
  *
  * Extraction is normally sub-0.1s, but a single complex page (many tables,
@@ -217,6 +242,15 @@ export const IPC_CHANNELS = {
    * channels so a failed resource scan cannot affect an audit report.
    */
   SECURITY_DOCUMENT: 'pdf:security-document',
+  /**
+   * Tagged-PDF structure tree and accessibility findings
+   * (see src/shared/accessibility-types.ts).
+   *
+   * Read-only and document-scoped: it inspects the PDF the sidecar already has
+   * open and never opens, closes or replaces it. Separate from the audit
+   * channels so a failed structure parse cannot affect an audit report.
+   */
+  ACCESSIBILITY_DOCUMENT: 'pdf:accessibility-document',
   DIFF_PDFS: 'pdf:diff',
   PICK_DIFF_PDF: 'pdf:pick-diff',
   /**

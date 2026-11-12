@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { deleteDownloadedFile, downloadPdfToFile, parsePdfUrl } from './pdf-url';
 import { isDiffTimeoutError, type SidecarTransport } from './sidecar-pool';
-import { IPC_CHANNELS, ANALYZE_FONTS_TIMEOUT_MS, AUDIT_TIMEOUT_MS, DIFF_TIMEOUT_MS, EXTRACT_PAGE_TIMEOUT_MS, OPEN_PDF_TIMEOUT_MS, RAW_TIMEOUT_MS, SECURITY_TIMEOUT_MS } from '../shared/constants';
+import { IPC_CHANNELS, ACCESSIBILITY_TIMEOUT_MS, ANALYZE_FONTS_TIMEOUT_MS, AUDIT_TIMEOUT_MS, DIFF_TIMEOUT_MS, EXTRACT_PAGE_TIMEOUT_MS, OPEN_PDF_TIMEOUT_MS, RAW_TIMEOUT_MS, SECURITY_TIMEOUT_MS } from '../shared/constants';
 import type { SaveFileRequest } from '../shared/constants';
 import { UNSAFE_EXTERNAL_URL_ERROR, toSafeExternalUrl } from '../shared/external-url';
 import type { OpenExternalResult } from '../shared/external-url';
@@ -252,6 +252,16 @@ export function registerIpcHandlers(sidecar: SidecarTransport): void {
   // default; a failure here only affects the Resources view, never the audit.
   ipcMain.handle(IPC_CHANNELS.SECURITY_DOCUMENT, async () => {
     return sidecar.send('security_document', {}, SECURITY_TIMEOUT_MS);
+  });
+
+  // Tagged-PDF structure tree and accessibility findings. Read-only and
+  // document-scoped like the security channels: no handler sends `open`, so the
+  // Inspect document, its caches and the Diff/Audit inputs stay untouched. The
+  // parse walks the whole structure tree (bounded in the sidecar), so it gets
+  // the dedicated accessibility budget instead of the 30s default; a failure
+  // here only affects the Structure view, never the audit.
+  ipcMain.handle(IPC_CHANNELS.ACCESSIBILITY_DOCUMENT, async () => {
+    return sidecar.send('accessibility_document', {}, ACCESSIBILITY_TIMEOUT_MS);
   });
 
   // Raw PDF reads. Like the audit channels these inspect the document the

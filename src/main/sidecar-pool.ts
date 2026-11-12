@@ -7,8 +7,8 @@ import type { SidecarManager } from './sidecar';
  * The interactive lane owns the calls a user is waiting on: opening a document,
  * extracting the current page's metadata and serving image data. The background
  * lane owns expensive, whole-document work (font analysis, audit, security
- * resources, raw reads and diff) so it cannot queue in front of a page
- * extraction.
+ * resources, the accessibility structure tree, raw reads and diff) so it cannot
+ * queue in front of a page extraction.
  *
  * The table below is the single source of truth for that split; the web backend
  * imports it so desktop and browser route identically.
@@ -28,6 +28,7 @@ export const BACKGROUND_METHODS = [
   'audit_document',
   'audit_pages',
   'security_document',
+  'accessibility_document',
   'raw_document',
   'raw_object',
   'raw_page_content',

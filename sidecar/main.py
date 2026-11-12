@@ -9,7 +9,13 @@ from models import parse_request, format_response, RpcResponse
 from extractor import PdfExtractor
 from cache import PageCache
 from diff import DiffError, DiffOptions, diff_files
-from audit import AuditError, audit_document, audit_pages, security_report
+from audit import (
+    AuditError,
+    accessibility_report,
+    audit_document,
+    audit_pages,
+    security_report,
+)
 from raw import RawError, raw_document, raw_object, raw_page_content
 
 
@@ -246,6 +252,9 @@ class SidecarSession:
 
         if method == 'security_document':
             return security_report(self._require_extractor())
+
+        if method == 'accessibility_document':
+            return accessibility_report(self._require_extractor())
 
         if method == 'raw_document':
             return self._raw_dispatch(raw_document)
