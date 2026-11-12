@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">PDF Inspector 跨年特别版图标</title>
+  <desc id="desc">深色圆角方形底，层叠 PDF 页面、对象框、坐标检查镜与金色跨年星弧。</desc>
+
+  <defs>
+    <linearGradient id="bg" x1="72" y1="48" x2="440" y2="464" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0B1220"/>
+      <stop offset="0.55" stop-color="#101A2E"/>
+      <stop offset="1" stop-color="#0A1020"/>
+    </linearGradient>
+
+    <linearGradient id="page" x1="128" y1="96" x2="380" y2="416" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#EAF2FF"/>
+    </linearGradient>
+
+    <linearGradient id="gold" x1="140" y1="64" x2="372" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FDE68A"/>
+      <stop offset="0.5" stop-color="#FBBF24"/>
+      <stop offset="1" stop-color="#F59E0B"/>
+    </linearGradient>
+
+    <linearGradient id="lens" x1="316" y1="308" x2="408" y2="412" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#67E8F9"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- 背景 -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg)"/>
+  <rect x="16.5" y="16.5" width="479" height="479" rx="111.5" fill="none" stroke="#26344D" stroke-opacity="0.8"/>
+
+  <!-- 层叠底页：组合/多工作区 -->
+  <rect x="112" y="120" width="248" height="320" rx="28" fill="#17233A" stroke="#2B3B55" stroke-width="4"/>
+  <rect x="100" y="136" width="248" height="320" rx="28" fill="#111C30" stroke="#22314A" stroke-width="4" opacity="0.9"/>
+
+  <!-- PDF 页面 -->
+  <path d="M160 96H316L380 160V384C380 401.673 365.673 416 348 416H160C142.327 416 128 401.673 128 384V128C128 110.327 142.327 96 160 96Z"
+        fill="url(#page)" filter="url(#soft)"/>
+  <path d="M316 96V160H380L316 96Z" fill="#C7D8F0"/>
+  <path d="M316 96L380 160" stroke="#AFC4E2" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- 坐标网格 -->
+  <g stroke="#D7E4F6" stroke-width="3" stroke-linecap="round" opacity="0.9">
+    <path d="M168 176H340"/>
+    <path d="M168 232H340"/>
+    <path d="M168 288H340"/>
+    <path d="M168 344H340"/>
+    <path d="M184 168V376"/>
+    <path d="M240 168V376"/>
+    <path d="M296 168V376"/>
+  </g>
+
+  <!-- 对象 BBox：蓝/橙/绿 -->
+  <rect x="164" y="190" width="104" height="48" rx="10" fill="none" stroke="#3B82F6" stroke-width="9"/>
+  <rect x="218" y="266" width="116" height="52" rx="10" fill="none" stroke="#F59E0B" stroke-width="9"/>
+  <rect x="176" y="342" width="82" height="38" rx="9" fill="none" stroke="#22C55E" stroke-width="9"/>
+
+  <!-- 检查十字 -->
+  <g stroke="#0EA5E9" stroke-width="6" stroke-linecap="round" opacity="0.95">
+    <path d="M258 210V238"/>
+    <path d="M244 224H272"/>
+  </g>
+
+  <!-- 检查镜 -->
+  <circle cx="350" cy="350" r="58" fill="#0B1220" stroke="url(#lens)" stroke-width="12"/>
+  <circle cx="350" cy="350" r="34" fill="none" stroke="#A5F3FC" stroke-width="5" opacity="0.9"/>
+  <path d="M392 392L438 438" stroke="url(#lens)" stroke-width="20" stroke-linecap="round"/>
+  <path d="M336 350H364M350 336V364" stroke="#FBBF24" stroke-width="7" stroke-linecap="round"/>
+
+  <!-- 跨年星弧：时间切换/特别版点缀 -->
+  <path d="M142 72C198 28 314 28 370 72" fill="none" stroke="url(#gold)" stroke-width="10" stroke-linecap="round"/>
+  <path d="M142 72L146 52L166 48L146 44L142 24L138 44L118 48L138 52Z" fill="#FBBF24"/>
+  <path d="M370 72L374 52L394 48L374 44L370 24L366 44L346 48L366 52Z" fill="#FBBF24"/>
+
+  <!-- 小星点，16px 下仍保留金色识别 -->
+  <circle cx="256" cy="42" r="7" fill="#FDE68A"/>
+  <circle cx="304" cy="34" r="4" fill="#FBBF24" opacity="0.9"/>
+  <circle cx="208" cy="36" r="4" fill="#FBBF24" opacity="0.9"/>
+</svg>
