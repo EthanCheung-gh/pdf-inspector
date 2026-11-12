@@ -14,11 +14,33 @@ const definedTokens = (css: string): Set<string> =>
 const usedTokens = (css: string): Set<string> =>
   new Set(Array.from(css.matchAll(/var\((--pi-[a-z0-9-]+)/g), (match) => match[1]));
 
+/** Extract the declaration body of the first rule with the given selector. */
+const ruleBlock = (css: string, selector: string): string => {
+  const start = css.indexOf(selector);
+  if (start === -1) return '';
+  const open = css.indexOf('{', start);
+  if (open === -1) return '';
+
+  let depth = 0;
+  for (let index = open; index < css.length; index += 1) {
+    const char = css[index];
+    if (char === '{') depth += 1;
+    else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return css.slice(open + 1, index);
+    }
+  }
+  return '';
+};
+
 const cssModules = readdirSync(rendererDir, { recursive: true, encoding: 'utf8' })
   .filter((entry) => entry.endsWith('.css') && entry !== 'theme.css')
   .map((entry) => join(rendererDir, entry));
 
 const themeCss = readThemeCss();
+const darkTokens = definedTokens(ruleBlock(themeCss, ':root {'));
+const islandsTokens = definedTokens(ruleBlock(themeCss, "html[data-theme='islands'] {"));
+const lightTokens = definedTokens(ruleBlock(themeCss, "html[data-theme='light'] {"));
 
 describe('theme.css tokens', () => {
   it('keeps the original dark palette as the default', () => {
@@ -36,6 +58,26 @@ describe('theme.css tokens', () => {
     expect(themeCss).toMatch(/--pi-island-padding:\s*10px/);
     expect(themeCss).toMatch(/--pi-island-border-width:\s*1px/);
     expect(themeCss).toMatch(/--pi-island-shadow:\s*0 8px 24px/);
+  });
+
+  it('defines every structural token for the light theme', () => {
+    expect(themeCss).toMatch(/html\[data-theme='light'\]/);
+    expect(themeCss).toMatch(/html\[data-theme='light'\][\s\S]*?color-scheme:\s*light/);
+
+    expect(lightTokens.size).toBeGreaterThan(0);
+    expect(Array.from(darkTokens).filter((token) => !lightTokens.has(token))).toEqual([]);
+    expect(Array.from(islandsTokens).filter((token) => !lightTokens.has(token))).toEqual([]);
+  });
+
+  it('keeps the light canvas flat and the islands shell gradient intact', () => {
+    const lightBody = ruleBlock(themeCss, "html[data-theme='light'] body");
+    expect(lightBody).toContain('background-image: none');
+
+    const islandsBody = ruleBlock(themeCss, "html[data-theme='islands'] body");
+    expect(islandsBody).toContain('radial-gradient');
+    expect(ruleBlock(themeCss, "html[data-theme='islands'] #root")).toContain(
+      'background: transparent',
+    );
   });
 
   it('has no undefined variables in any renderer CSS module', () => {

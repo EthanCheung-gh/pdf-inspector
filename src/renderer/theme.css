@@ -10,6 +10,10 @@
  * canvas with lighter floating cards; components opt into the island chrome
  * (radius, border, shadow) inside their own CSS modules.
  *
+ * `html[data-theme='light']` re-maps every structural token for a light
+ * appearance. The System theme resolves to either this block or the dark
+ * default in `theme-store`, so no `data-theme="system"` selector is needed.
+ *
  * Semantic/object colours (PDF object types, annotation kinds, page-box
  * colours, the white PDF page) are intentionally not tokens and never change
  * between themes.
@@ -230,6 +234,128 @@ html[data-theme='islands'] {
   background-color: var(--pi-bg-app);
 }
 
+/*
+ * Light: the same structure as dark with a clean paper-like palette. Every
+ * token from the dark/islands blocks is redefined here so a component can
+ * never fall back to a dark value in light mode. The PDF page itself, object
+ * overlay colours and annotation colours are deliberately untouched.
+ */
+html[data-theme='light'] {
+  color-scheme: light;
+
+  /* --- backgrounds ------------------------------------------------------- */
+  --pi-bg-app: #f3f5f8;
+  --pi-bg-deep: #e9edf2;
+  --pi-bg-deep-alt: #eef2f6;
+  --pi-bg-canvas: #e6ebf2;
+  --pi-bg-panel: #ffffff;
+  --pi-bg-panel-alt: #f7f9fb;
+  --pi-bg-sunken: #eef2f6;
+  --pi-bg-subtle: #f2f5f9;
+  --pi-bg-raised: #ffffff;
+  --pi-bg-selected: #dbe8fb;
+  --pi-bg-hover: #e9eff7;
+  --pi-bg-hover-strong: #dbe5f2;
+  --pi-bg-control: #ffffff;
+  --pi-bg-control-hover: #edf3fa;
+  --pi-bg-control-disabled: #f2f4f7;
+  --pi-bg-disabled-alt: #eef1f5;
+  --pi-bg-checker: #e7ecf2;
+  --pi-bg-panel-translucent: rgb(255 255 255 / 94%);
+  --pi-bg-app-translucent: rgb(243 245 248 / 92%);
+  --pi-splitter-bg: #d7dee8;
+
+  /* --- borders ----------------------------------------------------------- */
+  --pi-border: #c9d2dd;
+  --pi-border-strong: #b2bdca;
+  --pi-border-hover: #8494a7;
+  --pi-border-hover-soft: #aab7c6;
+  --pi-border-subtle: #dde3ea;
+  --pi-border-muted: #d4dbe4;
+  --pi-border-faint: #e6ebf1;
+  --pi-border-disabled: #dfe4ea;
+  --pi-border-swatch: #7a8794;
+
+  /* --- text -------------------------------------------------------------- */
+  --pi-text: #1f2937;
+  --pi-text-strong: #111827;
+  --pi-text-heading: #0f172a;
+  --pi-text-secondary: #374151;
+  --pi-text-tab: #374151;
+  --pi-text-muted: #4b5563;
+  --pi-text-soft: #56616f;
+  --pi-text-subtle: #66717f;
+  --pi-text-faint: #77828f;
+  --pi-text-dim: #87929e;
+  --pi-text-disabled: #9aa5b1;
+  --pi-text-inverse: #ffffff;
+
+  /* --- accent ------------------------------------------------------------ */
+  --pi-accent: #2563eb;
+  --pi-accent-border: #1d4ed8;
+  --pi-accent-strong: #1d4ed8;
+  --pi-accent-strong-hover: #1e40af;
+  --pi-accent-active: #1e3a8a;
+  --pi-accent-soft: #e8f0fe;
+  --pi-accent-soft-border: #b9cff5;
+  --pi-accent-soft-border-strong: #8fb4ef;
+  --pi-accent-text: #1e3a8a;
+  --pi-accent-text-soft: #1e40af;
+  --pi-focus: #2563eb;
+  --pi-focus-strong: #1d4ed8;
+
+  /* --- status colours ---------------------------------------------------- */
+  --pi-danger: #b42318;
+  --pi-danger-text: #b42318;
+  --pi-danger-text-bright: #991b1b;
+  --pi-danger-soft: #b42318;
+  --pi-danger-border: #dc9a9a;
+  --pi-danger-border-soft: #f0caca;
+  --pi-danger-bright: #dc2626;
+  --pi-danger-bg: #fde8e8;
+  --pi-danger-on-bg: #991b1b;
+  --pi-warning: #8a5a00;
+  --pi-warning-text: #8a5a00;
+  --pi-warning-border: #d8b56a;
+  --pi-warning-border-soft: #ecd9ae;
+  --pi-success: #1f7a45;
+  --pi-success-alt: #15703c;
+  --pi-success-border: #a7d7b8;
+  --pi-info: #1f5f9e;
+  --pi-info-text: #1e4f82;
+  --pi-info-strong: #1d4ed8;
+  --pi-info-bright: #1e40af;
+  --pi-info-link: #1d4ed8;
+
+  /* --- shape ------------------------------------------------------------- */
+  --pi-radius-xs: 2px;
+  --pi-radius-sm: 3px;
+  --pi-radius-md: 4px;
+  --pi-radius-lg: 8px;
+  --pi-radius-xl: 12px;
+  --pi-gap-xs: 4px;
+  --pi-gap-sm: 6px;
+  --pi-gap-md: 8px;
+  --pi-gap-lg: 12px;
+  --pi-shadow-sm: 0 1px 2px rgb(15 23 42 / 12%);
+  --pi-shadow-md: 0 4px 14px rgb(15 23 42 / 16%);
+
+  /* --- shell / island chrome -------------------------------------------- */
+  /* Light keeps the classic flush dark layout shape: no outer gaps or cards.
+   * The values are present so a component that reads them never inherits a
+   * dark shadow on a light surface. */
+  --pi-shell-bg: var(--pi-bg-app);
+  --pi-island-padding: 0px;
+  --pi-island-gap: 0px;
+  --pi-island-radius: var(--pi-radius-md);
+  --pi-island-border-width: 0px;
+  --pi-island-border-color: transparent;
+  --pi-island-shadow: none;
+  --pi-island-panel-bg: var(--pi-bg-panel);
+
+  background-color: var(--pi-bg-app);
+}
+
 html,
 body {
   background-color: var(--pi-bg-app);
@@ -249,5 +375,18 @@ html[data-theme='islands'] body {
 }
 
 html[data-theme='islands'] #root {
+  background: transparent;
+}
+
+/*
+ * Light is a flat canvas: no gradient behind the PDF page, which would tint
+ * the white page edges and make the viewport look dirty.
+ */
+html[data-theme='light'] body {
+  background-color: var(--pi-bg-app);
+  background-image: none;
+}
+
+html[data-theme='light'] #root {
   background: transparent;
 }
