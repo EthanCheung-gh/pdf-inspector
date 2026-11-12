@@ -13,12 +13,18 @@ import type {
   SecurityReport,
   SecuritySignature,
 } from '../../../shared/security-types';
+import type {
+  AccessibilityDocumentInfo,
+  AccessibilityReport,
+  StructureNode,
+} from '../../../shared/accessibility-types';
 
 const auditIpc = vi.hoisted(() => ({
   saveFile: vi.fn(),
   auditDocument: vi.fn(),
   auditPages: vi.fn(),
   securityDocument: vi.fn(),
+  accessibilityDocument: vi.fn(),
 }));
 
 const navigation = vi.hoisted(() => ({ navigate: vi.fn() }));
@@ -35,13 +41,24 @@ import {
   AuditWorkspace,
   auditPageLabel,
   filterAuditFindings,
+  suggestAccessibilityJsonFilename,
   suggestAuditJsonFilename,
   suggestSecurityJsonFilename,
 } from './AuditWorkspace';
 import { translate, useI18nStore, type TranslateFn } from '../../i18n';
 import { useAuditStore } from '../../store/audit-store';
 import { useSecurityStore } from '../../store/security-store';
+import { useAccessibilityStore } from '../../store/accessibility-store';
 import { SecurityResources } from './SecurityResources';
+import {
+  StructureView,
+  buildIssueIndex,
+  defaultExpandedIds,
+  evidenceNodeIds,
+  filterStructure,
+  flattenStructure,
+  structureStats,
+} from './StructureView';
 
 /** English translator for the pure helper tests. */
 const tEn: TranslateFn = (key, params) => translate('en', key, params);
@@ -274,7 +291,215 @@ async function showResources(): Promise<void> {
 }
 
 const findingsMode = (): HTMLElement => screen.getByRole('button', { name: 'Findings' });
+const structureMode = (): HTMLElement => screen.getByRole('button', { name: 'Structure' });
 const resourcesMode = (): HTMLElement => screen.getByRole('button', { name: 'Resources' });
+
+// --- accessibility structure fixtures ------------------------------------
+
+function makeNode(overrides: Partial<StructureNode> = {}): StructureNode {
+  return {
+    id: '0',
+    kind: 'element',
+    role: 'Document',
+    rawRole: 'Document',
+    title: null,
+    alt: null,
+    actualText: null,
+    lang: null,
+    page: null,
+    mcid: null,
+    objectNumber: null,
+    attributes: {},
+    children: [],
+    truncated: false,
+    ...overrides,
+  };
+}
+
+function makeAccessibilityDocument(
+  overrides: Partial<AccessibilityDocumentInfo> = {},
+): AccessibilityDocumentInfo {
+  return {
+    pages: 12,
+    version: '1.7',
+    encrypted: false,
+    tagged: true,
+    hasStructTreeRoot: true,
+    hasParentTree: true,
+    language: 'en-US',
+    title: 'Quarterly report',
+    roleMap: {},
+    truncated: false,
+    skipped: 0,
+    ...overrides,
+  };
+}
+
+const FIGURE_FINDING = makeFinding({
+  category: 'structure',
+  severity: 'warning',
+  page: 2,
+  title: 'Figure has no alternative text',
+  detail: 'Figure elements have no /Alt text. 1 node affected.',
+  evidence: 'nodes=0/2 (Figure, page 2)',
+  recommendation: 'Add /Alt text to every Figure element.',
+});
+
+const UNKNOWN_ROLE_FINDING = makeFinding({
+  category: 'structure',
+  severity: 'warning',
+  page: 1,
+  title: 'Unknown structure role: Widget',
+  detail: "Role 'Widget' is not a standard structure role.",
+  evidence: 'nodes=0/1/0 (Widget, page 1)',
+  recommendation: 'Map custom roles to a standard role in /RoleMap.',
+});
+
+const PARENT_TREE_FINDING = makeFinding({
+  category: 'structure',
+  severity: 'warning',
+  page: null,
+  title: 'Structure tree has no ParentTree',
+  detail: 'The catalog has a /StructTreeRoot but no /ParentTree.',
+  evidence: 'hasStructTreeRoot=true; hasParentTree=false',
+  recommendation: 'Add a /ParentTree number tree.',
+});
+
+/**
+ * Document
+ *   H1 ("Quarterly report", page 1)
+ *   P
+ *     Widget (custom role, page 1)
+ *       Span
+ *         MCID 2
+ *   Figure (no Alt, page 2, one attribute)
+ *     OBJR 12
+ */
+function makeStructure(): StructureNode[] {
+  return [
+    makeNode({
+      id: '0',
+      children: [
+        makeNode({
+          id: '0/0',
+          role: 'H1',
+          rawRole: 'H1',
+          page: 1,
+          title: 'Quarterly report',
+          mcid: 0,
+        }),
+        makeNode({
+          id: '0/1',
+          role: 'P',
+          rawRole: 'P',
+          page: 1,
+          mcid: 1,
+          children: [
+            makeNode({
+              id: '0/1/0',
+              role: 'Widget',
+              rawRole: 'Widget',
+              page: 1,
+              title: 'Custom widget',
+              children: [
+                makeNode({
+                  id: '0/1/0/0',
+                  role: 'Span',
+                  rawRole: 'Span',
+                  page: 1,
+                  lang: 'de-DE',
+                  actualText: 'Actual text',
+                  children: [
+                    makeNode({
+                      id: '0/1/0/0/0',
+                      kind: 'mcid',
+                      role: 'MCID',
+                      rawRole: null,
+                      page: 1,
+                      mcid: 2,
+                    }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        }),
+        makeNode({
+          id: '0/2',
+          role: 'Figure',
+          rawRole: 'Figure',
+          page: 2,
+          attributes: { Placement: 'Block' },
+          children: [
+            makeNode({
+              id: '0/2/0',
+              kind: 'object',
+              role: 'OBJR',
+              rawRole: null,
+              page: 2,
+              objectNumber: 12,
+            }),
+          ],
+        }),
+      ],
+    }),
+  ];
+}
+
+function makeAccessibilityReport(overrides: Partial<AccessibilityReport> = {}): AccessibilityReport {
+  return {
+    schemaVersion: 1,
+    tool: TOOL,
+    document: makeAccessibilityDocument(),
+    structure: makeStructure(),
+    findings: [FIGURE_FINDING, UNKNOWN_ROLE_FINDING, PARENT_TREE_FINDING],
+    summary: { total: 3, errors: 0, warnings: 3, info: 0 },
+    ...overrides,
+  };
+}
+
+/** Enter the Structure view with a completed report, without parsing. */
+function showStructureReport(report: AccessibilityReport = makeAccessibilityReport()): void {
+  useAccessibilityStore.setState({
+    filePath: '/docs/report.pdf',
+    report,
+    loading: false,
+    error: null,
+  });
+}
+
+interface StructureViewHarness {
+  onViewInFindings: ReturnType<typeof vi.fn>;
+  onOpenPage: ReturnType<typeof vi.fn>;
+}
+
+/** Render `StructureView` on its own with recorded callbacks. */
+function renderStructureView(
+  options: { filePath?: string | null; report?: AccessibilityReport } = {},
+): StructureViewHarness {
+  const harness: StructureViewHarness = { onViewInFindings: vi.fn(), onOpenPage: vi.fn() };
+  render(
+    React.createElement(StructureView, {
+      filePath: options.filePath === undefined ? '/docs/report.pdf' : options.filePath,
+      onViewInFindings: harness.onViewInFindings,
+      onOpenPage: harness.onOpenPage,
+    }),
+  );
+  return harness;
+}
+
+/** Switch the Audit workspace to the Structure view (and let the parse settle). */
+async function showStructure(): Promise<void> {
+  await act(async () => {
+    fireEvent.click(structureMode());
+  });
+}
+
+const node = (id: string): HTMLElement => screen.getByTestId(`structure-node-${id}`);
+const nodeIdsOnScreen = (): string[] =>
+  screen
+    .getAllByTestId(/^structure-node-/)
+    .map((element) => element.getAttribute('data-testid')?.replace('structure-node-', '') ?? '');
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -282,6 +507,7 @@ beforeEach(() => {
   useI18nStore.setState({ locale: 'en' });
   store().reset();
   useSecurityStore.getState().reset();
+  useAccessibilityStore.getState().reset();
   auditIpc.saveFile.mockResolvedValue({ canceled: false });
   auditIpc.auditDocument.mockResolvedValue({
     tool: TOOL,
@@ -290,6 +516,7 @@ beforeEach(() => {
   });
   auditIpc.auditPages.mockResolvedValue({ tool: TOOL, findings: [] });
   auditIpc.securityDocument.mockResolvedValue(makeSecurityReport());
+  auditIpc.accessibilityDocument.mockResolvedValue(makeAccessibilityReport());
   navigation.navigate.mockResolvedValue(undefined);
 });
 
@@ -708,10 +935,14 @@ describe('AuditWorkspace findings / resources switch', () => {
     renderWorkspace();
 
     expect(findingsMode().getAttribute('aria-pressed')).toBe('true');
+    expect(structureMode().getAttribute('aria-pressed')).toBe('false');
     expect(resourcesMode().getAttribute('aria-pressed')).toBe('false');
-    // Default mode requests nothing: the security scan is lazy per document.
+    // Default mode requests nothing: the structure parse and the security scan
+    // are lazy per document.
     expect(auditIpc.securityDocument).not.toHaveBeenCalled();
+    expect(auditIpc.accessibilityDocument).not.toHaveBeenCalled();
     expect(screen.queryByTestId('security-resources')).toBeNull();
+    expect(screen.queryByTestId('structure-view')).toBeNull();
     expect(screen.getByTestId('audit-summary')).toBeTruthy();
     expect(rowNames()).toHaveLength(4);
     expect(screen.getByRole('button', { name: 'Export JSON' })).toBeTruthy();
@@ -1211,5 +1442,787 @@ describe('SecurityResources view', () => {
     expect(screen.getByText('Launch')).toBeTruthy();
     expect(screen.getByText('adbe.pkcs7.detached')).toBeTruthy();
     expect(screen.getByRole('button', { name: '在发现中查看' })).toBeTruthy();
+  });
+});
+
+// --- Audit Findings / Structure / Resources --------------------------------
+
+const STRUCTURE_FINDING = makeFinding({
+  category: 'structure',
+  severity: 'warning',
+  page: 1,
+  title: 'Figure has no alternative text',
+  detail: 'Figure elements have no /Alt text.',
+});
+
+describe('AuditWorkspace structure mode', () => {
+  it('parses the document when the Structure mode opens', async () => {
+    showReport();
+    renderWorkspace();
+
+    await showStructure();
+
+    expect(structureMode().getAttribute('aria-pressed')).toBe('true');
+    expect(findingsMode().getAttribute('aria-pressed')).toBe('false');
+    expect(resourcesMode().getAttribute('aria-pressed')).toBe('false');
+    expect(auditIpc.accessibilityDocument).toHaveBeenCalledTimes(1);
+    expect(auditIpc.securityDocument).not.toHaveBeenCalled();
+
+    expect(screen.getByTestId('structure-view')).toBeTruthy();
+    expect(screen.getByTestId('structure-summary')).toBeTruthy();
+    // Findings panes are unmounted, not merely hidden.
+    expect(screen.queryByTestId('audit-finding-list')).toBeNull();
+    expect(screen.queryByTestId('audit-summary')).toBeNull();
+    // The Audit chrome (back, title, file name) stays in place.
+    expect(screen.getByRole('region', { name: 'PDF audit workspace' })).toBeTruthy();
+    expect(screen.getByTestId('audit-file-name').textContent).toBe('report.pdf');
+  });
+
+  it('shows the reading state until the parse answers', async () => {
+    showReport();
+    let resolve!: (report: AccessibilityReport) => void;
+    auditIpc.accessibilityDocument.mockImplementationOnce(
+      () => new Promise<AccessibilityReport>((res) => {
+        resolve = res;
+      }),
+    );
+    renderWorkspace();
+
+    await act(async () => {
+      fireEvent.click(structureMode());
+    });
+
+    expect(screen.getByRole('status').textContent).toBe('Reading the structure tree…');
+    // The first paint is the reading state, never the empty-document hint.
+    expect(screen.queryByTestId('structure-no-file')).toBeNull();
+    expect(screen.queryByText(/Open and audit a PDF/)).toBeNull();
+
+    await act(async () => {
+      resolve(makeAccessibilityReport());
+    });
+
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.getByTestId('structure-summary')).toBeTruthy();
+  });
+
+  it('caches the structure of one file across mode switches', async () => {
+    showReport();
+    renderWorkspace();
+
+    await showStructure();
+    await act(async () => {
+      fireEvent.click(findingsMode());
+    });
+    expect(screen.getByTestId('audit-finding-list')).toBeTruthy();
+
+    await showStructure();
+
+    expect(auditIpc.accessibilityDocument).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('structure-summary')).toBeTruthy();
+  });
+
+  it('reports a failed parse locally and retries it', async () => {
+    showReport();
+    auditIpc.accessibilityDocument.mockRejectedValueOnce(new Error('Sidecar is not running'));
+    renderWorkspace();
+
+    await showStructure();
+
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Could not read the document structure: Sidecar is not running',
+    );
+    // A structure failure never becomes an audit-run failure and never drops
+    // the audit report the user already has.
+    expect(store().error).toBeNull();
+    expect(store().report).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    });
+
+    expect(auditIpc.accessibilityDocument).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByTestId('structure-summary')).toBeTruthy();
+  });
+
+  it('shows the untagged empty state with a jump to Findings', async () => {
+    showReport();
+    auditIpc.accessibilityDocument.mockResolvedValue(
+      makeAccessibilityReport({
+        document: makeAccessibilityDocument({
+          tagged: false,
+          hasStructTreeRoot: false,
+          hasParentTree: false,
+        }),
+        structure: [],
+        findings: [
+          makeFinding({
+            category: 'structure',
+            severity: 'info',
+            page: null,
+            title: 'Document is not tagged',
+            detail: 'No /StructTreeRoot or /MarkInfo /Marked true was found.',
+          }),
+        ],
+        summary: { total: 1, errors: 0, warnings: 0, info: 1 },
+      }),
+    );
+    renderWorkspace();
+
+    await showStructure();
+
+    const untagged = screen.getByTestId('structure-untagged');
+    expect(untagged.textContent).toContain('No structure tree');
+    expect(untagged.textContent).toContain('not tagged');
+    expect(screen.queryByTestId('structure-tree')).toBeNull();
+    expect(screen.getByTestId('structure-facts').textContent).toContain('No');
+
+    await act(async () => {
+      fireEvent.click(within(untagged).getByRole('button', { name: 'View in Findings' }));
+    });
+
+    expect(findingsMode().getAttribute('aria-pressed')).toBe('true');
+    expect(store().filter).toEqual({ severity: 'all', category: 'structure' });
+  });
+
+  it('jumps to Findings with the structure category filter', async () => {
+    showReport(makeReport([...FINDINGS, STRUCTURE_FINDING]));
+    renderWorkspace();
+
+    await showStructure();
+    await act(async () => {
+      fireEvent.click(node('0/2'));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'View in Findings' }));
+    });
+
+    expect(findingsMode().getAttribute('aria-pressed')).toBe('true');
+    expect(store().filter).toEqual({ severity: 'all', category: 'structure' });
+    expect(rowNames()).toEqual(['warning structure Page 1: Figure has no alternative text']);
+    expect(screen.getByTestId('audit-filtered-count').textContent).toBe('1 of 5 findings');
+  });
+
+  it('drops the cached structure when the audit is re-run', async () => {
+    showReport();
+    renderWorkspace();
+
+    await showStructure();
+    await act(async () => {
+      fireEvent.click(findingsMode());
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Re-run' }));
+    });
+
+    expect(useAccessibilityStore.getState().report).toBeNull();
+
+    await showStructure();
+    expect(auditIpc.accessibilityDocument).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-parses in place when Re-run is clicked in Structure', async () => {
+    showReport();
+    renderWorkspace();
+
+    await showStructure();
+    expect(auditIpc.accessibilityDocument).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Re-run' }));
+    });
+
+    // The cache is dropped and immediately re-read: the visible view never
+    // waits for a report nothing would request.
+    expect(auditIpc.accessibilityDocument).toHaveBeenCalledTimes(2);
+    expect(useAccessibilityStore.getState().report).not.toBeNull();
+    expect(screen.getByTestId('structure-summary')).toBeTruthy();
+  });
+
+  it('refreshes the structure from the Structure header', async () => {
+    showReport();
+    renderWorkspace();
+
+    await showStructure();
+    expect(auditIpc.accessibilityDocument).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    });
+
+    expect(auditIpc.accessibilityDocument).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('structure-summary')).toBeTruthy();
+  });
+
+  it('keeps the parsed tree when a refresh fails', async () => {
+    showReport();
+    renderWorkspace();
+
+    await showStructure();
+    expect(screen.getByTestId('structure-summary')).toBeTruthy();
+
+    auditIpc.accessibilityDocument.mockRejectedValueOnce(new Error('sidecar died'));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    });
+
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Could not read the document structure: sidecar died',
+    );
+    // The tree read before the failure stays usable behind the alert.
+    expect(screen.getByTestId('structure-summary')).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    });
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('drops the structure of the previous file when the audit file changes', async () => {
+    showReport();
+    renderWorkspace();
+
+    await showStructure();
+    await act(async () => {
+      fireEvent.click(findingsMode());
+    });
+    expect(useAccessibilityStore.getState().filePath).toBe('/docs/report.pdf');
+
+    act(() => {
+      useAuditStore.setState({ filePath: '/docs/other.pdf', fileName: 'other.pdf' });
+    });
+
+    expect(useAccessibilityStore.getState().filePath).toBeNull();
+    expect(useAccessibilityStore.getState().report).toBeNull();
+  });
+
+  it('exports the AccessibilityReport as JSON from the Structure view', async () => {
+    const report = makeAccessibilityReport();
+    showReport();
+    useAuditStore.setState({ fileName: 'My Report.pdf' });
+    auditIpc.accessibilityDocument.mockResolvedValue(report);
+    renderWorkspace();
+
+    await showStructure();
+
+    // Findings keeps the AuditReport export; Structure owns the accessibility one.
+    expect(screen.queryByRole('button', { name: 'Export JSON' })).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Export accessibility JSON' }));
+    });
+
+    expect(auditIpc.saveFile).toHaveBeenCalledTimes(1);
+    const request = auditIpc.saveFile.mock.calls[0][0] as {
+      defaultPath: string;
+      content: string;
+      filterName: string;
+      extensions: string[];
+    };
+    expect(request.defaultPath).toBe('My Report.accessibility.json');
+    expect(request.filterName).toBe('JSON');
+    expect(request.extensions).toEqual(['json']);
+    expect(request.content).toBe(JSON.stringify(report, null, 2));
+    expect(JSON.parse(request.content)).toEqual(report);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('keeps a failed accessibility export local and dismissible', async () => {
+    showReport();
+    renderWorkspace();
+
+    await showStructure();
+
+    auditIpc.saveFile.mockResolvedValueOnce({ canceled: false, error: 'disk full' });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Export accessibility JSON' }));
+    });
+
+    expect(screen.getByRole('alert').textContent).toContain('Export failed: disk full');
+    expect(store().error).toBeNull();
+    expect(store().report).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    });
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('opens the page of the selected structure element', async () => {
+    showReport();
+    renderWorkspace();
+
+    await showStructure();
+    await act(async () => {
+      fireEvent.click(node('0/2'));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Open page' }));
+    });
+
+    expect(store().active).toBe(false);
+    expect(navigation.navigate).toHaveBeenCalledWith(2);
+    expect(store().report).not.toBeNull();
+  });
+});
+
+describe('StructureView first paint', () => {
+  it('reads as loading when audit has a file the store has not opened yet', () => {
+    expect(useAccessibilityStore.getState().filePath).toBeNull();
+
+    renderStructureView({ filePath: '/docs/report.pdf' });
+
+    expect(screen.getByRole('status').textContent).toBe('Reading the structure tree…');
+    expect(screen.queryByTestId('structure-no-file')).toBeNull();
+    expect(screen.queryByTestId('structure-untagged')).toBeNull();
+    expect(screen.queryByTestId('structure-summary')).toBeNull();
+  });
+
+  it('keeps the empty-document hint when audit has no document', () => {
+    renderStructureView({ filePath: null });
+
+    expect(screen.getByTestId('structure-no-file').textContent).toContain('Open and audit a PDF');
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('never shows the structure of another file while the switch is pending', () => {
+    useAccessibilityStore.setState({
+      filePath: '/docs/other.pdf',
+      report: makeAccessibilityReport(),
+      loading: false,
+      error: null,
+    });
+
+    renderStructureView({ filePath: '/docs/report.pdf' });
+
+    expect(screen.getByRole('status').textContent).toBe('Reading the structure tree…');
+    expect(screen.queryByTestId('structure-summary')).toBeNull();
+    expect(screen.queryByTestId('structure-no-file')).toBeNull();
+  });
+});
+
+describe('StructureView summary and facts', () => {
+  it('summarises the structure and the document facts', () => {
+    showStructureReport();
+    renderStructureView();
+
+    const summary = screen.getByTestId('structure-summary');
+    expect(within(summary).getByText('Elements').nextSibling?.textContent).toBe('6');
+    expect(within(summary).getByText('Figures').nextSibling?.textContent).toBe('1');
+    expect(within(summary).getByText('Tables').nextSibling?.textContent).toBe('0');
+    expect(within(summary).getByText('Lists').nextSibling?.textContent).toBe('0');
+    expect(within(summary).getByText('Headings').nextSibling?.textContent).toBe('1');
+    expect(within(summary).getByText('Findings').nextSibling?.textContent).toBe('3');
+
+    const facts = screen.getByTestId('structure-facts');
+    expect(within(facts).getByText('Tagged').nextSibling?.textContent).toBe('Yes');
+    expect(within(facts).getByText('StructTreeRoot').nextSibling?.textContent).toBe('Present');
+    expect(within(facts).getByText('ParentTree').nextSibling?.textContent).toBe('Present');
+    expect(within(facts).getByText('Language').nextSibling?.textContent).toBe('en-US');
+    expect(within(facts).getByText('Title').nextSibling?.textContent).toBe('Quarterly report');
+  });
+
+  it('reports truncated parses and skipped elements', () => {
+    showStructureReport(
+      makeAccessibilityReport({
+        document: makeAccessibilityDocument({ truncated: true, skipped: 3 }),
+      }),
+    );
+    renderStructureView();
+
+    expect(screen.getByTestId('structure-truncated').textContent).toContain('truncated');
+    expect(screen.getByTestId('structure-skipped').textContent).toContain('3');
+  });
+
+  it('shows an empty state for a tagged document without structure elements', () => {
+    showStructureReport(
+      makeAccessibilityReport({
+        structure: [],
+        findings: [],
+        summary: { total: 0, errors: 0, warnings: 0, info: 0 },
+      }),
+    );
+    renderStructureView();
+
+    expect(screen.getByTestId('structure-empty-tree').textContent).toContain('structure tree is empty');
+    expect(screen.queryByTestId('structure-untagged')).toBeNull();
+  });
+
+  it('shows the untagged state instead of an empty tree', () => {
+    showStructureReport(
+      makeAccessibilityReport({
+        document: makeAccessibilityDocument({
+          tagged: false,
+          hasStructTreeRoot: false,
+          hasParentTree: false,
+        }),
+        structure: [],
+      }),
+    );
+    renderStructureView();
+
+    const untagged = screen.getByTestId('structure-untagged');
+    expect(untagged.textContent).toContain('not tagged');
+    expect(screen.queryByTestId('structure-empty-tree')).toBeNull();
+    expect(screen.getByRole('button', { name: 'View in Findings' })).toBeTruthy();
+  });
+
+  it('explains an unreadable StructTreeRoot without claiming it is missing', () => {
+    showStructureReport(
+      makeAccessibilityReport({
+        document: makeAccessibilityDocument({ tagged: false, hasStructTreeRoot: true }),
+        structure: [],
+      }),
+    );
+    renderStructureView();
+
+    const untagged = screen.getByTestId('structure-untagged');
+    expect(untagged.textContent).toContain('could not be read');
+    expect(
+      within(screen.getByTestId('structure-facts')).getByText('StructTreeRoot').nextSibling?.textContent,
+    ).toBe('Present');
+  });
+});
+
+describe('StructureView tree', () => {
+  it('expands the root and the first level only', () => {
+    showStructureReport();
+    renderStructureView();
+
+    expect(nodeIdsOnScreen()).toEqual(['0', '0/0', '0/1', '0/1/0', '0/2', '0/2/0']);
+    expect(screen.getByTestId('structure-count').textContent).toBe('8 nodes');
+  });
+
+  it('expands and collapses a branch', () => {
+    showStructureReport();
+    renderStructureView();
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Expand Widget' }));
+    });
+    expect(nodeIdsOnScreen()).toContain('0/1/0/0');
+    expect(node('0/2/0')).toBeTruthy();
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Collapse Widget' }));
+    });
+    expect(nodeIdsOnScreen()).not.toContain('0/1/0/0');
+  });
+
+  it('expands all and collapses all', () => {
+    showStructureReport();
+    renderStructureView();
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Expand all' }));
+    });
+    expect(nodeIdsOnScreen()).toHaveLength(8);
+    expect(screen.getByTestId('structure-count').textContent).toBe('8 nodes');
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Collapse all' }));
+    });
+    expect(nodeIdsOnScreen()).toEqual(['0']);
+  });
+
+  it('marks roles, pages, MCID/OBJR references and node statuses', () => {
+    showStructureReport();
+    renderStructureView();
+
+    expect(within(node('0/0')).getByText('H1')).toBeTruthy();
+    expect(within(node('0/0')).getByText('MCID 0')).toBeTruthy();
+    expect(within(node('0/0')).getByText('Page 1')).toBeTruthy();
+    // The Span is one level deeper: collapsed branches are not rendered at all.
+    expect(screen.queryByTestId('structure-node-0/1/0/0')).toBeNull();
+
+    // MCID/OBJR markers stay raw in both locales.
+    expect(within(node('0/2/0')).getByText('OBJR 12')).toBeTruthy();
+
+    // Statuses inferred from the findings' node evidence.
+    expect(within(node('0/2')).getByText('Alt missing')).toBeTruthy();
+    expect(within(node('0/1/0')).getByText('Unknown role')).toBeTruthy();
+    expect(within(node('0/0')).queryByText('Alt missing')).toBeNull();
+  });
+
+  it('searches roles, titles and alt text and expands the ancestors', () => {
+    showStructureReport();
+    renderStructureView();
+
+    act(() => {
+      fireEvent.change(screen.getByLabelText('Filter structure elements by role, title or alternative text'), {
+        target: { value: 'quarterly' },
+      });
+    });
+
+    // The H1 title matches; its ancestor is expanded so the path stays readable.
+    expect(nodeIdsOnScreen()).toEqual(['0', '0/0']);
+    expect(screen.getByTestId('structure-count').textContent).toBe('2 of 8 nodes');
+
+    act(() => {
+      fireEvent.change(screen.getByLabelText('Filter structure elements by role, title or alternative text'), {
+        target: { value: 'zzz' },
+      });
+    });
+
+    expect(screen.getByTestId('structure-no-match').textContent).toContain('No structure element matches');
+
+    act(() => {
+      fireEvent.change(screen.getByLabelText('Filter structure elements by role, title or alternative text'), {
+        target: { value: 'figure' },
+      });
+    });
+
+    expect(nodeIdsOnScreen()).toEqual(['0', '0/2']);
+  });
+
+  it('shows only problem nodes and their ancestors when Issues only is on', () => {
+    showStructureReport();
+    renderStructureView();
+
+    act(() => {
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Issues only' }));
+    });
+
+    expect(nodeIdsOnScreen()).toEqual(['0', '0/1', '0/1/0', '0/2']);
+
+    act(() => {
+      fireEvent.change(screen.getByLabelText('Filter structure elements by role, title or alternative text'), {
+        target: { value: 'Figure' },
+      });
+    });
+
+    // Both conditions apply: only the flagged Figure survives the search, so
+    // its non-matching OBJR child is filtered out too.
+    expect(nodeIdsOnScreen()).toEqual(['0', '0/2']);
+  });
+
+  it('reports when no node has an issue', () => {
+    showStructureReport(
+      makeAccessibilityReport({
+        findings: [],
+        summary: { total: 0, errors: 0, warnings: 0, info: 0 },
+      }),
+    );
+    renderStructureView();
+
+    act(() => {
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Issues only' }));
+    });
+
+    expect(screen.getByTestId('structure-no-match').textContent).toBe(
+      'No structure element has a finding.',
+    );
+  });
+
+  it('marks truncated children', () => {
+    showStructureReport(
+      makeAccessibilityReport({
+        structure: [
+          makeNode({
+            id: '0',
+            truncated: true,
+            children: [makeNode({ id: '0/0', role: 'P', rawRole: 'P', page: 1 })],
+          }),
+        ],
+      }),
+    );
+    renderStructureView();
+
+    expect(screen.getByText('Children truncated — more items exist than are shown.')).toBeTruthy();
+  });
+});
+
+describe('StructureView details', () => {
+  it('shows the selected element, its attributes and its findings', () => {
+    showStructureReport();
+    renderStructureView();
+
+    expect(screen.getByText(/Select a structure element/)).toBeTruthy();
+
+    act(() => {
+      fireEvent.click(node('0/2'));
+    });
+
+    const detail = screen.getByTestId('structure-detail');
+    expect(within(detail).getAllByText('Figure').length).toBeGreaterThan(0);
+    expect(within(detail).getByText('Page 2')).toBeTruthy();
+    expect(within(detail).getByText('Alt')).toBeTruthy();
+    expect(within(detail).getByText('Children')).toBeTruthy();
+    expect(within(detail).getByText('Truncated')).toBeTruthy();
+
+    const attributes = screen.getByTestId('structure-attributes');
+    expect(within(attributes).getByText('Placement')).toBeTruthy();
+    expect(within(attributes).getByText('Block')).toBeTruthy();
+
+    const issues = screen.getByTestId('structure-detail-issues');
+    expect(within(issues).getByText('Alt missing')).toBeTruthy();
+    expect(within(issues).getByText('Alt missing').getAttribute('data-severity')).toBe('warning');
+
+    // Page-level location only: the view says so instead of highlighting.
+    expect(screen.getByTestId('structure-no-bbox').textContent).toContain('Page-level location only');
+    expect(node('0/2').closest('[aria-selected="true"]')).toBeTruthy();
+  });
+
+  it('shows text fields of a nested element and no empty attribute table', () => {
+    showStructureReport();
+    renderStructureView();
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Expand Widget' }));
+    });
+    act(() => {
+      fireEvent.click(node('0/1/0/0'));
+    });
+
+    const detail = screen.getByTestId('structure-detail');
+    expect(within(detail).getByText('Actual text')).toBeTruthy();
+    expect(within(detail).getByText('de-DE')).toBeTruthy();
+    expect(within(detail).getByText('MCID')).toBeTruthy();
+    expect(within(detail).getByText('No attributes.')).toBeTruthy();
+    expect(screen.queryByTestId('structure-attributes')).toBeNull();
+  });
+
+  it('offers Open page only for an element with a page and reports it', () => {
+    const harness = (() => {
+      showStructureReport();
+      return renderStructureView();
+    })();
+
+    act(() => {
+      fireEvent.click(node('0/2'));
+    });
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Open page' }));
+    });
+
+    expect(harness.onOpenPage).toHaveBeenCalledWith(2);
+  });
+
+  it('jumps to Findings from the detail pane', () => {
+    showStructureReport();
+    const harness = renderStructureView();
+
+    act(() => {
+      fireEvent.click(node('0/0'));
+    });
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'View in Findings' }));
+    });
+
+    expect(harness.onViewInFindings).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows MCID references and the object number of an OBJR node', () => {
+    showStructureReport();
+    renderStructureView();
+
+    act(() => {
+      fireEvent.click(node('0/2/0'));
+    });
+
+    const detail = screen.getByTestId('structure-detail');
+    expect(within(detail).getAllByText('OBJR').length).toBeGreaterThan(0);
+    expect(within(detail).getByText('Object number')).toBeTruthy();
+    expect(within(detail).getByText('12')).toBeTruthy();
+  });
+});
+
+describe('StructureView localization', () => {
+  it('translates the chrome but keeps roles, MCID and PDF text raw', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    showStructureReport();
+    renderStructureView();
+
+    expect(screen.getByRole('group', { name: '结构树控件' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '全部展开' })).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: '仅显示问题' })).toBeTruthy();
+    expect(screen.getByText('元素')).toBeTruthy();
+
+    // Roles, MCID markers, issue statuses and the PDF's own title are data.
+    expect(within(node('0/0')).getByText('H1')).toBeTruthy();
+    expect(within(node('0/0')).getByText('MCID 0')).toBeTruthy();
+    expect(within(node('0/0')).getByText('Quarterly report')).toBeTruthy();
+    expect(within(node('0/2')).getByText('缺少 Alt')).toBeTruthy();
+  });
+});
+
+describe('structure view helpers', () => {
+  it('reads node ids out of finding evidence', () => {
+    expect(evidenceNodeIds('nodes=0/2 (Figure, page 2)')).toEqual(['0/2']);
+    expect(evidenceNodeIds('nodes=0/2 (Figure, page 2), 0/3 (P); +2 more')).toEqual(['0/2', '0/3']);
+    expect(evidenceNodeIds('H1 -> H3 at 0/3 (H3, page 2)')).toEqual(['0/3']);
+    expect(evidenceNodeIds('hasStructTreeRoot=true; hasParentTree=false')).toEqual([]);
+    expect(evidenceNodeIds(null)).toEqual([]);
+  });
+
+  it('maps findings onto the nodes they name', () => {
+    const index = buildIssueIndex([
+      FIGURE_FINDING,
+      UNKNOWN_ROLE_FINDING,
+      // A non-structure finding never marks a structure node, even if its
+      // evidence happens to look similar.
+      makeFinding({ category: 'fonts', evidence: 'nodes=0/0 (H1)' }),
+    ]);
+
+    expect(index.get('0/2')?.[0].labelKey).toBe('audit.structure.issue.altMissing');
+    expect(index.get('0/2')?.[0].title).toBe('Figure has no alternative text');
+    expect(index.get('0/1/0')?.[0].labelKey).toBe('audit.structure.issue.unknownRole');
+    expect(index.has('0/0')).toBe(false);
+    // Aggregate findings without node evidence mark nothing.
+    expect(buildIssueIndex([PARENT_TREE_FINDING]).size).toBe(0);
+  });
+
+  it('counts roles and flattens the forest', () => {
+    const structure = makeStructure();
+    expect(structureStats(structure)).toEqual({
+      elements: 6,
+      figures: 1,
+      tables: 0,
+      lists: 0,
+      headings: 1,
+    });
+    expect(flattenStructure(structure).map((entry) => entry.id)).toEqual([
+      '0',
+      '0/0',
+      '0/1',
+      '0/1/0',
+      '0/1/0/0',
+      '0/1/0/0/0',
+      '0/2',
+      '0/2/0',
+    ]);
+    expect([...defaultExpandedIds(structure)]).toEqual(['0', '0/1', '0/2']);
+  });
+
+  it('describes the visible set of a filter', () => {
+    const structure = makeStructure();
+    const issues = buildIssueIndex([FIGURE_FINDING]);
+
+    expect(filterStructure(structure, { search: '', issuesOnly: false }, issues)).toEqual({
+      visible: null,
+      ancestors: new Set(),
+    });
+
+    const byTitle = filterStructure(structure, { search: 'quarterly', issuesOnly: false }, issues);
+    expect([...(byTitle.visible ?? [])].sort()).toEqual(['0', '0/0']);
+    expect([...byTitle.ancestors]).toEqual(['0']);
+
+    // Issues-only keeps the flagged nodes and every ancestor path to them.
+    const onlyIssues = filterStructure(structure, { search: '', issuesOnly: true }, issues);
+    expect([...(onlyIssues.visible ?? [])].sort()).toEqual(['0', '0/2']);
+    expect([...onlyIssues.ancestors]).toEqual(['0']);
+  });
+
+  it('suggests a portable accessibility JSON file name', () => {
+    expect(suggestAccessibilityJsonFilename('report.pdf')).toBe('report.accessibility.json');
+    expect(suggestAccessibilityJsonFilename('/docs/My Report.PDF')).toBe(
+      'My Report.accessibility.json',
+    );
+    expect(suggestAccessibilityJsonFilename('测试 报告.pdf')).toBe('测试 报告.accessibility.json');
+    expect(suggestAccessibilityJsonFilename(null)).toBe('document.accessibility.json');
   });
 });

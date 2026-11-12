@@ -18,8 +18,10 @@ import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { ipc } from '../../services/ipc-client';
 import { exportStemFromName } from '../../services/export-data';
 import { useAuditStore, type AuditFilter } from '../../store/audit-store';
+import { useAccessibilityStore } from '../../store/accessibility-store';
 import { useSecurityStore } from '../../store/security-store';
 import { SecurityResources } from './SecurityResources';
+import { StructureView } from './StructureView';
 import styles from './AuditWorkspace.module.css';
 
 /** `Page 7` for a page finding, `Document` for a document-level one. */
@@ -74,8 +76,19 @@ export function suggestSecurityJsonFilename(fileName: string | null): string {
   return `${exportStemFromName(fileName) || 'document'}.security.json`;
 }
 
-/** The two views the Audit workspace switches between. */
-export type AuditMode = 'findings' | 'resources';
+/**
+ * `report.pdf` -> `report.accessibility.json` for the `AccessibilityReport`
+ * export.
+ *
+ * Same stem rules as the audit/security exports: the three exports describe the
+ * same document from different sides, so their names differ only in the label.
+ */
+export function suggestAccessibilityJsonFilename(fileName: string | null): string {
+  return `${exportStemFromName(fileName) || 'document'}.accessibility.json`;
+}
+
+/** The three views the Audit workspace switches between. */
+export type AuditMode = 'findings' | 'structure' | 'resources';
 
 export function isAuditFilterActive(filter: AuditFilter): boolean {
   return filter.severity !== 'all' || filter.category !== 'all';
@@ -220,10 +233,11 @@ const FindingDetail: React.FC<{ finding: AuditFinding; onOpenPage: () => void }>
  * and leaving Audit never touches the Inspect document. The run itself starts
  * in `open()` — this view only reports loading, progress and errors.
  *
- * The header switches between two views of the same document: `Findings` (the
- * audit report) and `Resources` (the document security inventory). Only the
- * mode is local component state; the security report lives in `security-store`
- * so it survives a mode switch without repeating the scan.
+ * The header switches between three views of the same document: `Findings` (the
+ * audit report), `Structure` (the tagged-PDF structure tree) and `Resources`
+ * (the document security inventory). Only the mode is local component state;
+ * the structure and security reports live in their own stores so they survive a
+ * mode switch without repeating the work.
  */
 export const AuditWorkspace: React.FC = () => {
   const t = useT();
@@ -245,6 +259,10 @@ export const AuditWorkspace: React.FC = () => {
   const securityLoading = useSecurityStore((s) => s.loading);
   const securityLoad = useSecurityStore((s) => s.load);
 
+  const accessibilityReport = useAccessibilityStore((s) => s.report);
+  const accessibilityLoading = useAccessibilityStore((s) => s.loading);
+  const accessibilityLoad = useAccessibilityStore((s) => s.load);
+
   const { navigate } = usePageNavigation();
 
   const [mode, setMode] = useState<AuditMode>('findings');
@@ -255,20 +273,25 @@ export const AuditWorkspace: React.FC = () => {
   const [exportError, setExportError] = useState<string | null>(null);
 
   /**
-   * Point the resources view at the audited document.
+   * Point the lazily loaded views at the audited document.
    *
-   * Entering Resources reads the document lazily; leaving it drops resources
-   * that belong to another file (a file change while Findings was shown) but
-   * keeps the cache, so toggling the mode is free.
+   * Entering Structure/Resources reads the document then; leaving a view drops
+   * a report that belongs to another file (a file change while Findings was
+   * shown) but keeps the cache, so toggling the mode is free.
    */
   useEffect(() => {
     const security = useSecurityStore.getState();
     if (mode === 'resources') {
       security.open(filePath);
-      return;
-    }
-    if (security.filePath !== null && security.filePath !== filePath) {
+    } else if (security.filePath !== null && security.filePath !== filePath) {
       security.reset();
+    }
+
+    const accessibility = useAccessibilityStore.getState();
+    if (mode === 'structure') {
+      accessibility.open(filePath);
+    } else if (accessibility.filePath !== null && accessibility.filePath !== filePath) {
+      accessibility.reset();
     }
   }, [mode, filePath]);
 
@@ -325,10 +348,21 @@ export const AuditWorkspace: React.FC = () => {
     );
   }, [saveJson]);
 
+  // The structure export is independent of the audit run too: its failures show
+  // as a local alert and never touch the audit store's error.
+  const handleExportAccessibilityJson = useCallback(async () => {
+    const state = useAccessibilityStore.getState();
+    if (!state.report) return;
+    await saveJson(
+      suggestAccessibilityJsonFilename(useAuditStore.getState().fileName),
+      JSON.stringify(state.report, null, 2),
+    );
+  }, [saveJson]);
+
   /**
-   * Audit `Re-run` also drops the cached security scan: a re-run is the user
-   * asking for a fresh look at the file, so the next Resources visit re-reads
-   * it instead of showing the old inventory.
+   * Audit `Re-run` also drops the cached security scan and structure parse: a
+   * re-run is the user asking for a fresh look at the file, so the next visit to
+   * those views re-reads it instead of showing the old result.
    */
   const handleRunAudit = useCallback(() => {
     const security = useSecurityStore.getState();
@@ -338,6 +372,13 @@ export const AuditWorkspace: React.FC = () => {
       // instead of waiting for a report that nothing would request.
       security.open(useAuditStore.getState().filePath);
     }
+
+    const accessibility = useAccessibilityStore.getState();
+    accessibility.invalidate();
+    if (mode === 'structure') {
+      accessibility.open(useAuditStore.getState().filePath);
+    }
+
     void runAudit();
   }, [mode, runAudit]);
 
@@ -345,18 +386,35 @@ export const AuditWorkspace: React.FC = () => {
     void securityLoad(true);
   }, [securityLoad]);
 
+  const handleRefreshStructure = useCallback(() => {
+    void accessibilityLoad(true);
+  }, [accessibilityLoad]);
+
   /**
-   * Jump from a security finding back into the report list.
+   * Jump from a view back into the report list.
    *
-   * The category filter is forced to `security` (that is what the user asked
-   * for) and the severity filter is reset to `all`, because a severity left
-   * over from an earlier session would hide some of those findings and make
-   * the jump look broken.
+   * The category filter is forced to the findings the button promised and the
+   * severity filter is reset to `all`, because a severity left over from an
+   * earlier session would hide some of those findings and make the jump look
+   * broken.
    */
-  const handleViewInFindings = useCallback(() => {
-    setMode('findings');
-    setFilter({ category: 'security', severity: 'all' });
-  }, [setFilter]);
+  const handleViewInFindings = useCallback(
+    (category: AuditCategory) => {
+      setMode('findings');
+      setFilter({ category, severity: 'all' });
+    },
+    [setFilter],
+  );
+
+  const handleViewSecurityInFindings = useCallback(
+    () => handleViewInFindings('security'),
+    [handleViewInFindings],
+  );
+
+  const handleViewStructureInFindings = useCallback(
+    () => handleViewInFindings('structure'),
+    [handleViewInFindings],
+  );
 
   const handleOpenPage = useCallback(() => {
     const state = useAuditStore.getState();
@@ -367,6 +425,15 @@ export const AuditWorkspace: React.FC = () => {
     state.close();
     void navigate(page);
   }, [navigate]);
+
+  /** A structure element only knows its page: leave Audit and show that page. */
+  const handleOpenStructurePage = useCallback(
+    (page: number) => {
+      useAuditStore.getState().close();
+      void navigate(page);
+    },
+    [navigate],
+  );
 
   const progressText =
     progress && progress.total > 0
@@ -396,6 +463,14 @@ export const AuditWorkspace: React.FC = () => {
             onClick={() => setMode('findings')}
           >
             {t('audit.mode.findings')}
+          </button>
+          <button
+            className={`${styles.button} ${mode === 'structure' ? styles.active : ''}`}
+            type="button"
+            aria-pressed={mode === 'structure'}
+            onClick={() => setMode('structure')}
+          >
+            {t('audit.mode.structure')}
           </button>
           <button
             className={`${styles.button} ${mode === 'resources' ? styles.active : ''}`}
@@ -428,7 +503,7 @@ export const AuditWorkspace: React.FC = () => {
             {loading ? t('audit.running') : report ? t('audit.reRun') : t('audit.run')}
           </button>
 
-          {mode === 'findings' ? (
+          {mode === 'findings' && (
             <button
               className={styles.button}
               type="button"
@@ -438,7 +513,32 @@ export const AuditWorkspace: React.FC = () => {
             >
               {t('common.exportJson')}
             </button>
-          ) : (
+          )}
+
+          {mode === 'structure' && (
+            <>
+              <button
+                className={styles.button}
+                type="button"
+                onClick={handleRefreshStructure}
+                disabled={accessibilityLoading || filePath === null}
+                title={t('audit.structure.refreshTitle')}
+              >
+                {t('audit.structure.refresh')}
+              </button>
+              <button
+                className={styles.button}
+                type="button"
+                onClick={() => void handleExportAccessibilityJson()}
+                disabled={!accessibilityReport}
+                title={t('audit.structure.exportTitle')}
+              >
+                {t('audit.structure.export')}
+              </button>
+            </>
+          )}
+
+          {mode === 'resources' && (
             <>
               <button
                 className={styles.button}
@@ -479,12 +579,20 @@ export const AuditWorkspace: React.FC = () => {
       )}
 
       {/* `Findings` keeps the three-pane layout (summary | list | detail);
-          `Resources` replaces the whole body with the security inventory. The
-          panes are unmounted rather than hidden so no stale finding list is
-          reachable from the Resources view. */}
+          `Structure` and `Resources` replace the whole body with their own
+          view. The panes are unmounted rather than hidden so no stale finding
+          list is reachable from the other modes. */}
       <div className={styles.body} data-mode={mode}>
+        {mode === 'structure' && (
+          <StructureView
+            filePath={filePath}
+            onViewInFindings={handleViewStructureInFindings}
+            onOpenPage={handleOpenStructurePage}
+          />
+        )}
+
         {mode === 'resources' && (
-          <SecurityResources filePath={filePath} onViewInFindings={handleViewInFindings} />
+          <SecurityResources filePath={filePath} onViewInFindings={handleViewSecurityInFindings} />
         )}
 
         {mode === 'findings' && (

@@ -93,7 +93,7 @@
   background: var(--pi-border-strong);
 }
 
-/* --- Findings / Resources segmented switch -------------------------------- */
+/* --- Findings / Structure / Resources segmented switch -------------------- */
 
 .modeSwitch {
   display: flex;
@@ -137,8 +137,10 @@
   overflow: hidden;
 }
 
-/* Resources is a single full-width column; the security view brings its own
- * summary cards and sections, so none of the Findings panes are rendered. */
+/* Structure and Resources are a single full-width column; those views bring
+ * their own summary cards and sections, so none of the Findings panes are
+ * rendered. */
+.body[data-mode='structure'],
 .body[data-mode='resources'] {
   display: flex;
   flex-direction: column;

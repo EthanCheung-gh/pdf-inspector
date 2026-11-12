@@ -1,0 +1,614 @@
+/*
+ * Audit `Structure` view: tagged-PDF structure tree.
+ *
+ * Same palette and density as AuditWorkspace.module.css / SecurityResources.
+ * The view is a single full-width column: summary cards and facts on top, then
+ * a tree + details row that owns all remaining height. Both panes scroll on
+ * their own and every row can shrink or break, so the workspace never scrolls
+ * horizontally at 1280px or 1440px.
+ */
+
+.container {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+  padding: 10px;
+  overflow: hidden;
+  font-size: 11px;
+}
+
+/* --- summary cards ------------------------------------------------------- */
+
+.summary {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+
+.summaryCard {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px 8px;
+  background: var(--pi-bg-panel-alt);
+  border: 1px solid var(--pi-border-muted);
+  border-radius: var(--pi-radius-md);
+}
+
+.summaryLabel {
+  overflow: hidden;
+  color: var(--pi-text-subtle);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summaryValue {
+  margin: 0;
+  overflow: hidden;
+  color: var(--pi-text-heading);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- document facts ------------------------------------------------------ */
+
+.facts {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 4px 10px;
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--pi-bg-panel-alt);
+  border: 1px solid var(--pi-border-muted);
+  border-radius: var(--pi-radius-md);
+}
+
+.fact {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.factLabel {
+  overflow: hidden;
+  color: var(--pi-text-subtle);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.factValue {
+  margin: 0;
+  overflow: hidden;
+  color: var(--pi-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- controls ------------------------------------------------------------ */
+
+.controls {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.checkboxLabel {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 3px;
+  color: var(--pi-text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.checkboxLabel input {
+  margin: 0;
+}
+
+.searchLabel {
+  display: flex;
+  flex: 1 1 200px;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.searchCaption {
+  flex-shrink: 0;
+  color: var(--pi-text-subtle);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.search {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 5px;
+  color: var(--pi-text);
+  background: var(--pi-bg-panel-alt);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-sm);
+  font: inherit;
+  font-size: 11px;
+}
+
+.search:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
+.listCount {
+  flex: 0 0 auto;
+  color: var(--pi-text-subtle);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* --- tree + details ------------------------------------------------------ */
+
+.panes {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.treePane {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: var(--pi-bg-panel-alt);
+  border: 1px solid var(--pi-border-muted);
+  border-radius: var(--pi-radius-md);
+}
+
+.tree {
+  margin: 0;
+  padding: 4px 6px;
+  list-style: none;
+}
+
+.children {
+  margin: 0;
+  padding: 0 0 0 12px;
+  list-style: none;
+  border-left: 1px solid var(--pi-border-faint);
+}
+
+.node {
+  min-width: 0;
+}
+
+/* Rows are collapsed out of the render tree when closed, but an expanded
+ * large document still renders thousands of them: `content-visibility` keeps
+ * off-screen rows out of layout/paint without a virtual-list dependency. */
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  min-width: 0;
+  border-radius: var(--pi-radius-sm);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 22px;
+}
+
+.row:hover {
+  background: var(--pi-bg-subtle);
+}
+
+.rowSelected {
+  background: var(--pi-bg-selected);
+  box-shadow: inset 2px 0 0 var(--pi-accent-border);
+}
+
+.toggle {
+  flex: 0 0 auto;
+  width: 16px;
+  padding: 0;
+  color: var(--pi-text-subtle);
+  background: none;
+  border: none;
+  border-radius: var(--pi-radius-sm);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.toggle:hover {
+  color: var(--pi-text);
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
+.toggleSpacer {
+  flex: 0 0 auto;
+  width: 16px;
+}
+
+.select {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+  min-width: 0;
+  padding: 2px 4px;
+  color: var(--pi-text-secondary);
+  background: none;
+  border: none;
+  border-radius: var(--pi-radius-sm);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+}
+
+.select:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: -2px;
+}
+
+/* Role badges are engine values (`P`, `H1`, `Figure`, `MCID`, `OBJR`): the
+ * badge shows them verbatim in both locales. */
+.role {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  color: var(--pi-text-heading);
+  background: var(--pi-bg-subtle);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-sm);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.row[data-kind='mcid'] .role,
+.row[data-kind='object'] .role {
+  color: var(--pi-info-text);
+  border-color: var(--pi-accent-soft-border);
+}
+
+.nodeTitle {
+  flex: 0 1 auto;
+  max-width: 260px;
+  overflow: hidden;
+  color: var(--pi-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.marker {
+  flex: 0 0 auto;
+  color: var(--pi-text-subtle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.page {
+  flex: 0 0 auto;
+  color: var(--pi-text-subtle);
+  font-size: 10px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Node status badges (`Alt missing`, `Unknown role`, …): UI text, translated;
+ * the tooltip keeps the raw engine finding title. */
+.issueBadge {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  color: var(--pi-warning-text);
+  background: rgba(240, 196, 138, 0.12);
+  border: 1px solid var(--pi-warning-border-soft);
+  border-radius: var(--pi-radius-sm);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.issueBadge[data-severity='error'] {
+  color: var(--pi-danger-text);
+  background: rgba(255, 95, 95, 0.12);
+  border-color: var(--pi-danger-border-soft);
+}
+
+.issueBadge[data-severity='info'] {
+  color: var(--pi-info-text);
+  background: rgba(75, 147, 230, 0.12);
+  border-color: var(--pi-accent-soft-border);
+}
+
+.issueList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.truncatedNote {
+  margin: 0 0 2px 20px;
+  color: var(--pi-warning-text);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+/* --- details ------------------------------------------------------------- */
+
+.details {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 8px;
+  width: min(340px, 32%);
+  min-width: 220px;
+  min-height: 0;
+  padding: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: var(--pi-bg-panel-alt);
+  border: 1px solid var(--pi-border-muted);
+  border-radius: var(--pi-radius-md);
+}
+
+.detailBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.detailTitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+  margin: 0;
+  color: var(--pi-text-heading);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.detailTitleText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailList {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+}
+
+.detailRow {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 6px;
+}
+
+.detailRow dt {
+  color: var(--pi-text-subtle);
+}
+
+.detailRow dd {
+  margin: 0;
+  color: var(--pi-text);
+  overflow-wrap: anywhere;
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.blockTitle {
+  margin: 0;
+  color: var(--pi-text-subtle);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.detailActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* --- attribute table ----------------------------------------------------- */
+
+.tableScroll {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.table th,
+.table td {
+  padding: 2px 5px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--pi-border-faint);
+}
+
+.table th {
+  color: var(--pi-text-subtle);
+  font-size: 9px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Attribute keys are raw PDF names: monospaced and never translated. */
+.attributeKey {
+  max-width: 120px;
+  overflow: hidden;
+  color: var(--pi-text-subtle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wrapCell {
+  overflow-wrap: anywhere;
+}
+
+/* --- states and buttons --------------------------------------------------- */
+
+.progress {
+  margin: 0;
+  color: var(--pi-info-text);
+  font-size: 11px;
+}
+
+.empty {
+  margin: 0;
+  color: var(--pi-text-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.emptyCard {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 10px;
+  background: var(--pi-bg-panel-alt);
+  border: 1px solid var(--pi-border-muted);
+  border-radius: var(--pi-radius-md);
+}
+
+.emptyTitle {
+  margin: 0;
+  color: var(--pi-text-heading);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.hint {
+  margin: 0;
+  color: var(--pi-text-subtle);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.note {
+  margin: 0;
+  color: var(--pi-text-subtle);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.errorBox {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  color: var(--pi-danger-text);
+  background: rgba(240, 138, 138, 0.08);
+  border: 1px solid var(--pi-danger-border-soft);
+  border-radius: var(--pi-radius-sm);
+}
+
+.errorText {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.button {
+  flex-shrink: 0;
+  padding: 3px 7px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--pi-bg-control-hover);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
+.button:disabled {
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
+  cursor: not-allowed;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Narrow windows trade detail width for the tree, never for overflow. */
+@media (max-width: 1280px) {
+  .details {
+    width: 280px;
+    min-width: 200px;
+  }
+}
