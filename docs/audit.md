@@ -67,9 +67,28 @@
 
 ### 结构（`structure`）
 
+结构类别基于 tagged PDF 的 `/StructTreeRoot`、`/RoleMap`、`/ParentTree` 与页面 `/StructParents` 生成启发式发现：
+
 | 发现 | 级别 | 说明 |
 |---|---|---|
 | `PDF is not tagged` | `info` | 既没有 `/StructTreeRoot`，也没有 `/MarkInfo /Marked true`。这只是诊断提示，不是 PDF/A 认证。 |
+| `Structure tree has no ParentTree` | `warning` | 有 `/StructTreeRoot` 但缺 `/ParentTree`，MCID 无法映射回结构元素。 |
+| `Page N has no structure parent entry` | `warning` | 文档已标记且存在 `/ParentTree`，但该页有内容却没有 `/StructParents`；只列举前 10 页，`Evidence` 带总数。 |
+| `Structure element has no role` | `warning` | 结构元素缺少可读的 `/S`。 |
+| `Unknown structure role: X` | `warning` | 角色不在 ISO 32000-1 标准集合中，也未在 RoleMap 中定义。 |
+| `RoleMap cycle` | `warning` | RoleMap 的解析出现循环，部分角色无法映射到标准角色。 |
+| `Figure has no alternative text` | `warning` | `Figure` 元素缺少 `/Alt`。 |
+| `Formula has no alternative text` | `warning` | `Formula` 元素缺少 `/Alt`。 |
+| `Link has no alternate description` | `warning` | `Link` 元素没有 `/Alt`、`/ActualText` 或 `/T`。 |
+| `Heading levels are skipped` | `warning` | 按树顺序出现 `H1 → H3` 这类跨级；首个标题之前的层级缺失不报告。 |
+| `List has no list items` | `warning` | `L` 下没有 `LI` 子项。 |
+| `List item has no LBody` | `info` | `LI` 缺少 `LBody`，条目文本没有被分组。 |
+| `Table has no rows` | `warning` | `Table` 下没有 `TR`。 |
+| `Table header cell has no scope` | `info` | `TH` 缺少 `/Scope` 属性。 |
+| `Structure tree truncated` | `warning` | 节点/深度/子项/属性/扫描/循环上限或 RoleMap/ParentTree 列表上限触发，`Evidence` 列出计数与上限。 |
+| `Accessibility parse skipped N element(s)` | `warning` | 有畸形或不可读的结构条目被跳过，结构树可能不完整。 |
+
+同一条件只产生一条发现，`Evidence` 列出前 3 个受影响的节点路径/role/页码；未标记文档只输出 `PDF is not tagged`，不再叠加依赖结构树的检查。所有检查都是启发式的，不构成 PDF/UA、PDF/A 或 WCAG 合规认证。结构模型、字段、资源上限、Audit `Structure` 视图与 `accessibility` CLI 见[无障碍与结构树检查](accessibility.md)。
 
 ### 安全（`security`）
 

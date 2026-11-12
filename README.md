@@ -28,9 +28,10 @@ PDF Inspector is a developer-focused PDF structure viewer. It overlays coordinat
 | ![Ignore region: dashed rectangle, region list, and re-run button](docs/images/diff-regions.png) | **Ignore regions**<br>Turn on `Ignore region`, drag a rectangle on either page, and review page/side/bbox rows on the left with a synchronized dashed outline. `Apply & re-run` filters intersecting changes. |
 | ![Page alignment: Old 2 → New 1, Old 3 → New 2, and a new page 5 marked added](docs/images/diff-reordered.png) | **Page alignment and reordering**<br>Pages are paired by content fingerprints; the list and page bar show `Old 2 → New 1` style old/new numbers. Inserted/deleted pages stay one-sided, and `--fail-on reordered` can gate page-order changes in CI. |
 | ![Diff page list: collapsible per-page groups, Go to page input, Expand all/Collapse all](docs/images/diff-page-groups.png) | **Collapsible Diff page groups**<br>Each page is an independent collapsible group whose header keeps its status and change count. `Go to page` clamps and reveals the target page; `Expand all` / `Collapse all` control the list. |
-| ![Audit workspace: severity summary, filters, findings list, selected finding details](docs/images/audit-workspace.png) | **Document audit**<br>Whole-document checks across fonts, pages, images, metadata, structure, and security. Filter by severity/category, inspect evidence and recommendations, and jump to the referenced page. Switch to `Resources` for attachments, JavaScript, actions, signatures, encryption, and permissions. |
+| ![Audit workspace: severity summary, filters, findings list, selected finding details](docs/images/audit-workspace.png) | **Document audit**<br>Whole-document checks across fonts, pages, images, metadata, structure, and security. Filter by severity/category, inspect evidence and recommendations, and jump to the referenced page. Switch to `Structure` for the tagged structure tree, or to `Resources` for attachments, JavaScript, actions, signatures, encryption, and permissions. |
 | ![PDF audit HTML report: document information, severity summary, and findings](docs/images/audit-report.png) | **Audit report (HTML)**<br>CLI `audit --format html` writes a single-file report with document information, severity summary, and findings (evidence and recommendations). Inline CSS, no scripts, no external resources. |
 | ![Document security resources: Audit Resources view with attachment, JavaScript, action, signature, encryption, and XFA cards, notes.txt attachment, script previews, risky actions, signature field, and security findings](docs/images/security-resources.png) | **Document security resources**<br>The Audit header switches between `Findings` and `Resources`. `Resources` shows attachment, JavaScript, action, signature, encryption, and XFA cards, then the `notes.txt` attachment, inert script previews, risky actions, the unverified signature field, and security finding counts. Attachments are metadata only and cannot be opened or downloaded. |
+| ![Audit Structure view: Findings / Structure / Resources switch, structure tree with roles, MCID placeholders and issue badges, and the selected Figure details without Alt text](docs/images/accessibility-structure.png) | **Audit Structure**<br>The Audit header switches between `Findings` / `Structure` / `Resources`. `Structure` shows the tagged structure tree with roles, Alt/ActualText, reading order, page and MCID, with search and `Issues only`. Details are read-only and offer `Open page` and `View in Findings`; no tag is edited and no element is highlighted on the page. |
 | ![Annotations, links, and forms: Annots list, canvas boxes, and read-only form details](docs/images/annotations.png) | **Annotations, links, and forms (current page)**<br>`Annots` in `Current page` mode lists links, form fields, markup, and annotations on the current page. Canvas boxes stay in sync; select one to inspect values, options, and link targets in the Inspector. |
 | ![Whole-document annotation index: all annotations, Issues, and External links](docs/images/annotations-index.png) | **Whole-document annotation index**<br>Switch to `Whole document` to read the entire PDF in 10-page batches. The header shows `7 annotations · 1 page · 2 links · 3 form fields`; `Issues` opens by default, `External links` is collapsed, and the list supports page targeting, search, and global filters. |
 | ![Annotation export dialog: Export annotations, JSON selection, editable file name](docs/images/annotations-export.png) | **Annotation export**<br>After indexing, `Export` opens a dialog for JSON or CSV with an editable file name. JSON includes document information, summary, per-page annotations, link/form issues, and merged fields, and never writes local absolute paths. |
@@ -43,7 +44,7 @@ PDF Inspector is a developer-focused PDF structure viewer. It overlays coordinat
 | ![Desktop document tabs: two URL-opened tabs, switched back to basic.pdf with toolbar 1 / 4](docs/images/large-doc-tabs.png) | **Desktop document tabs**<br>The desktop app keeps multiple document tabs and restores page, zoom, overlays, and panel tabs when switching. Web tabs activate a server-side `documentId` instead. |
 | ![Web document tabs: basic.pdf and large.pdf tabs, active large.pdf showing 1 / 120](docs/images/web-tabs.png) | **Web document tabs**<br>Web and desktop both show the document tab bar. Switching activates by `documentId` and restores the view snapshot; inactive documents remain readable at `/doc/:id`, and closing a tab removes only that document's temporary copy. |
 
-*Screenshots come from the Web build and a real Electron desktop build. Page list / Search 2.0 / command palette, annotation index/export, themes, export dialogs, Chinese UI, Diff/Audit/Raw, and Audit Resources are 1440×900. Desktop tabs were captured from Electron + `xvfb` through CDP at a 1440×900 viewport. See [docs/export.md](docs/export.md), [docs/themes-i18n.md](docs/themes-i18n.md), [docs/search.md](docs/search.md), [docs/large-docs.md](docs/large-docs.md), and [docs/annotations.md](docs/annotations.md).*
+*Screenshots come from the Web build and a real Electron desktop build. Page list / Search 2.0 / command palette, annotation index/export, themes, export dialogs, Chinese UI, Diff/Audit/Raw, Audit Resources, and Audit Structure are 1440×900. Desktop tabs were captured from Electron + `xvfb` through CDP at a 1440×900 viewport. See [docs/export.md](docs/export.md), [docs/themes-i18n.md](docs/themes-i18n.md), [docs/search.md](docs/search.md), [docs/large-docs.md](docs/large-docs.md), and [docs/annotations.md](docs/annotations.md).*
 
 ## Features
 
@@ -236,6 +237,24 @@ The current Diff combines the 2.0 page-alignment and visual-review workflow with
 - **Engine and CLI:** the same engine backs `pdf-inspector security` with summary, deterministic JSON, and single-file HTML output. See [docs/security.md](docs/security.md) and the [Security CLI](#security-cli) section below.
 - **Bounded and heuristic:** name trees, actions, script previews, and attachment hashing are capped; malformed objects degrade to `null` or are skipped instead of failing the report.
 
+### Accessibility and structure
+
+- **Audit `Structure` view:** the Audit header switches between `Findings` / `Structure` / `Resources`. `Structure` reads the tagged structure tree and shows summary cards (Elements, Figures, Tables, Lists, Headings, Findings) plus document facts (Tagged, StructTreeRoot, ParentTree, Language, Title). The tree expands the root and first level by default, with `Expand all` / `Collapse all`, `Issues only`, and a search across role, raw role, title, Alt, and ActualText. Selecting a node shows role, Alt/ActualText/Lang, page, MCID or object number, bounded attributes, and its findings; `Open page` jumps to that page in Inspect and `View in Findings` switches back with the `structure` category filter. The report is cached per file; `Refresh` re-reads it, `Export accessibility JSON` writes the full `AccessibilityReport` (suggested `<name>.accessibility.json`), and switching files or Audit `Re-run` drops the cache.
+- **What is read:** catalog `/StructTreeRoot`, `/MarkInfo`, `/Lang`, `/RoleMap`, `/ParentTree`, page `/StructParents`, and `/K` entries as nested `StructElem`, `MCID`, `/MCR`, or `/OBJR`. Roles, reading order (depth-first `/K` order), page numbers, MCIDs, object numbers, and bounded attributes come from the structure tree; no page content stream, text extraction, or bbox is used.
+- **Heuristic findings:** the same structure feeds `structure` findings for untagged PDFs, a missing `/ParentTree`, pages without `/StructParents`, missing/unknown/cyclic roles, `Figure`/`Formula` without Alt, `Link` without a description, skipped heading levels, lists without `LI`, list items without `LBody`, tables without `TR`, header cells without `Scope`, and truncated or skipped parses. These are heuristics, not PDF/UA or WCAG conformance, and the view never highlights an element on the page (page-level location only).
+- **CLI:** `pdf-inspector accessibility` writes a summary, deterministic `AccessibilityReport` JSON, or single-file HTML:
+
+  ```bash
+  pdf-inspector accessibility report.pdf
+  pdf-inspector accessibility report.pdf --format json --output report.accessibility.json
+  pdf-inspector accessibility report.pdf --format html --output report.accessibility.html
+  pdf-inspector accessibility report.pdf --fail-on warning
+  ```
+
+  `--format summary|json|html` (default `summary`), `--output PATH`, `--fail-on error|warning|none` (default `none`), and `--quiet`; exit codes are `0` (no threshold matched), `1` (`--fail-on` matched), and `2` (argument, input, read, or report error). See [docs/accessibility.md](docs/accessibility.md).
+- **Samples:** `web-samples/accessibility-valid.pdf` (Document → H1 → P → Figure with Alt → Table with rows and header scope) and `web-samples/accessibility-broken.pdf` (Figure without Alt, H1 → H3, list without `LI`, table without `TR`, no ParentTree) are committed; regenerate them with `python scripts/generate-accessibility-samples.py`. CI's `accessibility-cli` job regenerates both, checks the JSON/HTML output, and asserts `--fail-on warning` returns 1.
+- **Read-only:** no tag is edited, created, or deleted; no content stream is executed; no OCR is performed; and the tool never certifies PDF/UA or PDF/A compliance.
+
 ### Opening documents
 
 - Open a local PDF, or open a remote document through an `http(s)` URL (downloaded to a temporary directory before parsing).
@@ -336,9 +355,10 @@ Diff samples are generated in old/new pairs and can be selected in the compariso
 8. **Search and export:** `Ctrl/Cmd+F` opens search; use `Aa` / `W` / `.*` for case, whole-word, and regex; browse `p.N` rows with context and click to jump. `Ctrl/Cmd+K` opens the command palette for open, jump, theme, language, panel, Diff/Audit/Raw, export, and clear commands. `Export` writes current-page or whole-document JSON/CSV; the toolbar's `View…` (`Export view…` in the command palette) writes the current page or selected region as PNG/SVG; `Report…` (`Share report…` in the palette) writes a self-contained HTML inspection report.
 9. **Compare revisions:** click `Diff`, choose Old/New PDFs, adjust position tolerance and ignores, then Compare. Select changes in the left list or switch Side by side / Overlay / Visual (Visual supports Blend/Heatmap/Boxes and pixel stats). `Ignore region` lets you mask a region, then `Apply & re-run`; `Export JSON` saves the result.
 10. **Audit a document:** click `Audit` to run whole-document checks, review the severity summary, filter by severity/category, inspect evidence and recommendations, use `Open page` when available, or `Export JSON` for the full report. Switch to `Resources` for attachments, JavaScript, actions, signatures, encryption, and permissions; use `Refresh` to re-read, `Export security JSON` for the full `SecurityReport`, or `View in Findings` to jump back with the `security` category filter.
-11. **Inspect annotations, links, and forms:** open `Annots` (default `Current page`), switch to `Whole document` to build the index (`Indexing annotations N/M…`), use search and global Kind/Subtype filters, and click rows to jump and select when possible. `Issues` summarizes broken links and form issues; `External links` lists openable `http(s)` targets. `Export` writes the index as JSON/CSV. External links require `Open link`; internal links use `Go to page N`; form fields are read-only.
-12. **Inspect raw objects and content streams:** click `Raw` to open the read-only workspace. Expand `Catalog` → `Pages` → a page → `Resources` in the tree, and click references to inspect values on the right. Switch to `Content stream` for decoded operators and operands. `Back to Inspect` returns with page and zoom unchanged.
-13. **Handle large and multiple documents:** open `/samples/huge.pdf`, use Go to page (out-of-range values clamp), and keep only the current page expanded. `Ctrl/Cmd+F` shows `Indexing N/1000…`; closing search cancels the build. Both desktop and Web can open more files or URL documents and switch through the top tab bar. Web tabs activate by server `documentId` and restore their view snapshot; closing a tab removes only that document's temporary copy.
+11. **Review accessibility and structure:** with Audit open, switch to `Structure` to read the tagged structure tree and document facts. Use `Expand all` / `Collapse all`, `Issues only`, or search by role/Alt text; select a node for role, Alt/ActualText, page, and MCID details, then `Open page` to jump to the page or `View in Findings` for the `structure` findings. `Refresh` reparses the document, and `Export accessibility JSON` saves the full report.
+12. **Inspect annotations, links, and forms:** open `Annots` (default `Current page`), switch to `Whole document` to build the index (`Indexing annotations N/M…`), use search and global Kind/Subtype filters, and click rows to jump and select when possible. `Issues` summarizes broken links and form issues; `External links` lists openable `http(s)` targets. `Export` writes the index as JSON/CSV. External links require `Open link`; internal links use `Go to page N`; form fields are read-only.
+13. **Inspect raw objects and content streams:** click `Raw` to open the read-only workspace. Expand `Catalog` → `Pages` → a page → `Resources` in the tree, and click references to inspect values on the right. Switch to `Content stream` for decoded operators and operands. `Back to Inspect` returns with page and zoom unchanged.
+14. **Handle large and multiple documents:** open `/samples/huge.pdf`, use Go to page (out-of-range values clamp), and keep only the current page expanded. `Ctrl/Cmd+F` shows `Indexing N/1000…`; closing search cancels the build. Both desktop and Web can open more files or URL documents and switch through the top tab bar. Web tabs activate by server `documentId` and restore their view snapshot; closing a tab removes only that document's temporary copy.
 
 ## CLI and CI
 
@@ -549,7 +569,7 @@ pdf-inspector/
 ├── server/
 │   └── web-server.ts      # Electron-free Node HTTP backend
 ├── sidecar/               # Python sidecar (extractor / cache / models / main)
-│   ├── cli.py             # `pdf-inspector diff` / `audit` / `security` CLI
+│   ├── cli.py             # `pdf-inspector diff` / `audit` / `security` / `accessibility` CLI
 │   ├── diff.py            # Object-level diff engine
 │   ├── report.py          # Diff summary and self-contained HTML report
 │   ├── raw.py             # Bounded, read-only raw object and content-stream serializer
@@ -557,6 +577,8 @@ pdf-inspector/
 │   ├── audit_report.py    # Audit summary and single-file HTML report
 │   ├── security.py        # Read-only document security resource collector
 │   ├── security_report.py # Security summary and single-file HTML report
+│   ├── accessibility.py   # Read-only tagged-PDF structure collector
+│   ├── accessibility_report.py # Accessibility summary and single-file HTML report
 │   ├── __tests__/         # pytest tests
 │   └── requirements.txt
 ├── bin/
@@ -564,11 +586,13 @@ pdf-inspector/
 ├── scripts/
 │   ├── generate-web-samples.py  # Generates web-samples/*.pdf
 │   ├── generate-security-sample.py  # Generates the committed security sample
+│   ├── generate-accessibility-samples.py  # Generates the committed accessibility samples
 │   ├── generate-icon.js
 │   └── freeze-sidecar.sh
 ├── docs/
 │   ├── audit.md           # Audit: checks, AuditReport schema, CLI, and action
 │   ├── security.md        # Security: resources, limits, SecurityReport schema, CLI
+│   ├── accessibility.md   # Accessibility: structure tree, checks, limits, AccessibilityReport schema, CLI
 │   ├── annotations.md     # Annotations: whole-document index, health checks, JSON/CSV, read-only limits
 │   ├── raw.md             # Raw objects and content streams: serialization, limits, security
 │   ├── large-docs.md      # Large documents: dual lanes, batched search, page list, desktop/Web tabs
@@ -580,8 +604,8 @@ pdf-inspector/
 │   ├── packaging.md       # Packaging notes
 │   ├── images/            # README screenshots
 │   └── superpowers/       # Design and implementation notes (specs / plans)
-├── web-samples/           # Generated demo PDFs (gitignored; security-sample.pdf is committed)
-├── .github/workflows/ci.yml
+├── web-samples/           # Generated demo PDFs (gitignored; security-sample.pdf and accessibility samples are committed)
+├── .github/workflows/ci.yml  # Includes the accessibility-cli job
 ├── action.yml             # PDF diff composite action
 ├── audit/action.yml       # PDF audit composite action
 ├── index.html             # Electron entry
@@ -607,7 +631,7 @@ npx vitest run
 
 `npx tsc -b` uses project references and checks main, preload, renderer, and shared together. Run all of the commands above before submitting.
 
-CI is defined in `.github/workflows/ci.yml`. It runs on pushes to `main`, `v*` tags, pull requests, and manual dispatch; it runs the type checks and tests above, builds the desktop app, Web frontend, and Web backend, generates demo PDFs, and includes end-to-end jobs for the diff CLI/action, audit CLI/action, and security CLI.
+CI is defined in `.github/workflows/ci.yml`. It runs on pushes to `main`, `v*` tags, pull requests, and manual dispatch; it runs the type checks and tests above, builds the desktop app, Web frontend, and Web backend, generates demo PDFs, and includes end-to-end jobs for the diff CLI/action, audit CLI/action, security CLI, and accessibility CLI (summary, JSON, HTML, and the `--fail-on warning` threshold).
 
 ## Packaging
 
