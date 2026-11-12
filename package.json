@@ -1,7 +1,13 @@
 {
   "name": "pdf-inspector",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
+  "description": "Developer-focused PDF structure viewer for inspecting objects, fonts, accessibility, security, and diffs.",
+  "homepage": "https://github.com/EthanCheung-gh/pdf-inspector",
+  "author": {
+    "name": "EthanCheung",
+    "email": "nirvana.zq@petalmail.com"
+  },
   "engines": {
     "node": ">=22.12.0"
   },

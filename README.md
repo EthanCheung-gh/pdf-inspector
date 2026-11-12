@@ -5,7 +5,7 @@ English | [简体中文](README.zh-CN.md)
 PDF Inspector is a developer-focused PDF structure viewer. It overlays coordinate-level pdfplumber object data on PDF.js rendering so you can inspect characters, words, lines, curves, rectangles, tables, and images, and read annotations, links, form fields, the raw object tree, and content streams without editing the PDF. Export the current page or a selected region as PNG/SVG, generate a self-contained HTML inspection report, choose Dark / Islands / Light / System themes, and switch the UI between English and Simplified Chinese. It runs as an Electron desktop app or in a browser backed by a Node HTTP server.
 
 [![CI](https://github.com/EthanCheung-gh/pdf-inspector/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/EthanCheung-gh/pdf-inspector/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-v0.2.0-blue.svg)](https://github.com/EthanCheung-gh/pdf-inspector)
+[![Version](https://img.shields.io/badge/version-v0.3.0-blue.svg)](https://github.com/EthanCheung-gh/pdf-inspector)
 [GitHub](https://github.com/EthanCheung-gh/pdf-inspector) · [GitCode](https://gitcode.com/EthanCheung/pdf-inspector)
 
 > The detailed design notes under [`docs/`](docs/) are currently written in Chinese. This README is the English overview; commands, API names, file names, and UI labels are kept exact.
