@@ -37,6 +37,10 @@ npm run dist             # 3. electron-builder → release/ (current platform)
 Per-platform shortcuts: `npm run dist:win` / `npm run dist:mac` / `npm run dist:linux`
 (each includes step 1; still run `freeze:sidecar` first on the same host).
 
+All `dist*` scripts pass `--publish never`, so electron-builder only writes files
+into `release/`. Publication is handled exclusively by the release workflow's
+`publish` job (`softprops/action-gh-release`); local builds never upload.
+
 ## Outputs
 
 | Platform | Artifacts (in `release/`) |
