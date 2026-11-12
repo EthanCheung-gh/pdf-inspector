@@ -41,8 +41,9 @@
 | ![命令面板：Ctrl/Cmd+K 打开，过滤 page 后显示 Navigate 分组的 Go to page…](docs/images/command-palette.png) | **命令面板**<br>`Ctrl/Cmd+K` 打开，按 File / Navigate / View / Analyze / Export 分组过滤并执行已注册命令；无文档时依赖文档的命令禁用，Go to page 子视图把页码夹到 `1..pageCount`。 |
 | ![桌面文档标签栏：两个通过 URL 打开的文档标签，切换到 basic.pdf 后工具栏显示 1 / 4](docs/images/large-doc-tabs.png) | **桌面文档标签**<br>桌面端可同时保留多个文档标签，切换时恢复页码、缩放、叠加层与面板标签；Web 端通过服务端 `documentId` 激活标签。 |
 | ![Web 文档标签栏：basic.pdf 与 large.pdf 两个标签，当前 large.pdf 显示 1 / 120](docs/images/web-tabs.png) | **Web 文档标签**<br>Web 与桌面端都显示文档标签栏；切换按 `documentId` 激活并恢复视图快照，未激活文档的 `/doc/:id` 仍可读取，关闭标签只删除该文档的临时副本。 |
+| ![最近文档对话框：按类型分组的 Web 文档行、Open/Remove 按钮、恢复上次会话开关、清空最近记录与关闭](docs/images/session-recent.png) | **会话恢复与最近文件**<br>空状态可重新打开最近文档或恢复上次会话，`File: Recent documents…` 按本地/URL/Web 分组列出最近文档。只把定位信息与视图快照存入 `pdf-inspector:session:v1` / `pdf-inspector:recent:v1`，不保存 PDF 内容与分析结果。 |
 
-*截图来自 Web 构建与真实 Electron 桌面构建；页面列表/搜索 2.0/命令面板、注释整档索引/导出、主题、导出对话框、中文界面、Diff/Audit/Raw、Audit Resources 与 Audit Structure 为 1440×900，桌面标签为 Electron + xvfb 实测（CDP 1440×900 视口）。详见 [docs/export.md](docs/export.md)、[docs/themes-i18n.md](docs/themes-i18n.md)、[docs/search.md](docs/search.md)、[docs/large-docs.md](docs/large-docs.md) 与 [docs/annotations.md](docs/annotations.md)。*
+*截图来自 Web 构建与真实 Electron 桌面构建；页面列表/搜索 2.0/命令面板、注释整档索引/导出、主题、导出对话框、中文界面、Diff/Audit/Raw、Audit Resources、Audit Structure 与会话恢复/最近文档为 1440×900，桌面标签为 Electron + xvfb 实测（CDP 1440×900 视口）。详见 [docs/export.md](docs/export.md)、[docs/themes-i18n.md](docs/themes-i18n.md)、[docs/search.md](docs/search.md)、[docs/large-docs.md](docs/large-docs.md)、[docs/annotations.md](docs/annotations.md) 与 [docs/session.md](docs/session.md)。*
 
 ## 功能特性
 
@@ -125,8 +126,18 @@
 - **对象上限**：当前页 Words 最多显示 50 条，其他对象组最多 200 条，超出显示 `Showing first N of M …`；选中对象仍映射回完整对象。
 - **桌面文档标签**：打开多个本地文件或 URL 文档后，工作区顶部出现标签栏；相同路径/URL 再次打开会聚焦已有标签。切换标签会保存旧标签的页码、缩放、叠加层、左右面板标签与查询字符串，重新打开目标文档后恢复；字体、审计、Raw 结果不进入快照，切回后重新运行。关闭活动标签激活邻居，关闭最后一个回到空状态。
 - **桌面 URL 标签**：桌面端 URL 文档下载到临时副本，临时文件归“当前文档”所有；切换到其他文档会删除上一个副本，因此重新激活桌面 URL 标签会重新下载，但保留同一个 `sourceUrl` 和标签身份。Web 端的 URL 副本由注册表保留，见下条。
-- **Web 文档标签**：Web 与桌面端都显示文档标签栏。Web 文档由服务端按 `documentId` 登记，只有活动文档在 sidecar 中打开（交互/后台两个通道打开同一份）；切换标签调用激活接口，在同一 sidecar 中重新打开目标文件，并恢复该标签的页码、缩放、叠加层、面板标签与查询字符串。注册表最多 8 份文档 / 总 512 MiB，超出时淘汰最久未激活的非活动文档。关闭标签只删除该文档的临时副本，关闭最后一个标签才清空活动文档；同一 `sourceUrl` 再次打开会去重并复用已保留的下载副本。标签是会话状态，不写入 localStorage，也不改变 Web 端原有的认证边界（Web 端本来就没有认证）。
+- **Web 文档标签**：Web 与桌面端都显示文档标签栏。Web 文档由服务端按 `documentId` 登记，只有活动文档在 sidecar 中打开（交互/后台两个通道打开同一份）；切换标签调用激活接口，在同一 sidecar 中重新打开目标文件，并恢复该标签的页码、缩放、叠加层、面板标签与查询字符串。注册表最多 8 份文档 / 总 512 MiB，超出时淘汰最久未激活的非活动文档。关闭标签只删除该文档的临时副本，关闭最后一个标签才清空活动文档；同一 `sourceUrl` 再次打开会去重并复用已保留的下载副本。标签集合与每个标签的视图快照会保存在本机，并在下次启动时恢复（见“会话恢复与最近文档”），不改变 Web 端原有的认证边界（Web 端本来就没有认证）。
 - **清理与限制**：桌面与 Web 标签都只保存视图快照，不保留 N 份 PDF.js 文档或分析缓存；Web 端不做每文档 sidecar，切换是串行的 sidecar 重新打开；后台通道在本阶段不做空闲自动退出；异常退出后临时文件清理是尽力而为。完整路由表、快照语义、Web 多文档 API 与验证记录见 [docs/large-docs.md](docs/large-docs.md)。
+
+### 会话恢复与最近文档
+
+- **空状态**：未打开文档时，画布提供 `Open PDF…`、`Open URL…`、`Recent documents…`、`Restore last session`（有可恢复会话时可用）、最近 5 条文档快捷按钮与一行隐私说明；有文档打开时不渲染。
+- **保存内容**：`localStorage` 中两个记录——`pdf-inspector:session:v1`（标签、活动索引、保存时间、恢复开关）与 `pdf-inspector:recent:v1`（最近列表）。每个标签只保存定位信息（本地路径 / 源 URL / Web `documentId`）与视图快照；最近列表保存显示名、类型、定位信息与最近打开时间。PDF 字节、页面对象、字体/审计/Raw/Diff 结果、搜索索引与当前选中对象都不会写入。上限为 20 个标签与 20 条最近项；相同文档按路径/URL/登记 id 去重，超长字符串截断，损坏或不可用的存储在内存中降级运行，不影响启动。
+- **恢复规则**：桌面端用 `openPdfPath` 重新打开本地路径，用 `openPdfUrl` 重新下载 URL 文档；Web 端用 `activatePdfDocument` 激活服务端登记的 `documentId`，服务端已忘记该 id 时，URL 文档按 `sourceUrl` 重新下载，上传文档则跳过。标签按顺序串行打开，最后重新激活上次的活动标签，单个失败不影响其余标签；状态栏先显示 `Restoring n/m documents…`，结束后显示可关闭的 `N documents could not be restored` 提示（只有数量，不含路径）。
+- **自动与手动恢复**：启动时默认自动恢复，可在最近文档对话框中关闭 `Restore last session`；关闭只跳过自动打开，最近列表仍保留。空状态按钮与命令面板的 `File: Restore last session` 属于显式请求，即使开关关闭也会立即恢复（仍要求当前没有打开文档）。关闭最后一个标签会写入空会话，下次不会恢复已关闭的文档。
+- **最近文档对话框**：按 `Local files` / `URL documents` / `Web documents` 分组（上传归入 Web 组），每行显示名称、路径/URL、类型、最近打开时间、`Open` 与 `Remove`。打开使用与恢复相同的 opener，并落到默认视图（第 1 页、100%）；失败只在对应行提示。上次 Web 会话的上传已不在服务端时，会明确提示该上传已不可用、需要重新上传。底部提供恢复开关、两步确认的 `Clear recent` 与 `Close`。
+- **命令**：`Ctrl/Cmd+K` 的 `File: Recent documents…`、`File: Restore last session`、`File: Clear recent documents` 提供相同入口。
+- **隐私**：本地路径只留在本机浏览器/Electron 的 `localStorage`；Web 服务端不会收到本地路径、文件内容或上传文件的最近记录（上传的最近项只保留显示名与登记 id）。恢复失败提示不含路径。详见 [docs/session.md](docs/session.md)。
 
 ### 过滤与叠加层
 
@@ -256,7 +267,7 @@
 
 - **桌面端**：Electron 主进程负责窗口、原生菜单/对话框与 Python 侧车生命周期。
 - **Web 端**：React UI 在浏览器中运行，由无 Electron 依赖的 Node HTTP 后端提供同样的文档与侧车能力。
-- **多文档**：桌面端与 Web 端都支持文档标签页。桌面标签按本地路径或 URL 重新打开文档；Web 标签按服务端 `documentId` 激活已登记文档。两者都只保存视图快照，不保留第二份 PDF.js 文档或分析缓存。
+- **多文档**：桌面端与 Web 端都支持文档标签页。桌面标签按本地路径或 URL 重新打开文档；Web 标签按服务端 `documentId` 激活已登记文档。两者都只保存视图快照，不保留第二份 PDF.js 文档或分析缓存。标签集合与每个标签的视图快照会保存在本机并在下次启动时恢复（见“会话恢复与最近文档”）。
 
 ### 键盘快捷键
 
@@ -351,6 +362,7 @@ Diff 的示例文件成对生成，可在对比对话框中分别选择 Old/New�
 12. **检查注释、链接与表单**：切换到左侧 `Annots`，默认 `Current page` 查看当前页；切到 `Whole document` 建立整档索引（显示 `Indexing annotations N/M…`），用搜索与全局 Kind/Subtype 过滤定位条目，点击行跳页并尽力选中。`Issues` 区汇总断链与表单问题，`External links` 列出可打开的 `http(s)` 目标；`Export` 可把整档索引导出为 JSON/CSV。外部链接需点击 `Open link` 才会打开，内部链接使用 `Go to page N` 跳转；表单字段不能编辑或提交。
 13. **查看原始对象与内容流**：点击工具栏 `Raw` 打开只读工作区，在左侧对象树展开 `Catalog` → `Pages` → 页面 → `Resources`，点击引用在右侧查看对象值；切换到 `Content stream` 按页查看解码后的操作符与操作数。`Back to Inspect` 返回原文档，页码与缩放保持不变。
 14. **处理大文档与多文档**：打开 `/samples/huge.pdf` 后，用左侧 Go to page 输入页码（越界会夹取），页面列表只展开当前页；`Ctrl/Cmd+F` 搜索时 SearchBox 显示 `Indexing N/1000…`，可关闭搜索取消。桌面端与 Web 端都可再打开其他文件或用 Open URL 打开远程文档，通过顶部标签切换；Web 标签按服务端 `documentId` 激活并恢复视图快照，关闭标签只删除该文档的临时副本。
+15. **回到之前打开的文档**：未打开文档时，空状态列出最近 5 条文档并提供 `Recent documents…`（打开分组对话框：`Open` / `Remove`、两步确认的 `Clear recent`、以及自动恢复开关 `Restore last session`）与 `Restore last session`（即使自动恢复已关闭也会立即恢复上次会话）。`Ctrl/Cmd+K` 的 `File: Recent documents…`、`File: Restore last session`、`File: Clear recent documents` 提供相同入口。最近文件与视图快照只保存在本机 `localStorage`，不会保存 PDF 内容或分析结果。详见 [docs/session.md](docs/session.md)。
 
 ## CLI 与 CI
 
@@ -588,6 +600,7 @@ pdf-inspector/
 │   ├── annotations.md     # 注释、链接与表单：整档索引、健康检查、JSON/CSV 导出与只读限制
 │   ├── raw.md             # 原始对象树与内容流：序列化语义、上限与安全边界
 │   ├── large-docs.md      # 大文档：双通道、搜索分批、页面列表、桌面/Web 文档标签与边界
+│   ├── session.md         # 会话恢复与最近文件：存储键、恢复规则、隐私边界
 │   ├── search.md          # 搜索 2.0：选项、结果面板、命令面板、快捷键与验证
 │   ├── export.md          # 对象 JSON/CSV、PNG/SVG 视图导出与自包含 HTML 报告
 │   ├── themes-i18n.md     # 主题注册表、Light/System、i18n 目录与持久化
@@ -679,7 +692,7 @@ npm run dist:linux       # Linux
 - Raw 不使用左侧第六个标签页：它通过工具栏打开独立工作区，并与 Diff、Audit 互斥；与 Inspect 的切换不会改变文档状态，但 Raw 自身不保存展开状态，重新打开从 trailer 根开始。
 - Web 多文档是会话级、单 sidecar 实现：sidecar 中始终只有活动文档，切换是串行重新打开，不能同时分析多份文档，也没有每文档 sidecar。注册表最多 8 份文档 / 总 512 MiB，超出时按最近最少激活淘汰非活动文档；被淘汰的标签需重新打开。Web 端仍没有认证、多用户隔离或按用户的文档边界，多文档不改变这一信任模型。
 - Web 关闭活动标签时必须先激活邻居：服务端拒绝在仍有兄弟时删除活动文档；激活失败会保留原标签与文档。关闭最后一个标签时，只有服务端也只剩这一份登记文档才会删除活动文档并回到空状态；刷新遗留的登记文档会让 `DELETE` 返回 409，标签保留。
-- 桌面与 Web 标签都只保存视图快照：页码、缩放、叠加层、左右面板标签与查询字符串会恢复；字体、审计、Raw 结果与搜索索引不跨标签保留，切回后需重新运行。桌面 URL 标签重新激活会重新下载，Web URL 文档由服务端保留并按 `sourceUrl` 去重；标签状态均不写入 localStorage，刷新或重启后不恢复。
+- 桌面与 Web 标签都只保存视图快照：页码、缩放、叠加层、左右面板标签与查询字符串会恢复；字体、审计、Raw 结果与搜索索引不跨标签保留，切回后需重新运行。桌面 URL 标签重新激活会重新下载，Web URL 文档由服务端保留并按 `sourceUrl` 去重。标签集合与每个标签的视图快照会保存在本机（`pdf-inspector:session:v1`，最多 20 个标签）并在下次启动时恢复；最近列表（`pdf-inspector:recent:v1`，最多 20 条）只保存定位信息与显示名。PDF 内容、字体/审计/Raw/Diff 结果、搜索索引与选中对象都不会持久化；Web 上传在服务端忘记登记 id 后无法恢复，需要重新上传；本地路径不会离开本机。
 - 后台 sidecar 通道懒启动但本阶段不做空闲自动退出；使用过字体/审计/Raw/Diff 后会保留第二个 Python 进程直到退出或重启。
 - 搜索索引只保存每页文本，没有按字节的上限；1000 页可接受。关闭搜索会取消正在进行的构建，但已完成索引会在当前 SearchBox 生命周期内复用；切换文档或离开 Inspect 才会重建并释放。极大文档仍应通过切换文档/离开 Inspect 释放索引。
 - 搜索 2.0 仍是当前文档的本地文本搜索：不跨文档、不保存搜索历史、不做 OCR，也不搜索注释/表单/链接；结果最多 5,000 条且不支持结果导出。命令面板只列出已注册命令，不支持用户自定义命令或快捷键编辑器。
