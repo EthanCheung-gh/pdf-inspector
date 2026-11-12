@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useI18nStore } from '../../i18n';
 import type { PageData, PdfMetadata, PdfRect, PdfWord } from '../../types/pdf-objects';
 import { usePdfStore } from '../../store/pdf-store';
 
@@ -90,27 +91,29 @@ const rectAt = (index: number): PdfRect => ({
   y1: index + 6,
 });
 
-describe('StructureTree', () => {
-  afterEach(cleanup);
-
-  beforeEach(() => {
-    // The mocked navigate mirrors the real hook's store side of a page change,
-    // so page-scoped state (active page, page data) behaves like production.
-    navigate.mockReset();
-    navigate.mockImplementation(async (page: number) => {
-      usePdfStore.getState().setPage(page);
-    });
-    usePdfStore.setState({
-      filePath: '/tmp/test.pdf',
-      metadata,
-      pageCount: 1,
-      currentPage: 1,
-      pageData: pageData(),
-      selectedObject: null,
-      hoveredObject: null,
-      allObjects: [],
-    });
+beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
+  // The mocked navigate mirrors the real hook's store side of a page change,
+  // so page-scoped state (active page, page data) behaves like production.
+  navigate.mockReset();
+  navigate.mockImplementation(async (page: number) => {
+    usePdfStore.getState().setPage(page);
   });
+  usePdfStore.setState({
+    filePath: '/tmp/test.pdf',
+    metadata,
+    pageCount: 1,
+    currentPage: 1,
+    pageData: pageData(),
+    selectedObject: null,
+    hoveredObject: null,
+    allObjects: [],
+  });
+});
+
+afterEach(cleanup);
+
+describe('StructureTree', () => {
 
   it('shows an explicit truncation hint when words exceed the visible limit', () => {
     const words = Array.from({ length: 120 }, (_, index) => makeWord(index));
@@ -355,5 +358,73 @@ describe('StructureTree', () => {
     const pageRule = css.match(/\.page\s*\{[^}]*\}/)?.[0] ?? '';
     expect(pageRule).toContain('content-visibility: auto');
     expect(pageRule).toContain('contain-intrinsic-size');
+  });
+});
+
+describe('StructureTree localization', () => {
+  it('translates the empty state and the page jump chrome', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    usePdfStore.setState({ filePath: null, metadata: null, pageCount: 0 });
+
+    render(React.createElement(StructureTree));
+
+    expect(screen.getByText('打开 PDF 以查看其结构。')).toBeTruthy();
+
+    cleanup();
+
+    usePdfStore.setState({ filePath: '/tmp/test.pdf', metadata, pageCount: 10, currentPage: 1 });
+    render(React.createElement(StructureTree));
+
+    expect(screen.getByRole('form', { name: '页面跳转' })).toBeTruthy();
+    expect(screen.getByLabelText('跳转到页面')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '跳转' })).toBeTruthy();
+    expect(screen.getByRole('navigation', { name: 'PDF 页面结构' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /第 1 页$/ })).toBeTruthy();
+  });
+
+  it('translates group labels and the truncation count but keeps type identifiers', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    const words = Array.from({ length: 120 }, (_, index) => makeWord(index));
+    const rects = [rectAt(0)];
+    const images = [
+      {
+        type: 'image' as const,
+        page: 1,
+        x0: 0,
+        y0: 0,
+        x1: 20,
+        y1: 10,
+        width: 640,
+        height: 480,
+        stream_id: 'img-1',
+        format: 'png',
+      },
+    ];
+    usePdfStore.setState({ pageData: pageData({ words, rects, images }), allObjects: words });
+
+    render(React.createElement(StructureTree));
+
+    expect(screen.getByText('词')).toBeTruthy();
+    expect(screen.getByText('矩形')).toBeTruthy();
+    expect(screen.getByText('图像')).toBeTruthy();
+    expect(screen.getByText('仅显示前 50 个词（共 120 个）')).toBeTruthy();
+    // PDF type identifiers and raw values are data, not copy.
+    expect(screen.getByRole('button', { name: 'rect (0, 1)' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '图像 640 × 480' })).toBeTruthy();
+  });
+
+  it('returns to English without a reload', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    const { rerender } = render(React.createElement(StructureTree));
+    expect(screen.getByText('词')).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+    rerender(React.createElement(StructureTree));
+
+    expect(screen.getByText('Words')).toBeTruthy();
+    expect(screen.getByRole('form', { name: 'Page jump' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Go' })).toBeTruthy();
   });
 });

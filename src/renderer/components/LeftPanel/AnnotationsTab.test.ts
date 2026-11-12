@@ -9,6 +9,7 @@ import { useAnnotationIndexStore } from '../../store/annotation-index-store';
 import { useAnnotationStore } from '../../store/annotation-store';
 import { usePdfStore, type TableCellRef } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
+import { translate, useI18nStore, type TranslateFn } from '../../i18n';
 import type {
   AnnotationFormIssue,
   AnnotationIndexResult,
@@ -417,6 +418,7 @@ function deferred<T>() {
 }
 
 const reset = (): void => {
+  useI18nStore.setState({ locale: 'en' });
   navigate.mockReset();
   buildMock.mockReset();
   useAnnotationStore.getState().clear();
@@ -1348,7 +1350,202 @@ describe('AnnotationsTab annotation export', () => {
   });
 });
 
+describe('AnnotationsTab localization', () => {
+  afterEach(cleanup);
+
+  beforeEach(() => {
+    reset();
+    useI18nStore.setState({ locale: 'zh-CN' });
+    useAnnotationStore.getState().setPageData(1, allAnnotations);
+  });
+
+  it('translates the current-page scope, summary, filters and row labels', () => {
+    render(React.createElement(AnnotationsTab));
+
+    const scope = screen.getByRole('group', { name: '注释范围' });
+    expect(within(scope).getByRole('button', { name: '当前页' })).toBeTruthy();
+    expect(within(scope).getByRole('button', { name: '整个文档' })).toBeTruthy();
+
+    expect(screen.getByRole('status').textContent).toBe(
+      '4 个注释 · 2 个链接 · 1 个表单字段',
+    );
+    expect(screen.getByRole('checkbox', { name: '显示边框' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: '类别' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: '子类型' })).toBeTruthy();
+    expect(
+      within(screen.getByRole('combobox', { name: '类别' }))
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['全部类别', '链接', '表单字段', '标记', '便签', '图章', '其他']);
+    // Raw subtypes stay as the PDF reports them.
+    expect(
+      within(screen.getByRole('combobox', { name: '子类型' }))
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['全部子类型', 'Highlight', 'Link', 'Widget']);
+
+    const list = screen.getByRole('list', { name: '第 1 页的注释' });
+    expect(within(list).getAllByRole('button')).toHaveLength(4);
+    expect(within(list).getByText('表单字段')).toBeTruthy();
+    expect(within(list).getByText('标记')).toBeTruthy();
+    // Hidden marker, page label and previews are UI copy; targets and values
+    // are document data.
+    const hidden = within(list).getByText('隐藏');
+    expect(hidden.getAttribute('title')).toBe('隐藏的注释');
+    expect(within(list).getAllByText('1 页')).toHaveLength(4);
+    expect(within(list).getByText('跳转到第 3 页')).toBeTruthy();
+    expect(within(list).getByText('name = John')).toBeTruthy();
+    expect(within(list).getByText('https://example.com/a')).toBeTruthy();
+  });
+
+  it('translates the empty and no-match states and returns to English', () => {
+    useAnnotationStore.getState().setPageData(1, []);
+    render(React.createElement(AnnotationsTab));
+
+    expect(screen.getByRole('status').textContent).toBe('第 1 页没有注释。');
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByRole('status').textContent).toBe('No annotations on page 1.');
+    expect(screen.getByRole('group', { name: 'Annotation scope' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Current page' })).toBeTruthy();
+  });
+
+  it('translates the filtered summary of the current page', () => {
+    render(React.createElement(AnnotationsTab));
+
+    fireEvent.change(screen.getByRole('combobox', { name: '类别' }), {
+      target: { value: 'form' },
+    });
+
+    expect(screen.getByRole('status').textContent).toBe('1/4 个注释 · 0 个链接 · 1 个表单字段');
+    expect(screen.getByRole('list', { name: '第 1 页的注释' })).toBeTruthy();
+  });
+});
+
+describe('AnnotationsTab whole document localization', () => {
+  afterEach(cleanup);
+
+  beforeEach(() => {
+    reset();
+    useI18nStore.setState({ locale: 'zh-CN' });
+    useAnnotationStore.getState().setPageData(1, allAnnotations);
+  });
+
+  /** Same gesture as `switchToDocument`, with the translated label. */
+  const switchToDocumentZh = (): void => {
+    fireEvent.click(screen.getByRole('button', { name: '整个文档' }));
+  };
+
+  it('translates the index progress, summary, search and export controls', async () => {
+    buildMock.mockResolvedValue(documentResult);
+
+    render(React.createElement(AnnotationsTab));
+    switchToDocumentZh();
+
+    await waitFor(() => expect(screen.getByRole('list', { name: '文档注释' })).toBeTruthy());
+
+    expect(screen.getByRole('status').textContent).toBe(
+      '2 个注释 · 2 页 · 1 个链接 · 0 个表单字段',
+    );
+    expect(screen.getByRole('button', { name: '导出' })).toBeTruthy();
+    expect(screen.getByRole('searchbox', { name: '搜索' })).toBeTruthy();
+    expect(screen.getByLabelText('搜索').getAttribute('placeholder')).toBe('文本、URL、字段…');
+    expect(within(screen.getByRole('list', { name: '文档注释' })).getByText('2 页')).toBeTruthy();
+
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索' }), {
+      target: { value: 'nothing matches this' },
+    });
+
+    expect(screen.getByText('没有匹配当前筛选的注释。')).toBeTruthy();
+  });
+
+  it('reports Chinese progress while the index is running', async () => {
+    const pending = deferred<AnnotationIndexResult | null>();
+    buildMock.mockImplementation(async () => pending.promise);
+
+    render(React.createElement(AnnotationsTab));
+    switchToDocumentZh();
+
+    await waitFor(() => expect(buildMock).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('status').textContent).toBe('正在索引注释 0/3…');
+
+    await act(async () => {
+      pending.resolve(documentResult);
+    });
+    expect(screen.getByRole('button', { name: '导出' })).toBeTruthy();
+  });
+
+  it('translates the health check, its issues and their jump actions', async () => {
+    buildMock.mockResolvedValue(healthResult);
+
+    render(React.createElement(AnnotationsTab));
+    switchToDocumentZh();
+    await waitFor(() => expect(screen.getByLabelText('问题')).toBeTruthy());
+
+    const issues = screen.getByLabelText('问题');
+    // Issue kind badges are status identifiers and stay as reported.
+    for (const badge of ['unresolved', 'unsafe', 'unnamed', 'conflicting-type', 'duplicate-name']) {
+      expect(within(issues).getByText(badge)).toBeTruthy();
+    }
+    expect(within(issues).getByText('链接既没有外部 URL，也没有解析到的页面')).toBeTruthy();
+    expect(
+      within(issues).getByText('链接使用了不安全的目标协议：javascript:alert(1)'),
+    ).toBeTruthy();
+    expect(within(issues).getByText('表单部件没有字段名')).toBeTruthy();
+    expect(within(issues).getByText('字段“amount”出现在 2 页上')).toBeTruthy();
+    expect(within(issues).getByText('字段“amount”使用了冲突的类型（Ch, Tx）')).toBeTruthy();
+    expect(within(issues).getAllByText('2 个部件')).toHaveLength(2);
+    expect(within(issues).getAllByText('2 页, 4 页')).toHaveLength(2);
+    // The jump button carries the translated aria label, not its text.
+    expect(
+      within(issues).getAllByRole('button', { name: /^跳转到第 \d+ 页$/ }),
+    ).toHaveLength(5);
+    expect(within(issues).getByRole('button', { name: '跳转到第 5 页' })).toBeTruthy();
+
+    const external = screen.getByLabelText('外部链接');
+    expect((external as HTMLDetailsElement).open).toBe(false);
+    expect(within(external).getByText('https://example.com/ext')).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByLabelText('Issues')).toBeTruthy();
+    expect(screen.getByLabelText('External links')).toBeTruthy();
+    expect(
+      within(screen.getByLabelText('Issues')).getByText(
+        'Link has no external URL and no resolved page',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('translates the empty document and the missing-document state', async () => {
+    buildMock.mockResolvedValue(emptyDocumentResult);
+
+    render(React.createElement(AnnotationsTab));
+    switchToDocumentZh();
+
+    await waitFor(() => expect(screen.getByText('此文档没有注释。')).toBeTruthy());
+    expect(screen.getByRole('status').textContent).toBe(
+      '0 个注释 · 0 页 · 0 个链接 · 0 个表单字段',
+    );
+
+    cleanup();
+    usePdfStore.setState({ filePath: null });
+    render(React.createElement(AnnotationsTab));
+
+    expect(screen.getByText('打开 PDF 以检查注释。')).toBeTruthy();
+  });
+});
+
 describe('annotation tab helpers', () => {
+  beforeEach(() => {
+    useI18nStore.setState({ locale: 'en' });
+  });
+
   it('prefers the link target, then the form field, then the annotation text', () => {
     expect(annotationRowPreview(externalLink)).toBe('https://example.com/a');
     expect(annotationRowPreview({ ...externalLink, link: null, title: 'Title', contents: 'Body' })).toBe(
@@ -1411,5 +1608,24 @@ describe('annotation tab helpers', () => {
     expect(issuePagesLabel([2, 4])).toBe('p.2, p.4');
     expect(issuePagesLabel([3])).toBe('p.3');
     expect(issuePagesLabel([])).toBe('');
+  });
+
+  it('takes a translator for every label a locale switch must re-render', () => {
+    const tZh: TranslateFn = (key, params) => translate('zh-CN', key, params);
+
+    expect(annotationSummary(allAnnotations, allAnnotations, false, tZh)).toBe(
+      '4 个注释 · 2 个链接 · 1 个表单字段',
+    );
+    expect(annotationSummary(allAnnotations, [widget], true, tZh)).toBe(
+      '1/4 个注释 · 0 个链接 · 1 个表单字段',
+    );
+    expect(documentAnnotationSummary(documentResult.summary, tZh)).toBe(
+      '2 个注释 · 2 页 · 1 个链接 · 0 个表单字段',
+    );
+    expect(issuePagesLabel([2, 4], tZh)).toBe('2 页, 4 页');
+    expect(annotationRowPreview(internalLink, tZh)).toBe('跳转到第 3 页');
+    // Document values are never translated.
+    expect(annotationRowPreview(externalLink, tZh)).toBe('https://example.com/a');
+    expect(annotationRowPreview(widget, tZh)).toBe('name = John');
   });
 });

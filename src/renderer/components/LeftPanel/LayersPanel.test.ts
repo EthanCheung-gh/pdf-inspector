@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { useI18nStore } from '../../i18n';
 import { OVERLAY_LAYERS } from '../../services/overlay-style';
 import { usePdfStore } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
@@ -37,16 +38,18 @@ const rowFor = (label: string): HTMLElement =>
 const allVisibility = (visible: boolean): Record<string, boolean> =>
   Object.fromEntries(OVERLAY_LAYERS.map((layer) => [layer.type, visible]));
 
-describe('LayersPanel', () => {
-  afterEach(cleanup);
-
-  beforeEach(() => {
-    usePdfStore.setState({
-      pageData: pageData({}),
-      overlayVisibility: { ...ALL_VISIBLE },
-    });
-    useWorkspaceStore.setState({ overlayOpacity: 1 });
+beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
+  usePdfStore.setState({
+    pageData: pageData({}),
+    overlayVisibility: { ...ALL_VISIBLE },
   });
+  useWorkspaceStore.setState({ overlayOpacity: 1 });
+});
+
+afterEach(cleanup);
+
+describe('LayersPanel', () => {
 
   it('renders one row per overlay type with the current page count', () => {
     usePdfStore.setState({
@@ -152,5 +155,71 @@ describe('LayersPanel', () => {
 
     expect(useWorkspaceStore.getState().overlayOpacity).toBe(0.4);
     expect(screen.getByText('40%')).toBeTruthy();
+  });
+});
+
+describe('LayersPanel localization', () => {
+  beforeEach(() => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+  });
+
+  it('translates the title, presets, rows and opacity control', () => {
+    usePdfStore.setState({ pageData: pageData({ words: 2 }) });
+
+    render(React.createElement(LayersPanel));
+
+    expect(screen.getByRole('region', { name: '图层' })).toBeTruthy();
+    expect(screen.getByText('对象图层')).toBeTruthy();
+    expect(screen.getByRole('group', { name: '图层可见性预设' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '全部' }).getAttribute('title')).toBe('显示全部对象图层');
+    expect(screen.getByRole('button', { name: '无' }).getAttribute('title')).toBe('隐藏全部对象图层');
+    expect(screen.getByRole('list', { name: '对象图层列表' })).toBeTruthy();
+
+    expect(screen.getByText('字符')).toBeTruthy();
+    expect(screen.getByText('词')).toBeTruthy();
+    expect(screen.getByText('矩形')).toBeTruthy();
+    expect(screen.getByText('线条')).toBeTruthy();
+    expect(screen.getByText('曲线')).toBeTruthy();
+    expect(screen.getByText('图像')).toBeTruthy();
+    expect(screen.getByText('表格')).toBeTruthy();
+    expect(within(rowFor('词')).getByText('2')).toBeTruthy();
+
+    expect(screen.getByRole('button', { name: '单独显示词' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '隐藏词' })).toBeTruthy();
+    expect(screen.getByText('不透明度')).toBeTruthy();
+    expect(screen.getByLabelText('对象叠加层不透明度')).toBeTruthy();
+    expect(screen.getByText('100%')).toBeTruthy();
+  });
+
+  it('translates the Solo toggle and the page-not-loaded tooltip', () => {
+    usePdfStore.setState({ pageData: null });
+
+    render(React.createElement(LayersPanel));
+
+    expect(screen.getAllByTitle('页面未加载')).toHaveLength(OVERLAY_LAYERS.length);
+
+    usePdfStore.setState({ pageData: pageData({ words: 2 }) });
+    fireEvent.click(screen.getByRole('button', { name: '单独显示词' }));
+
+    expect(usePdfStore.getState().overlayVisibility.word).toBe(true);
+    expect(
+      screen.getByRole('button', { name: '单独显示词' }).getAttribute('aria-pressed'),
+    ).toBe('true');
+    expect(
+      screen.getByRole('button', { name: '单独显示词' }).getAttribute('title'),
+    ).toBe('恢复单独显示词之前的可见性');
+  });
+
+  it('returns to English without a reload', () => {
+    render(React.createElement(LayersPanel));
+    expect(screen.getByText('对象图层')).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByText('Object layers')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'All' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Hide Words' })).toBeTruthy();
   });
 });

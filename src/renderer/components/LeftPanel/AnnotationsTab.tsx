@@ -1,6 +1,8 @@
 import React, { useId, useMemo, useState } from 'react';
 import { annotationDocumentKey, annotationIndexPageTotal, useAnnotationIndex } from '../../hooks/useAnnotationIndex';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
+import { DEFAULT_LOCALE } from '../../i18n/locales';
+import { translate, useT, type MessageKey, type TranslateFn } from '../../i18n';
 import type {
   AnnotationFormIssue,
   AnnotationIndexSummary,
@@ -8,7 +10,6 @@ import type {
 } from '../../services/annotation-index';
 import {
   ANNOTATION_KINDS,
-  ANNOTATION_KIND_LABELS,
   annotationKindLabel,
   annotationSearchText,
   annotationSubtypeLabel,
@@ -43,10 +44,27 @@ const KIND_BADGE_CLASSES: Record<AnnotationKind, string> = {
 export type AnnotationScope = 'page' | 'document';
 
 /** Ordered options of the mode switch. */
-export const ANNOTATION_SCOPES: ReadonlyArray<{ value: AnnotationScope; label: string }> = [
-  { value: 'page', label: 'Current page' },
-  { value: 'document', label: 'Whole document' },
+export const ANNOTATION_SCOPES: ReadonlyArray<{ value: AnnotationScope; labelKey: MessageKey }> = [
+  { value: 'page', labelKey: 'annots.scope.page' },
+  { value: 'document', labelKey: 'annots.scope.document' },
 ];
+
+/**
+ * English translator for the exported pure helpers below (and for plain unit
+ * tests). Components always pass their `useT()` translator, so a locale switch
+ * re-renders the summary without leaving hard-coded English behind.
+ */
+const defaultTranslate: TranslateFn = (key, params) => translate(DEFAULT_LOCALE, key, params);
+
+/**
+ * One/other form of a count through a `TranslateFn`.
+ *
+ * Both catalogs define the two suffixes and the shipped locales only use the
+ * `one`/`other` categories, so the comparison is exact; components use
+ * `translatePlural` wherever they have the locale at hand.
+ */
+const countLabel = (t: TranslateFn, count: number, one: MessageKey, other: MessageKey): string =>
+  t(count === 1 ? one : other, { count });
 
 /** Stable empty list so an unindexed document keeps one array reference. */
 const EMPTY_ANNOTATIONS: PdfAnnotation[] = [];
@@ -60,14 +78,19 @@ const EMPTY_FORM_ISSUES: AnnotationFormIssue[] = [];
  * the annotation's title/contents. The list is the only place where the target
  * of a link is visible without selecting it.
  */
-export function annotationRowPreview(annotation: PdfAnnotation): string {
+export function annotationRowPreview(
+  annotation: PdfAnnotation,
+  t: TranslateFn = defaultTranslate,
+): string {
   const link = annotation.link;
   if (link !== null) {
     if (link.url !== null) return link.url;
     // Display-only: `unsafeUrl` is never an activation target, but it is the
     // only way to show what a refused link pointed at.
     if (link.unsafeUrl !== null) return link.unsafeUrl;
-    if (link.internalPage !== null) return `Go to page ${link.internalPage}`;
+    if (link.internalPage !== null) {
+      return t('annots.preview.goToPage', { page: link.internalPage });
+    }
   }
 
   const form = annotation.form;
@@ -97,16 +120,22 @@ export function annotationSummary(
   annotations: readonly PdfAnnotation[],
   visible: readonly PdfAnnotation[],
   filtered: boolean,
+  t: TranslateFn = defaultTranslate,
 ): string {
   const counted = filtered ? visible : annotations;
   const annotationCount = filtered
-    ? `${visible.length} of ${annotations.length} annotations`
-    : countLabel(annotations.length, 'annotation', 'annotations');
+    ? t('annots.summary.filtered', { visible: visible.length, total: annotations.length })
+    : countLabel(t, annotations.length, 'annots.count.annotation.one', 'annots.count.annotation.other');
 
   return [
     annotationCount,
-    countLabel(countOfKind(counted, 'link'), 'link', 'links'),
-    countLabel(countOfKind(counted, 'form'), 'form field', 'form fields'),
+    countLabel(t, countOfKind(counted, 'link'), 'annots.count.link.one', 'annots.count.link.other'),
+    countLabel(
+      t,
+      countOfKind(counted, 'form'),
+      'annots.count.formField.one',
+      'annots.count.formField.other',
+    ),
   ].join(' · ');
 }
 
@@ -116,12 +145,15 @@ export function annotationSummary(
  * The counts come from the index summary, which is computed once while the
  * document is read, so the list never re-counts on every render.
  */
-export function documentAnnotationSummary(summary: AnnotationIndexSummary): string {
+export function documentAnnotationSummary(
+  summary: AnnotationIndexSummary,
+  t: TranslateFn = defaultTranslate,
+): string {
   return [
-    countLabel(summary.annotations, 'annotation', 'annotations'),
-    countLabel(summary.pagesWithAnnotations, 'page', 'pages'),
-    countLabel(summary.links, 'link', 'links'),
-    countLabel(summary.formFields, 'form field', 'form fields'),
+    countLabel(t, summary.annotations, 'annots.count.annotation.one', 'annots.count.annotation.other'),
+    countLabel(t, summary.pagesWithAnnotations, 'annots.count.page.one', 'annots.count.page.other'),
+    countLabel(t, summary.links, 'annots.count.link.one', 'annots.count.link.other'),
+    countLabel(t, summary.formFields, 'annots.count.formField.one', 'annots.count.formField.other'),
   ].join(' · ');
 }
 
@@ -155,8 +187,8 @@ export function externalLinkCount(linkIssues: readonly AnnotationLinkIssue[]): n
  * `p.2, p.4`: the pages a form issue spans. Kept in the index's ascending
  * order so a field's page list reads like a table of contents.
  */
-export function issuePagesLabel(pages: readonly number[]): string {
-  return pages.map((page) => `p.${page}`).join(', ');
+export function issuePagesLabel(pages: readonly number[], t: TranslateFn = defaultTranslate): string {
+  return pages.map((page) => t('annots.row.page', { page })).join(', ');
 }
 
 /** Raw subtypes present on the page, sorted for a stable filter menu. */
@@ -169,12 +201,46 @@ export function subtypeFilterOptions(annotations: readonly PdfAnnotation[]): str
   return Array.from(subtypes).sort((left, right) => left.toLowerCase().localeCompare(right.toLowerCase()));
 }
 
-function countLabel(count: number, singular: string, plural: string): string {
-  return `${count} ${count === 1 ? singular : plural}`;
-}
-
 function countOfKind(annotations: readonly PdfAnnotation[], kind: AnnotationKind): number {
   return annotations.reduce((total, annotation) => (annotation.kind === kind ? total + 1 : total), 0);
+}
+
+/**
+ * Issue copy for the health check.
+ *
+ * `annotation-index` builds its issues with English `message` text because the
+ * same rows are exported as JSON data; the tab therefore derives the display
+ * copy from the issue kind and its data, and falls back to the payload message
+ * for anything unexpected.
+ */
+function linkIssueMessage(issue: AnnotationLinkIssue, t: TranslateFn): string {
+  switch (issue.kind) {
+    case 'unsafe':
+      return t('annots.issue.unsafe', { target: issue.target ?? '' });
+    case 'unresolved':
+      return t('annots.issue.unresolved');
+    default:
+      return issue.message;
+  }
+}
+
+function formIssueMessage(issue: AnnotationFormIssue, t: TranslateFn): string {
+  switch (issue.kind) {
+    case 'unnamed':
+      return t('annots.issue.unnamed');
+    case 'duplicate-name':
+      return t('annots.issue.duplicateName', {
+        name: issue.fieldName ?? '',
+        count: issue.pages.length,
+      });
+    case 'conflicting-type':
+      return t('annots.issue.conflictingType', {
+        name: issue.fieldName ?? '',
+        types: issue.fieldTypes.join(', '),
+      });
+    default:
+      return issue.message;
+  }
 }
 
 /** One row of either list; the presentation is what keeps both lists equal. */
@@ -184,7 +250,8 @@ const AnnotationRow: React.FC<{
   className: string;
   onActivate: (annotation: PdfAnnotation) => void;
 }> = ({ annotation, selected, className, onActivate }) => {
-  const preview = annotationRowPreview(annotation);
+  const t = useT();
+  const preview = annotationRowPreview(annotation, t);
 
   return (
     <li className={className}>
@@ -197,16 +264,16 @@ const AnnotationRow: React.FC<{
       >
         <span className={styles.rowHeader}>
           <span className={`${styles.badge} ${KIND_BADGE_CLASSES[annotation.kind]}`}>
-            {annotationKindLabel(annotation.kind)}
+            {annotationKindLabel(annotation.kind, t)}
           </span>
           <span className={styles.subtype}>{annotationSubtypeLabel(annotation.subtype)}</span>
           {annotation.hidden && (
-            <span className={styles.hiddenMarker} title="Hidden annotation">
-              Hidden
+            <span className={styles.hiddenMarker} title={t('annots.row.hiddenTitle')}>
+              {t('annots.row.hidden')}
             </span>
           )}
-          <span className={styles.page} title={`Page ${annotation.page}`}>
-            p.{annotation.page}
+          <span className={styles.page} title={t('annots.row.pageTitle', { page: annotation.page })}>
+            {t('annots.row.page', { page: annotation.page })}
           </span>
         </span>
         {preview.length > 0 && <span className={styles.preview}>{preview}</span>}
@@ -227,6 +294,7 @@ const AnnotationRow: React.FC<{
  * `AnnotationDetails` renders it.
  */
 export const AnnotationsTab: React.FC = () => {
+  const t = useT();
   const filePath = usePdfStore((state) => state.filePath);
   const sourceUrl = usePdfStore((state) => state.sourceUrl);
   const documentName = usePdfStore((state) => state.documentName);
@@ -425,14 +493,14 @@ export const AnnotationsTab: React.FC = () => {
       if (pageLoading) {
         return (
           <div className={styles.stateBox} role="status">
-            Loading annotations…
+            {t('annots.loading')}
           </div>
         );
       }
 
       return (
         <div className={styles.stateBox}>
-          <div role="status">Page geometry unavailable; annotations need page data.</div>
+          <div role="status">{t('annots.noGeometry')}</div>
           {/* Only a failed extraction is retryable: re-extract the page through
               the guarded navigation. A page that extracted without boxes (older
               sidecar) has nothing to retry. */}
@@ -442,7 +510,7 @@ export const AnnotationsTab: React.FC = () => {
               className={styles.retry}
               onClick={() => void navigate(currentPage)}
             >
-              Retry page load
+              {t('annots.retryPageLoad')}
             </button>
           )}
         </div>
@@ -454,7 +522,7 @@ export const AnnotationsTab: React.FC = () => {
         <div className={styles.stateBox} role="alert">
           <div>{error}</div>
           <button type="button" className={styles.retry} onClick={requestReload}>
-            Retry
+            {t('common.retry')}
           </button>
         </div>
       );
@@ -463,7 +531,7 @@ export const AnnotationsTab: React.FC = () => {
     if (pending) {
       return (
         <div className={styles.stateBox} role="status">
-          Loading annotations…
+          {t('annots.loading')}
         </div>
       );
     }
@@ -471,7 +539,7 @@ export const AnnotationsTab: React.FC = () => {
     if (annotations.length === 0) {
       return (
         <div className={styles.emptyState} role="status">
-          No annotations on page {showingPage}.
+          {t('annots.page.empty', { page: showingPage })}
         </div>
       );
     }
@@ -479,7 +547,7 @@ export const AnnotationsTab: React.FC = () => {
     return (
       <>
         <div className={styles.summary} role="status">
-          {annotationSummary(annotations, visible, filtered)}
+          {annotationSummary(annotations, visible, filtered, t)}
         </div>
 
         <div className={styles.controls}>
@@ -491,12 +559,12 @@ export const AnnotationsTab: React.FC = () => {
               checked={showBoxes}
               onChange={(event) => setShowBoxes(event.target.checked)}
             />
-            Show boxes
+            {t('annots.showBoxes')}
           </label>
 
           <div className={styles.filterRow}>
             <label className={styles.filterLabel} htmlFor={kindFilterId}>
-              Kind
+              {t('annots.filter.kind')}
             </label>
             <select
               id={kindFilterId}
@@ -504,10 +572,10 @@ export const AnnotationsTab: React.FC = () => {
               value={kindFilter}
               onChange={(event) => setKindFilter(event.target.value as AnnotationKindFilter)}
             >
-              <option value="all">All kinds</option>
+              <option value="all">{t('annots.filter.allKinds')}</option>
               {ANNOTATION_KINDS.map((kind) => (
                 <option key={kind} value={kind}>
-                  {ANNOTATION_KIND_LABELS[kind]}
+                  {annotationKindLabel(kind, t)}
                 </option>
               ))}
             </select>
@@ -515,7 +583,7 @@ export const AnnotationsTab: React.FC = () => {
 
           <div className={styles.filterRow}>
             <label className={styles.filterLabel} htmlFor={subtypeFilterId}>
-              Subtype
+              {t('annots.filter.subtype')}
             </label>
             <select
               id={subtypeFilterId}
@@ -523,7 +591,7 @@ export const AnnotationsTab: React.FC = () => {
               value={subtypeFilter}
               onChange={(event) => setSubtypeFilter(event.target.value)}
             >
-              <option value="all">All subtypes</option>
+              <option value="all">{t('annots.filter.allSubtypes')}</option>
               {subtypes.map((subtype) => (
                 <option key={subtype} value={subtype}>
                   {annotationSubtypeLabel(subtype)}
@@ -535,10 +603,10 @@ export const AnnotationsTab: React.FC = () => {
 
         {visible.length === 0 ? (
           <div className={styles.emptyState} role="status">
-            No annotations match the current filters.
+            {t('annots.noMatch')}
           </div>
         ) : (
-          <ul className={styles.list} aria-label={`Annotations on page ${showingPage}`}>
+          <ul className={styles.list} aria-label={t('annots.page.list', { page: showingPage })}>
             {visible.map((annotation) => (
               <AnnotationRow
                 key={annotation.id}
@@ -568,14 +636,14 @@ export const AnnotationsTab: React.FC = () => {
 
     return (
       <>
-        <details className={styles.issues} open aria-label="Issues">
+        <details className={styles.issues} open aria-label={t('annots.issues.title')}>
           <summary className={styles.issueSummary}>
-            <span className={styles.issueTitle}>Issues</span>
+            <span className={styles.issueTitle}>{t('annots.issues.title')}</span>
             <span className={styles.issueCount}>{issueCount}</span>
           </summary>
 
           {issueCount === 0 ? (
-            <div className={styles.issueEmpty}>No link or form issues found.</div>
+            <div className={styles.issueEmpty}>{t('annots.issues.none')}</div>
           ) : (
             <ul className={styles.issueList}>
               {linkProblems.map((issue) => (
@@ -585,20 +653,20 @@ export const AnnotationsTab: React.FC = () => {
                 >
                   <div className={styles.issueHeader}>
                     <span className={`${styles.badge} ${styles.badgeWarning}`}>{issue.kind}</span>
-                    <span className={styles.page}>p.{issue.page}</span>
+                    <span className={styles.page}>{t('annots.row.page', { page: issue.page })}</span>
                     <button
                       type="button"
                       className={styles.issueAction}
-                      aria-label={`Go to page ${issue.page}`}
+                      aria-label={t('annots.issues.goToPageAria', { page: issue.page })}
                       onClick={() => activateLinkIssue(issue)}
                     >
-                      Go to page
+                      {t('annots.issues.goToPage')}
                     </button>
                   </div>
                   {issue.target !== null && (
                     <div className={styles.issueTarget}>{issue.target}</div>
                   )}
-                  <div className={styles.issueMessage}>{issue.message}</div>
+                  <div className={styles.issueMessage}>{linkIssueMessage(issue, t)}</div>
                 </li>
               ))}
 
@@ -628,22 +696,27 @@ export const AnnotationsTab: React.FC = () => {
                       >
                         {issue.kind}
                       </span>
-                      <span className={styles.issuePages}>{issuePagesLabel(issue.pages)}</span>
+                      <span className={styles.issuePages}>{issuePagesLabel(issue.pages, t)}</span>
                       {firstPage !== undefined && (
                         <button
                           type="button"
                           className={styles.issueAction}
-                          aria-label={`Go to page ${firstPage}`}
+                          aria-label={t('annots.issues.goToPageAria', { page: firstPage })}
                           onClick={() => activateFormIssue(issue)}
                         >
-                          Go to page
+                          {t('annots.issues.goToPage')}
                         </button>
                       )}
                     </div>
                     <div className={styles.issueMeta}>
-                      {countLabel(issue.widgetCount, 'widget', 'widgets')}
+                      {countLabel(
+                        t,
+                        issue.widgetCount,
+                        'annots.count.widget.one',
+                        'annots.count.widget.other',
+                      )}
                     </div>
-                    <div className={styles.issueMessage}>{issue.message}</div>
+                    <div className={styles.issueMessage}>{formIssueMessage(issue, t)}</div>
                   </li>
                 );
               })}
@@ -652,9 +725,9 @@ export const AnnotationsTab: React.FC = () => {
         </details>
 
         {externalLinks.length > 0 && (
-          <details className={styles.issues} aria-label="External links">
+          <details className={styles.issues} aria-label={t('annots.issues.external')}>
             <summary className={styles.issueSummary}>
-              <span className={styles.issueTitle}>External links</span>
+              <span className={styles.issueTitle}>{t('annots.issues.external')}</span>
               <span className={styles.issueCount}>{externalLinks.length}</span>
             </summary>
 
@@ -666,14 +739,14 @@ export const AnnotationsTab: React.FC = () => {
                 >
                   <div className={styles.issueHeader}>
                     <span className={`${styles.badge} ${styles.badgeInfo}`}>external</span>
-                    <span className={styles.page}>p.{issue.page}</span>
+                    <span className={styles.page}>{t('annots.row.page', { page: issue.page })}</span>
                     <button
                       type="button"
                       className={styles.issueAction}
-                      aria-label={`Go to page ${issue.page}`}
+                      aria-label={t('annots.issues.goToPageAria', { page: issue.page })}
                       onClick={() => activateLinkIssue(issue)}
                     >
-                      Go to page
+                      {t('annots.issues.goToPage')}
                     </button>
                   </div>
                   {issue.target !== null && (
@@ -692,7 +765,7 @@ export const AnnotationsTab: React.FC = () => {
     if (documentKey === null) {
       return (
         <div className={styles.emptyState} role="status">
-          Open a PDF to index annotations.
+          {t('annots.doc.noDocument')}
         </div>
       );
     }
@@ -704,7 +777,7 @@ export const AnnotationsTab: React.FC = () => {
     if (pdfDoc === null || indexTotal < 1) {
       return (
         <div className={styles.stateBox} role="status">
-          Waiting for the document to load…
+          {t('annots.doc.waiting')}
         </div>
       );
     }
@@ -718,9 +791,9 @@ export const AnnotationsTab: React.FC = () => {
     if (indexStatus === 'error' && current) {
       return (
         <div className={styles.stateBox} role="alert">
-          <div>{indexError ?? 'Failed to index document annotations'}</div>
+          <div>{indexError ?? t('annots.doc.failed')}</div>
           <button type="button" className={styles.retry} onClick={retry}>
-            Retry
+            {t('common.retry')}
           </button>
         </div>
       );
@@ -735,8 +808,8 @@ export const AnnotationsTab: React.FC = () => {
         <div className={styles.progress} role="status">
           <div>
             {indexProgress === null
-              ? 'Indexing annotations…'
-              : `Indexing annotations ${done}/${total}…`}
+              ? t('annots.doc.indexing')
+              : t('annots.doc.progress', { done, total })}
           </div>
           {/* The current page stays usable: this is a background read that only
               reports progress here. */}
@@ -750,7 +823,7 @@ export const AnnotationsTab: React.FC = () => {
     return (
       <>
         <div className={styles.summary} role="status">
-          {documentAnnotationSummary(indexResult.summary)}
+          {documentAnnotationSummary(indexResult.summary, t)}
         </div>
 
         {/* Exporting is only offered for a finished index: there is nothing to
@@ -763,7 +836,7 @@ export const AnnotationsTab: React.FC = () => {
             aria-expanded={exportOpen}
             onClick={() => setExportOpen(true)}
           >
-            Export
+            {t('annots.doc.export')}
           </button>
         </div>
 
@@ -773,21 +846,21 @@ export const AnnotationsTab: React.FC = () => {
           <div className={styles.controls}>
             <div className={styles.filterRow}>
               <label className={styles.filterLabel} htmlFor={searchInputId}>
-                Search
+                {t('annots.filter.search')}
               </label>
               <input
                 id={searchInputId}
                 type="search"
                 className={styles.searchInput}
                 value={indexQuery}
-                placeholder="Text, URL, field…"
+                placeholder={t('annots.filter.searchPlaceholder')}
                 onChange={(event) => setIndexQuery(event.target.value)}
               />
             </div>
 
             <div className={styles.filterRow}>
               <label className={styles.filterLabel} htmlFor={documentKindFilterId}>
-                Kind
+                {t('annots.filter.kind')}
               </label>
               <select
                 id={documentKindFilterId}
@@ -797,10 +870,10 @@ export const AnnotationsTab: React.FC = () => {
                   setIndexKindFilter(event.target.value as AnnotationIndexKindFilter)
                 }
               >
-                <option value="all">All kinds</option>
+                <option value="all">{t('annots.filter.allKinds')}</option>
                 {ANNOTATION_KINDS.map((kind) => (
                   <option key={kind} value={kind}>
-                    {ANNOTATION_KIND_LABELS[kind]}
+                    {annotationKindLabel(kind, t)}
                   </option>
                 ))}
               </select>
@@ -808,7 +881,7 @@ export const AnnotationsTab: React.FC = () => {
 
             <div className={styles.filterRow}>
               <label className={styles.filterLabel} htmlFor={documentSubtypeFilterId}>
-                Subtype
+                {t('annots.filter.subtype')}
               </label>
               <select
                 id={documentSubtypeFilterId}
@@ -816,7 +889,7 @@ export const AnnotationsTab: React.FC = () => {
                 value={indexSubtypeFilter}
                 onChange={(event) => setIndexSubtypeFilter(event.target.value)}
               >
-                <option value="all">All subtypes</option>
+                <option value="all">{t('annots.filter.allSubtypes')}</option>
                 {documentSubtypes.map((subtype) => (
                   <option key={subtype} value={subtype}>
                     {annotationSubtypeLabel(subtype)}
@@ -830,11 +903,11 @@ export const AnnotationsTab: React.FC = () => {
         {documentAnnotations.length === 0 ? (
           // Not a role=status: the summary above already announces the empty
           // document, which keeps a single live region in this panel.
-          <div className={styles.emptyState}>No annotations in this document.</div>
+          <div className={styles.emptyState}>{t('annots.doc.empty')}</div>
         ) : documentVisible.length === 0 ? (
-          <div className={styles.emptyState}>No annotations match the current filters.</div>
+          <div className={styles.emptyState}>{t('annots.noMatch')}</div>
         ) : (
-          <ul className={styles.list} aria-label="Document annotations">
+          <ul className={styles.list} aria-label={t('annots.doc.list')}>
             {documentVisible.map((annotation) => (
               <AnnotationRow
                 key={annotation.id}
@@ -863,12 +936,12 @@ export const AnnotationsTab: React.FC = () => {
   };
 
   if (!filePath) {
-    return <div className={styles.emptyState}>Open a PDF to inspect annotations.</div>;
+    return <div className={styles.emptyState}>{t('annots.empty.noDocument')}</div>;
   }
 
   return (
     <div className={styles.panel}>
-      <div className={styles.modeSwitch} role="group" aria-label="Annotation scope">
+      <div className={styles.modeSwitch} role="group" aria-label={t('annots.scope.label')}>
         {ANNOTATION_SCOPES.map((option) => (
           <button
             key={option.value}
@@ -879,7 +952,7 @@ export const AnnotationsTab: React.FC = () => {
             aria-pressed={scope === option.value}
             onClick={() => setScope(option.value)}
           >
-            {option.label}
+            {t(option.labelKey)}
           </button>
         ))}
       </div>

@@ -2,8 +2,9 @@
 import React from 'react';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useI18nStore } from '../../i18n';
 import type { AnnotationIndexResult } from '../../services/annotation-index';
 import type { SaveFileRequest } from '../../types/ipc-protocol';
 import type { PdfAnnotation } from '../../types/annotations';
@@ -110,6 +111,7 @@ const jsonRadio = (): HTMLInputElement =>
 
 describe('AnnotationExportDialog', () => {
   beforeEach(() => {
+    useI18nStore.setState({ locale: 'en' });
     saveFile.mockReset();
     saveFile.mockResolvedValue({ canceled: false, filePath: '/tmp/out.json' });
   });
@@ -397,5 +399,36 @@ describe('AnnotationExportDialog', () => {
     expect(rule('backdrop')).toContain('z-index: 1000');
     expect(rule('actions')).toContain('justify-content: flex-end');
     expect(rule('primary')).toContain('var(--pi-accent-strong)');
+  });
+
+  it('translates the title, labels and buttons and returns to English', async () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    saveFile.mockResolvedValue({ canceled: false, error: 'disk full' });
+    renderDialog();
+
+    const title = document.getElementById(dialog().getAttribute('aria-labelledby') ?? '');
+    expect(title?.textContent).toBe('导出注释');
+    expect(within(dialog()).getByText('格式')).toBeTruthy();
+    expect(within(dialog()).getByLabelText('文件名')).toBeTruthy();
+    expect(within(dialog()).getByRole('button', { name: '取消' })).toBeTruthy();
+
+    fireEvent.click(within(dialog()).getByRole('button', { name: '导出' }));
+
+    // The prefix is UI copy; the bridge error stays as reported.
+    await waitFor(() =>
+      expect(within(dialog()).getByRole('alert').textContent).toBe('导出失败：disk full'),
+    );
+    expect((within(dialog()).getByLabelText('文件名') as HTMLInputElement).value).toBe(
+      'doc-annotations.json',
+    );
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(within(dialog()).getByRole('heading').textContent).toBe('Export annotations');
+    expect(within(dialog()).getByRole('button', { name: 'Cancel' })).toBeTruthy();
+    expect(within(dialog()).getByRole('button', { name: 'Export' })).toBeTruthy();
+    expect(within(dialog()).getByLabelText('File name')).toBeTruthy();
   });
 });

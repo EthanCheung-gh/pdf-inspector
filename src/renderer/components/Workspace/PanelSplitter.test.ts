@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useI18nStore } from '../../i18n/store';
 import { LEFT_PANEL_LIMITS, RIGHT_PANEL_LIMITS } from '../../store/workspace-store';
 import { PanelSplitter } from './PanelSplitter';
 
@@ -48,7 +49,18 @@ const endPointer = (separator: HTMLElement, pointerId = 1): void => {
 };
 
 describe('PanelSplitter', () => {
+  beforeEach(() => {
+    useI18nStore.setState({ locale: 'en' });
+  });
+
   afterEach(cleanup);
+
+  it('translates the separator label in Chinese', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    const { separator } = renderSplitter('right', 320);
+
+    expect(separator.getAttribute('aria-label')).toBe('调整右侧面板宽度');
+  });
 
   it('exposes vertical separator semantics and the current width', () => {
     const { separator } = renderSplitter('left', 240);

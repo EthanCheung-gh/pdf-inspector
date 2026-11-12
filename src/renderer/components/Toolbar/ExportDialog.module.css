@@ -3,8 +3,11 @@
   display: inline-block;
 }
 
-/* Same visual treatment as the old ExportMenu trigger. */
+/* Same visual treatment as the old ExportMenu trigger. The label is a single
+ * line that keeps its full width: the toolbar row must not shrink a control
+ * into an internally wrapped two-line label. */
 .button {
+  flex-shrink: 0;
   padding: 4px 8px;
   border: 1px solid var(--pi-border-strong);
   border-radius: var(--pi-radius-md);
@@ -12,6 +15,7 @@
   background: var(--pi-bg-control);
   cursor: pointer;
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .button:hover:not(:disabled) {

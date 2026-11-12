@@ -1,6 +1,7 @@
 import React, { useCallback } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
+import { useT } from '../../i18n';
 import { usePdfStore } from '../../store/pdf-store';
 import type { PdfOutlineItem } from '../../types/pdf-objects';
 import styles from './BookmarkTree.module.css';
@@ -13,6 +14,7 @@ const MAX_DEPTH = 5;
 const MAX_ITEMS = 2000;
 
 export const BookmarkTree: React.FC<BookmarkTreeProps> = ({ pdfDoc }) => {
+  const t = useT();
   const outline = usePdfStore((s) => s.outline);
   const { navigate } = usePageNavigation();
 
@@ -41,19 +43,23 @@ export const BookmarkTree: React.FC<BookmarkTreeProps> = ({ pdfDoc }) => {
   );
 
   if (!outline || outline.length === 0) {
-    return <div className={styles.emptyState}>No bookmarks found in this document.</div>;
+    return <div className={styles.emptyState}>{t('bookmarks.empty')}</div>;
   }
 
   const totalItems = countItems(outline);
   if (totalItems > MAX_ITEMS) {
     return (
       <div className={styles.emptyState}>
-        This document has {totalItems} bookmarks. The outline is too large to display.
+        {t('bookmarks.tooMany', { count: totalItems })}
       </div>
     );
   }
 
-  return <nav className={styles.tree} aria-label="PDF bookmarks">{renderItems(outline, 0, handleBookmarkClick)}</nav>;
+  return (
+    <nav className={styles.tree} aria-label={t('bookmarks.aria')}>
+      {renderItems(outline, 0, handleBookmarkClick)}
+    </nav>
+  );
 };
 
 function countItems(items: PdfOutlineItem[]): number {

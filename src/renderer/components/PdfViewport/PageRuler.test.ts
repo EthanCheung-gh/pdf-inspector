@@ -1,14 +1,19 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import type { PageViewport } from 'pdfjs-dist';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { useI18nStore } from '../../i18n';
 import { DEFAULT_WORKSPACE_LAYOUT, useWorkspaceStore } from '../../store/workspace-store';
 
 import { PageRuler, computeRulerTicks, labelFitsAt, selectRulerStep } from './PageRuler';
 
 const labels = (ticks: ReturnType<typeof computeRulerTicks>): string[] =>
   ticks.map((tick) => tick.label).filter((label): label is string => label !== null);
+
+beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
+});
 
 describe('selectRulerStep', () => {
   it('keeps labelled ticks at least 44px apart in points', () => {
@@ -177,5 +182,27 @@ describe('PageRuler', () => {
     render(React.createElement(PageRuler, { width: 200, height: 300, viewport: null }));
 
     expect(screen.queryByTestId('page-ruler')).toBeNull();
+  });
+
+  it('labels the ruler in the active locale while keeping the unit symbol', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    useWorkspaceStore.setState({ pageUnits: 'mm' });
+    const viewport = {
+      scale: 1,
+      userUnit: 1,
+      width: 200,
+      height: 300,
+    } as unknown as PageViewport;
+
+    render(React.createElement(PageRuler, { width: 200, height: 300, viewport }));
+
+    expect(screen.getByRole('img', { name: '页面标尺（mm）' })).toBeTruthy();
+    expect(screen.getByText('mm')).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByRole('img', { name: 'Page rulers (mm)' })).toBeTruthy();
   });
 });

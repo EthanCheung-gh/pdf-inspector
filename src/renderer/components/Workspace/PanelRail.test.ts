@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useI18nStore } from '../../i18n/store';
 import { PANEL_RAIL_ARROW, PanelRail, panelRailShowLabel } from './PanelRail';
 
 const renderRail = (
@@ -14,6 +15,10 @@ const renderRail = (
 };
 
 describe('PanelRail', () => {
+  beforeEach(() => {
+    useI18nStore.setState({ locale: 'en' });
+  });
+
   afterEach(cleanup);
 
   it('exposes a button with the show label and the pane name', () => {
@@ -64,5 +69,14 @@ describe('PanelRail', () => {
   it('maps each side to its show label', () => {
     expect(panelRailShowLabel('left')).toBe('Show left panel');
     expect(panelRailShowLabel('right')).toBe('Show right panel');
+  });
+
+  it('translates the show label in Chinese', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    const { button } = renderRail('left', '对象');
+
+    expect(button.getAttribute('aria-label')).toBe('显示左侧面板');
+    expect(button.getAttribute('title')).toBe('显示左侧面板');
+    expect(button.textContent).toContain('对象');
   });
 });

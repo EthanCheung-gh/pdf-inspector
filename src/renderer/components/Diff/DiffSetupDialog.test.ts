@@ -3,6 +3,7 @@ import React from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDiffStore } from '../../store/diff-store';
+import { useI18nStore } from '../../i18n';
 import { makeSampleResult } from '../../services/__tests__/diff-fixtures';
 
 const { pickDiffPdf, diffPdfs, saveFile } = vi.hoisted(() => ({
@@ -29,6 +30,8 @@ function compareButton(): HTMLElement {
 
 beforeEach(() => {
   store().reset();
+  // A Chinese test must not leak its locale into the English assertions.
+  useI18nStore.setState({ locale: 'en' });
   pickDiffPdf.mockReset();
   diffPdfs.mockReset();
   saveFile.mockReset();
@@ -250,6 +253,45 @@ describe('DiffSetupDialog compare', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(store().setupOpen).toBe(false);
     expect(diffPdfs).not.toHaveBeenCalled();
+  });
+});
+
+describe('DiffSetupDialog localization', () => {
+  it('translates the title, pickers and engine options', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+
+    render(React.createElement(DiffSetupDialog));
+    openDialog();
+
+    const dialog = screen.getByRole('dialog', { name: '比较 PDF' });
+    expect(within(dialog).getAllByText('未选择文件')).toHaveLength(2);
+    expect(within(dialog).getByRole('button', { name: '选择旧 PDF' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: '选择新 PDF' })).toBeTruthy();
+    expect(within(dialog).getAllByText('选择…')).toHaveLength(2);
+    expect(within(dialog).getByLabelText('位置容差')).toBeTruthy();
+    expect(within(dialog).getByRole('checkbox', { name: '忽略字体' })).toBeTruthy();
+    expect(within(dialog).getByRole('checkbox', { name: '忽略颜色' })).toBeTruthy();
+    expect(within(dialog).getByRole('checkbox', { name: '忽略图片' })).toBeTruthy();
+    expect(within(dialog).getByRole('checkbox', { name: '字符级变更' })).toBeTruthy();
+    expect(within(dialog).getByText(/始终报告词级变更/)).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: '取消' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: '比较' })).toBeTruthy();
+  });
+
+  it('switches back to English in place', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+
+    render(React.createElement(DiffSetupDialog));
+    openDialog();
+    expect(screen.getByRole('dialog', { name: '比较 PDF' })).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByRole('dialog', { name: 'Compare PDFs' })).toBeTruthy();
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Compare' })).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: 'Character-level changes' })).toBeTruthy();
   });
 });
 

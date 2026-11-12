@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ipc } from '../../services/ipc-client';
 import { analyzeFontsInBatches, formatFontSize } from '../../services/font-stats';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
+import { useT, type MessageKey, type TranslateFn } from '../../i18n';
 import { usePdfStore } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
 import type { FontStat } from '../../types/ipc-protocol';
@@ -18,11 +19,11 @@ const DASH = '—';
  * words carry the meaning on their own: the colour is a secondary cue for
  * users who can see it, never the only one.
  */
-const EMBEDDING_LABELS: Record<Embedding, string> = {
-  embedded: 'Embedded',
-  standard14: 'Standard 14',
-  'not-embedded': 'Not embedded',
-  unknown: 'Unknown',
+const EMBEDDING_LABEL_KEYS: Record<Embedding, MessageKey> = {
+  embedded: 'fonts.embedding.embedded',
+  standard14: 'fonts.embedding.standard14',
+  'not-embedded': 'fonts.embedding.notEmbedded',
+  unknown: 'fonts.embedding.unknown',
 };
 
 const EMBEDDING_BADGE_CLASSES: Record<Embedding, string> = {
@@ -39,31 +40,43 @@ interface FontBadge {
 }
 
 /**
+ * One/other form of a count through a `TranslateFn`. Both catalogs define the
+ * two suffixes (Chinese repeats the same text), so the exact comparison is
+ * enough for the shipped locales.
+ */
+const countLabel = (t: TranslateFn, count: number, one: MessageKey, other: MessageKey): string =>
+  t(count === 1 ? one : other, { count });
+
+const embeddingLabel = (t: TranslateFn, embedding: Embedding): string =>
+  t(EMBEDDING_LABEL_KEYS[embedding]);
+
+/**
  * Two badges at most: the panel is 200–400px wide, so the embedding state and
  * the single most informative secondary fact (subset tag before raw subtype)
  * are shown inline. Everything else lives in the expanded details.
  */
-function buildBadges(info: FontInfo | null): FontBadge[] {
+function buildBadges(info: FontInfo | null, t: TranslateFn): FontBadge[] {
   const embedding: Embedding = info?.embedding ?? 'unknown';
   const badges: FontBadge[] = [
     {
-      text: EMBEDDING_LABELS[embedding],
+      text: embeddingLabel(t, embedding),
       className: EMBEDDING_BADGE_CLASSES[embedding],
-      title: `Embedding: ${embedding}`,
+      // The value is a schema identifier (embedded/standard14/…) and stays raw.
+      title: t('fonts.badge.embeddingTitle', { embedding }),
     },
   ];
 
   if (info?.subset) {
     badges.push({
-      text: 'Subset',
+      text: t('fonts.badge.subset'),
       className: styles.badgeInfo,
-      title: 'Subset font (six-letter BaseFont tag)',
+      title: t('fonts.badge.subsetTitle'),
     });
   } else if (info?.subtype) {
     badges.push({
       text: info.subtype,
       className: styles.badgeMuted,
-      title: `Subtype: ${info.subtype}`,
+      title: t('fonts.badge.subtypeTitle', { subtype: info.subtype }),
     });
   }
 
@@ -75,6 +88,7 @@ function detailValue(value: string | null | undefined): string {
 }
 
 export const FontsTab: React.FC = () => {
+  const t = useT();
   const filePath = usePdfStore((s) => s.filePath);
   const metadata = usePdfStore((s) => s.metadata);
   const pageCount = usePdfStore((s) => s.pageCount);
@@ -94,6 +108,14 @@ export const FontsTab: React.FC = () => {
   // duplicate run or cancel a multi-batch one, but the in-flight request must
   // still be able to publish its result.
   const inFlightRef = useRef<FontRequest | null>(null);
+  // The analysis effect must not depend on the translator (a locale change
+  // would restart the run from page 1), so the error copy reads the latest one
+  // through a ref instead.
+  const tRef = useRef(t);
+
+  useEffect(() => {
+    tRef.current = t;
+  }, [t]);
 
   // Resource-dictionary font info arrives with the metadata, i.e. before (and
   // independently of) the batched char analysis. Reading it here must not
@@ -140,8 +162,12 @@ export const FontsTab: React.FC = () => {
         setError(null);
       } catch (error) {
         if (!isCurrent()) return;
-        setLocalError(error instanceof Error ? error.message : 'Failed to analyze fonts');
-        setError('Failed to analyze fonts. Please try again.');
+        // Sidecar messages stay as reported; only the local fallback and the
+        // status-bar error are copy.
+        setLocalError(
+          error instanceof Error ? error.message : tRef.current('fonts.analyzeFailed'),
+        );
+        setError(tRef.current('fonts.analyzeFailedRetry'));
       } finally {
         if (isCurrent()) {
           inFlightRef.current = null;
@@ -186,13 +212,15 @@ export const FontsTab: React.FC = () => {
   };
 
   if (!filePath) {
-    return <div className={styles.hint}>Open a PDF to analyze fonts.</div>;
+    return <div className={styles.hint}>{t('fonts.noDocument')}</div>;
   }
   if (localError) {
     return (
       <div className={styles.stateBox}>
         <div>{localError}</div>
-        <button type="button" className={styles.retry} onClick={handleRetry}>Retry</button>
+        <button type="button" className={styles.retry} onClick={handleRetry}>
+          {t('common.retry')}
+        </button>
       </div>
     );
   }
@@ -201,18 +229,18 @@ export const FontsTab: React.FC = () => {
     const total = fontProgress?.total ?? pageCount;
     return (
       <div className={styles.stateBox}>
-        <div>Analyzing fonts… {done}/{total} pages</div>
+        <div>{t('fonts.analyzing', { done, total })}</div>
         <progress
           className={styles.progress}
           value={done}
           max={Math.max(total, 1)}
-          aria-label="Font analysis progress"
+          aria-label={t('fonts.progressAria')}
         />
       </div>
     );
   }
   if (fontStats.length === 0) {
-    return <div className={styles.stateBox}>No text fonts detected in this document.</div>;
+    return <div className={styles.stateBox}>{t('fonts.empty')}</div>;
   }
 
   const hasFontInfo = (metadata?.fontInfo?.length ?? 0) > 0;
@@ -228,12 +256,26 @@ export const FontsTab: React.FC = () => {
     (font) => embeddingOf(font.fontname) === 'standard14',
   ).length;
   const summaryParts = [
-    `${fontStats.length} font${fontStats.length === 1 ? '' : 's'}`,
-    `${notEmbeddedCount} not embedded`,
+    countLabel(t, fontStats.length, 'fonts.summary.fonts.one', 'fonts.summary.fonts.other'),
+    countLabel(
+      t,
+      notEmbeddedCount,
+      'fonts.summary.notEmbedded.one',
+      'fonts.summary.notEmbedded.other',
+    ),
   ];
   // A document that only uses Standard 14 would otherwise read
   // "8 fonts · 0 not embedded", which looks like a defect count that is stuck.
-  if (standard14Count > 0) summaryParts.push(`${standard14Count} standard 14`);
+  if (standard14Count > 0) {
+    summaryParts.push(
+      countLabel(
+        t,
+        standard14Count,
+        'fonts.summary.standard14.one',
+        'fonts.summary.standard14.other',
+      ),
+    );
+  }
 
   return (
     <div className={styles.panel}>
@@ -250,7 +292,7 @@ export const FontsTab: React.FC = () => {
       <ul className={styles.list}>
         {fontStats.map((font, index) => {
           const info = fontInfoByName.get(font.fontname) ?? null;
-          const badges = buildBadges(info);
+          const badges = buildBadges(info, t);
           const detailsId = `font-details-${index}`;
           const nameId = `font-name-${index}`;
           const expanded = expandedFonts.has(font.fontname);
@@ -276,7 +318,21 @@ export const FontsTab: React.FC = () => {
                     ))}
                   </span>
                   <span className={styles.meta}>
-                    {font.pages.length} page{font.pages.length === 1 ? '' : 's'} · {font.charCount} chars · {formatFontSize(font.sizeMin)}–{formatFontSize(font.sizeMax)}pt
+                    {t('fonts.row.meta', {
+                      pages: countLabel(
+                        t,
+                        font.pages.length,
+                        'fonts.row.pages.one',
+                        'fonts.row.pages.other',
+                      ),
+                      chars: countLabel(
+                        t,
+                        font.charCount,
+                        'fonts.row.chars.one',
+                        'fonts.row.chars.other',
+                      ),
+                      sizes: `${formatFontSize(font.sizeMin)}–${formatFontSize(font.sizeMax)}`,
+                    })}
                   </span>
                   <span className={styles.swatches}>
                     {font.colors.slice(0, 4).map((color) => (
@@ -291,9 +347,9 @@ export const FontsTab: React.FC = () => {
                   className={styles.detailsToggle}
                   aria-expanded={expanded}
                   aria-controls={detailsId}
-                  aria-label="Font details"
+                  aria-label={t('fonts.detailsAria')}
                   aria-describedby={nameId}
-                  title={expanded ? 'Hide font details' : 'Show font details'}
+                  title={expanded ? t('fonts.detailsHide') : t('fonts.detailsShow')}
                   onClick={() => toggleDetails(font.fontname)}
                 >
                   <span aria-hidden="true">{expanded ? '▾' : '▸'}</span>
@@ -302,27 +358,27 @@ export const FontsTab: React.FC = () => {
               {expanded && (
                 <dl className={styles.details} id={detailsId}>
                   <div className={styles.detailRow}>
-                    <dt>Embedding</dt>
-                    <dd>{EMBEDDING_LABELS[info?.embedding ?? 'unknown']}</dd>
+                    <dt>{t('fonts.detail.embedding')}</dt>
+                    <dd>{embeddingLabel(t, info?.embedding ?? 'unknown')}</dd>
                   </div>
                   <div className={styles.detailRow}>
-                    <dt>Subtype</dt>
+                    <dt>{t('fonts.detail.subtype')}</dt>
                     <dd>{detailValue(info?.subtype)}</dd>
                   </div>
                   <div className={styles.detailRow}>
-                    <dt>Subset</dt>
-                    <dd>{info ? (info.subset ? 'Yes' : 'No') : DASH}</dd>
+                    <dt>{t('fonts.detail.subset')}</dt>
+                    <dd>{info ? (info.subset ? t('fonts.yes') : t('fonts.no')) : DASH}</dd>
                   </div>
                   <div className={styles.detailRow}>
-                    <dt>Encoding</dt>
+                    <dt>{t('fonts.detail.encoding')}</dt>
                     <dd>{detailValue(info?.encoding)}</dd>
                   </div>
                   <div className={styles.detailRow}>
-                    <dt>ToUnicode</dt>
-                    <dd>{info ? (info.hasToUnicode ? 'Yes' : 'No') : DASH}</dd>
+                    <dt>{t('fonts.detail.toUnicode')}</dt>
+                    <dd>{info ? (info.hasToUnicode ? t('fonts.yes') : t('fonts.no')) : DASH}</dd>
                   </div>
                   <div className={styles.detailRow}>
-                    <dt>Font file</dt>
+                    <dt>{t('fonts.detail.fontFile')}</dt>
                     <dd>{detailValue(info?.fontFileType)}</dd>
                   </div>
                 </dl>

@@ -1,3 +1,4 @@
+import { DEFAULT_LOCALE, translate, useT, type TranslateFn } from '../../i18n';
 import type { WorkspacePanelSide } from '../../store/workspace-store';
 import styles from './PanelRail.module.css';
 
@@ -8,8 +9,14 @@ export interface PanelRailProps {
   onShow: () => void;
 }
 
+/** The English label, kept as the pure default for tests and non-React callers. */
+const defaultTranslate: TranslateFn = (key, params) => translate(DEFAULT_LOCALE, key, params);
+
 /** Accessible name and tooltip of the rail button. */
-export const panelRailShowLabel = (side: WorkspacePanelSide): string => `Show ${side} panel`;
+export const panelRailShowLabel = (
+  side: WorkspacePanelSide,
+  t: TranslateFn = defaultTranslate,
+): string => t(side === 'left' ? 'toolbar.leftShow' : 'toolbar.rightShow');
 
 /** The arrow points back toward the canvas that the restored pane narrows. */
 export const PANEL_RAIL_ARROW: Record<WorkspacePanelSide, string> = {
@@ -23,7 +30,8 @@ export const PANEL_RAIL_ARROW: Record<WorkspacePanelSide, string> = {
  * canvas and lets fit-width recompute instead of overlaying the page.
  */
 export const PanelRail = ({ side, label, onShow }: PanelRailProps): JSX.Element => {
-  const showLabel = panelRailShowLabel(side);
+  const t = useT();
+  const showLabel = panelRailShowLabel(side, t);
 
   return (
     <div className={styles.rail} data-side={side}>

@@ -1,4 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
+import { useT } from '../../i18n';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { ipc } from '../../services/ipc-client';
 import {
@@ -108,6 +109,7 @@ async function openDocumentForTab(tab: DocumentTab): Promise<OpenedTabDocument> 
  * bridge — their paths are the user's own files.
  */
 export const DocumentTabs: React.FC = () => {
+  const t = useT();
   const tabs = useDocumentTabsStore((state) => state.tabs);
   const activeTabId = useDocumentTabsStore((state) => state.activeTabId);
   const { navigate } = usePageNavigation();
@@ -136,7 +138,7 @@ export const DocumentTabs: React.FC = () => {
         if (requestId !== requestIdRef.current) return false;
 
         if (result.canceled) {
-          setError(`Could not open ${tab.name}`);
+          setError(t('tabs.openFailed', { name: tab.name }));
           return false;
         }
 
@@ -162,13 +164,13 @@ export const DocumentTabs: React.FC = () => {
       } catch (err) {
         if (requestId !== requestIdRef.current) return false;
         console.error('Failed to switch document tab:', err);
-        setError(err instanceof Error ? err.message : `Failed to open ${tab.name}`);
+        setError(err instanceof Error ? err.message : t('tabs.openFailedFallback', { name: tab.name }));
         return false;
       } finally {
         if (requestId === requestIdRef.current) setSwitchingTabId(null);
       }
     },
-    [navigate],
+    [navigate, t],
   );
 
   const busy = switchingTabId !== null || closingTabId !== null;
@@ -246,7 +248,7 @@ export const DocumentTabs: React.FC = () => {
         if (!closed.closed && closed.notFound !== true) {
           // A bridge that reports a refusal instead of rejecting it: the
           // document may still be open, so the tab must survive.
-          throw new Error(`Could not close ${tab.name}`);
+          throw new Error(t('tabs.closeFailed', { name: tab.name }));
         }
 
         // Both awaits above may have let another open land, so the tab set is
@@ -262,19 +264,19 @@ export const DocumentTabs: React.FC = () => {
         }
       } catch (err) {
         console.error('Failed to close document tab:', err);
-        setError(err instanceof Error ? err.message : `Failed to close ${tab.name}`);
+        setError(err instanceof Error ? err.message : t('tabs.closeFailedFallback', { name: tab.name }));
       } finally {
         setClosingTabId(null);
       }
     },
-    [closingTabId, openTab, switchingTabId],
+    [closingTabId, openTab, switchingTabId, t],
   );
 
   if (!supportsDocumentTabs() || tabs.length === 0) return null;
 
   return (
     <div className={styles.bar} data-testid="document-tabs">
-      <div className={styles.tabs} role="tablist" aria-label="Open documents">
+      <div className={styles.tabs} role="tablist" aria-label={t('tabs.list')}>
         {tabs.map((tab) => {
           const active = tab.id === activeTabId;
           return (
@@ -297,8 +299,8 @@ export const DocumentTabs: React.FC = () => {
               <button
                 className={styles.close}
                 type="button"
-                aria-label={`Close ${tab.name}`}
-                title={`Close ${tab.name}`}
+                aria-label={t('tabs.close', { name: tab.name })}
+                title={t('tabs.close', { name: tab.name })}
                 onClick={() => void closeTab(tab.id)}
                 disabled={busy}
               >
@@ -310,12 +312,12 @@ export const DocumentTabs: React.FC = () => {
       </div>
       {switchingTabId !== null && (
         <span className={styles.status} role="status">
-          Opening…
+          {t('tabs.opening')}
         </span>
       )}
       {switchingTabId === null && closingTabId !== null && (
         <span className={styles.status} role="status">
-          Closing…
+          {t('tabs.closing')}
         </span>
       )}
       {error !== null && (

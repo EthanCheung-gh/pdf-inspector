@@ -1,3 +1,4 @@
+import { useT } from "../../i18n";
 import { usePdfStore, type TableCellRef } from "../../store/pdf-store";
 import type { PageBox, PdfTable } from "../../types/pdf-objects";
 import styles from "./TableGrid.module.css";
@@ -80,6 +81,7 @@ const coveredPositions = (table: PdfTable): ReadonlySet<string> => {
  * otherwise it is reported as missing geometry on the normal, interactive slot.
  */
 export const TableGrid = ({ table, tableIndex }: TableGridProps): JSX.Element => {
+  const t = useT();
   const hoveredTableCell = usePdfStore((state) => state.hoveredTableCell);
   const selectedTableCell = usePdfStore((state) => state.selectedTableCell);
   const setHoveredTableCell = usePdfStore((state) => state.setHoveredTableCell);
@@ -118,7 +120,7 @@ export const TableGrid = ({ table, tableIndex }: TableGridProps): JSX.Element =>
       const missingBox = hasBoxes && box === null && !covered;
       const text = cellText(table, row, col);
       const span = table.cellSpans?.[row]?.[col] ?? null;
-      const label = `Cell row ${row + 1} column ${col + 1}`;
+      const label = t("table.cell", { row: row + 1, col: col + 1 });
 
       if (covered) {
         // A merged-away position keeps its slot (the text matrix must not
@@ -128,8 +130,8 @@ export const TableGrid = ({ table, tableIndex }: TableGridProps): JSX.Element =>
             key={`${row}-${col}`}
             className={`${styles.cell} ${styles.covered}`}
             role="img"
-            aria-label={`Covered cell row ${row + 1} column ${col + 1}`}
-            title={`Covered by a merged cell (row ${row + 1}, column ${col + 1})`}
+            aria-label={t("table.covered", { row: row + 1, col: col + 1 })}
+            title={t("table.coveredTitle", { row: row + 1, col: col + 1 })}
           >
             <span className={styles.coveredMark} aria-hidden="true">
               ▨
@@ -155,9 +157,15 @@ export const TableGrid = ({ table, tableIndex }: TableGridProps): JSX.Element =>
           ]
             .filter(Boolean)
             .join(" ")}
-          aria-label={`${label}${text ? `: ${text}` : ""}`}
+          aria-label={text ? t("table.cellWithText", { label, text }) : label}
           aria-pressed={isSelected}
-          title={box ? `${label} · ${formatBox(box)}` : missingBox ? `${label} · No cell box` : label}
+          title={
+            box
+              ? `${label} · ${formatBox(box)}`
+              : missingBox
+                ? `${label} · ${t("table.noCellBox")}`
+                : label
+          }
           onMouseEnter={() => setHoveredTableCell(cell)}
           onMouseLeave={() => setHoveredTableCell(null)}
           onFocus={() => setHoveredTableCell(cell)}
@@ -166,12 +174,12 @@ export const TableGrid = ({ table, tableIndex }: TableGridProps): JSX.Element =>
         >
           <span className={styles.cellText}>{text || "\u00a0"}</span>
           {missingBox && (
-            <span aria-hidden="true" title="No cell box">
+            <span aria-hidden="true" title={t("table.noCellBox")}>
               ∅
             </span>
           )}
           {span && (span.rowSpan > 1 || span.colSpan > 1) && (
-            <span className={styles.spanBadge} title="Row span × column span">
+            <span className={styles.spanBadge} title={t("table.spanTitle")}>
               {`${span.rowSpan}×${span.colSpan}`}
             </span>
           )}
@@ -186,7 +194,7 @@ export const TableGrid = ({ table, tableIndex }: TableGridProps): JSX.Element =>
         <div
           className={styles.grid}
           role="group"
-          aria-label={`Table ${tableIndex + 1} cells`}
+          aria-label={t("table.cellsAria", { index: tableIndex + 1 })}
           style={{ gridTemplateColumns: `repeat(${cols}, minmax(58px, 1fr))` }}
         >
           {cells}
@@ -194,22 +202,22 @@ export const TableGrid = ({ table, tableIndex }: TableGridProps): JSX.Element =>
       </div>
 
       {active ? (
-        <div className={styles.details} aria-label="Selected cell">
-          <span className={styles.detailLabel}>Row</span>
+        <div className={styles.details} aria-label={t("table.selectedCell")}>
+          <span className={styles.detailLabel}>{t("table.row")}</span>
           <span className={styles.detailValue}>{active.row + 1}</span>
-          <span className={styles.detailLabel}>Column</span>
+          <span className={styles.detailLabel}>{t("table.column")}</span>
           <span className={styles.detailValue}>{active.col + 1}</span>
-          <span className={styles.detailLabel}>Span</span>
+          <span className={styles.detailLabel}>{t("table.span")}</span>
           <span className={styles.detailValue}>
             {activeSpan ? `${activeSpan.rowSpan} × ${activeSpan.colSpan}` : "—"}
           </span>
-          <span className={styles.detailLabel}>Text</span>
+          <span className={styles.detailLabel}>{t("table.text")}</span>
           <span className={styles.detailValue}>
             {cellText(table, active.row, active.col) || "—"}
           </span>
-          <span className={styles.detailLabel}>BBox</span>
+          <span className={styles.detailLabel}>{t("table.bbox")}</span>
           <span className={styles.detailValue}>{active.bbox ? formatBox(active.bbox) : "—"}</span>
-          <span className={styles.detailLabel}>Size</span>
+          <span className={styles.detailLabel}>{t("table.size")}</span>
           <span className={styles.detailValue}>
             {active.bbox
               ? `${formatNumber(active.bbox.x1 - active.bbox.x0)} × ${formatNumber(active.bbox.y1 - active.bbox.y0)} pt`
@@ -217,7 +225,7 @@ export const TableGrid = ({ table, tableIndex }: TableGridProps): JSX.Element =>
           </span>
         </div>
       ) : (
-        <div className={styles.hint}>Hover a cell to preview it, click to select.</div>
+        <div className={styles.hint}>{t("table.hint")}</div>
       )}
     </div>
   );

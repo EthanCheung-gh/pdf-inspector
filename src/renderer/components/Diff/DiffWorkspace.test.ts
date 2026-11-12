@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DiffBoxSpec } from '../../services/diff-view';
 import type { PixelDiffStats } from '../../services/visual-diff';
+import { useI18nStore } from '../../i18n';
 import { useDiffStore } from '../../store/diff-store';
 import {
   makeChange,
@@ -101,6 +102,8 @@ function renderWorkspace(): void {
 
 beforeEach(() => {
   store().reset();
+  // A Chinese test must not leak its locale into the English assertions.
+  useI18nStore.setState({ locale: 'en' });
   paneProps.length = 0;
   visualProps.length = 0;
   saveFile.mockReset();
@@ -487,6 +490,104 @@ describe('DiffWorkspace actions', () => {
     renderWorkspace();
 
     expect(screen.getByText(/--format html/)).toBeTruthy();
+  });
+});
+
+describe('DiffWorkspace localization', () => {
+  const setup = (): void => {
+    act(() => {
+      store().setSource('old', '/docs/old.pdf', 'old.pdf');
+      store().setSource('new', '/docs/new.pdf', 'new.pdf');
+      store().applyResult(makeSampleResult());
+    });
+  };
+
+  it('translates the header, summary, filters and page list', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    setup();
+    renderWorkspace();
+
+    expect(screen.getByRole('region', { name: 'PDF 对比工作区' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '返回 Inspect' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '并排' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '叠加' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '视觉' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '放大' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '全部展开' })).toBeTruthy();
+
+    const summary = screen.getByTestId('diff-summary');
+    expect(within(summary).getByText('页数').nextSibling?.textContent).toBe('2 → 2');
+    expect(within(summary).getByText('变更页数').nextSibling?.textContent).toBe('1');
+    expect(within(summary).getByText('删除对象').nextSibling?.textContent).toBe('2');
+
+    expect(screen.getByLabelText('按变更类型筛选')).toBeTruthy();
+    expect(screen.getByLabelText('按对象类型筛选')).toBeTruthy();
+    expect(screen.getByText('4 处变更')).toBeTruthy();
+
+    const list = screen.getByTestId('diff-page-list');
+    expect(within(list).getByRole('button', { name: /^第 1 页/ })).toBeTruthy();
+    expect(within(list).getByRole('button', { name: /^删除页 2/ })).toBeTruthy();
+    expect(within(list).getByRole('button', { name: /^新增页 2/ })).toBeTruthy();
+    // The disclosure name keeps the schema kind/status values and localizes the
+    // page label and the change count.
+    expect(within(list).getAllByRole('button')[0].getAttribute('aria-label')).toBe(
+      '第 1 页, 已变更, 2 处变更',
+    );
+
+    expect(screen.getByTestId('diff-page-jump-status').textContent).toBe('第 1 页 / 共 3 页');
+    expect(screen.getByLabelText('跳转到页面')).toBeTruthy();
+  });
+
+  it('translates the filter empty state, details and region hint', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    setup();
+    renderWorkspace();
+
+    act(() => {
+      fireEvent.change(screen.getByLabelText('按变更类型筛选'), { target: { value: 'added' } });
+      fireEvent.change(screen.getByLabelText('按对象类型筛选'), { target: { value: 'table' } });
+    });
+
+    expect(screen.getByText('没有匹配此筛选的变更。')).toBeTruthy();
+
+    act(() => {
+      fireEvent.change(screen.getByLabelText('按变更类型筛选'), { target: { value: 'all' } });
+      fireEvent.change(screen.getByLabelText('按对象类型筛选'), { target: { value: 'all' } });
+    });
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /modified word: Hello world/ }));
+    });
+
+    const details = screen.getByTestId('diff-change-details');
+    expect(within(details).getByText('页面')).toBeTruthy();
+    expect(within(details).getByText('旧框')).toBeTruthy();
+    expect(within(details).getByText('新框')).toBeTruthy();
+    expect(within(details).getByText('第 1 页')).toBeTruthy();
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: '忽略区域' }));
+    });
+
+    expect(screen.getByText('在页面上拖出矩形以忽略该区域。')).toBeTruthy();
+  });
+
+  it('switches back to English in place', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    setup();
+    renderWorkspace();
+    expect(screen.getByText('4 处变更')).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByRole('region', { name: 'PDF diff workspace' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Back to Inspect' })).toBeTruthy();
+    expect(screen.getByText('4 changes')).toBeTruthy();
+    expect(
+      within(screen.getByTestId('diff-page-list')).getByRole('button', { name: /^Page 1/ }),
+    ).toBeTruthy();
   });
 });
 

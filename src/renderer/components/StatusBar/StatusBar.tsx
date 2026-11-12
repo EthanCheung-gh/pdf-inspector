@@ -1,6 +1,15 @@
 import { describeFilterCriteria } from '../../services/filter-summary';
 import { countFilteredChanges } from '../../services/diff-view';
 import { formatRawRef } from '../Raw/RawValueView';
+import { DEFAULT_LOCALE } from '../../i18n/locales';
+import {
+  translate,
+  translatePlural,
+  useI18nStore,
+  useT,
+  type MessageKey,
+  type TranslateFn,
+} from '../../i18n';
 import { useAuditStore } from '../../store/audit-store';
 import { useCursorStore, type CursorPdfPoint } from '../../store/cursor-store';
 import { useDiffStore } from '../../store/diff-store';
@@ -9,6 +18,12 @@ import { useRawStore, type RawTab } from '../../store/raw-store';
 import type { PageData } from '../../types/pdf-objects';
 import type { RawDocument, RawObject, RawPageContent, RawRef } from '../../types/raw-pdf';
 import styles from './StatusBar.module.css';
+
+/**
+ * English translator for helpers called directly by unit tests and other plain
+ * callers. The bar passes its own `useT()` translator.
+ */
+const defaultTranslate: TranslateFn = (key, params) => translate(DEFAULT_LOCALE, key, params);
 
 const formatCoordinate = (value: number): string => {
   if (!Number.isFinite(value)) return '—';
@@ -21,8 +36,15 @@ export const formatCursorPoint = (point: CursorPdfPoint): string =>
   `${formatCoordinate(point.x)}, ${formatCoordinate(point.y)} pt`;
 
 /** Compact page summary: size plus the /Rotate value the Page tab reports. */
-export const formatPageGeometry = (page: PageData): string =>
-  `${formatCoordinate(page.width)} × ${formatCoordinate(page.height)} pt · rot ${page.rotation ?? 0}°`;
+export const formatPageGeometry = (
+  page: PageData,
+  t: TranslateFn = defaultTranslate,
+): string =>
+  t('status.pageGeometry', {
+    width: formatCoordinate(page.width),
+    height: formatCoordinate(page.height),
+    rotation: page.rotation ?? 0,
+  });
 
 /**
  * `1 error` / `2 errors`: the bar reads as prose, so a count of one must not be
@@ -32,16 +54,29 @@ export const formatPageGeometry = (page: PageData): string =>
 export const plural = (count: number, singular: string, pluralForm = `${singular}s`): string =>
   `${count} ${count === 1 ? singular : pluralForm}`;
 
+/**
+ * One/other form of a count through a `TranslateFn`.
+ *
+ * `translatePlural` needs the locale, which a translator does not carry; both
+ * catalogs define the `one` and `other` suffix, and the shipped locales only
+ * use those two categories, so the comparison is exact here.
+ */
+const countKey = (count: number, one: MessageKey, other: MessageKey): MessageKey =>
+  count === 1 ? one : other;
+
 /** Right-hand end of the bar: flexible spacer plus the sidecar indicator. */
-const StatusTail: React.FC<{ sidecarRunning: boolean }> = ({ sidecarRunning }) => (
-  <>
-    <span className={styles.spacer} />
-    <span className={sidecarRunning ? styles.connected : styles.offline}>
-      <span className={styles.indicator} aria-hidden="true" />
-      Sidecar {sidecarRunning ? 'connected' : 'offline'}
-    </span>
-  </>
-);
+const StatusTail: React.FC<{ sidecarRunning: boolean }> = ({ sidecarRunning }) => {
+  const t = useT();
+  return (
+    <>
+      <span className={styles.spacer} />
+      <span className={sidecarRunning ? styles.connected : styles.offline}>
+        <span className={styles.indicator} aria-hidden="true" />
+        {t(sidecarRunning ? 'status.sidecarConnected' : 'status.sidecarOffline')}
+      </span>
+    </>
+  );
+};
 
 /** The parts of `raw-store` the raw status line describes. */
 export interface RawStatusSnapshot {
@@ -58,30 +93,47 @@ export interface RawStatusSnapshot {
  * One line for the Raw workspace: the selected object, or the page and its
  * operator count. The Inspect selection, filters and cursor are deliberately
  * absent — they describe a document the user cannot see while Raw is open.
+ *
+ * The bar passes its translator; the English default keeps the helper callable
+ * from plain tests and future non-React callers. Values from the sidecar (the
+ * object summary) stay exactly as reported.
  */
-export function formatRawStatus(snapshot: RawStatusSnapshot): string {
+export function formatRawStatus(
+  snapshot: RawStatusSnapshot,
+  t: TranslateFn = defaultTranslate,
+): string {
   const { document, tab, selected, object, content, contentPage, loading } = snapshot;
 
-  if (!document) return loading ? 'Raw: loading document…' : 'Raw: no document';
+  if (!document) return t(loading ? 'status.raw.loading' : 'status.raw.noDocument');
 
   if (tab === 'content') {
     const page = contentPage ?? 1;
     const shown = content !== null && content.page === page ? content : null;
     if (!shown) {
-      return `Raw: page ${page}/${document.pages}${loading ? ' · loading…' : ''}`;
+      return t(loading ? 'status.raw.pageLoading' : 'status.raw.page', {
+        page,
+        count: document.pages,
+      });
     }
     const operators = shown.streams.reduce((total, stream) => total + stream.operators.length, 0);
-    return `Raw: page ${shown.page}/${document.pages} · ${plural(operators, 'operator')}`;
+    return t('status.raw.pageOperators', {
+      page: shown.page,
+      count: document.pages,
+      operators: t(countKey(operators, 'status.raw.operatorCount.one', 'status.raw.operatorCount.other'), {
+        count: operators,
+      }),
+    });
   }
 
-  if (!selected) return 'Raw: no object selected';
+  if (!selected) return t('status.raw.noObject');
   const ref = formatRawRef(selected);
-  return object
-    ? `Raw: object ${ref} · ${object.summary}`
-    : `Raw: object ${ref}${loading ? ' · loading…' : ''}`;
+  if (object) return t('status.raw.object', { ref, summary: object.summary });
+  return loading ? t('status.raw.objectLoading', { ref }) : t('status.raw.objectRef', { ref });
 }
 
 export const StatusBar = (): JSX.Element => {
+  const t = useT();
+  const locale = useI18nStore((state) => state.locale);
   const isLoading = usePdfStore((state) => state.isLoading);
   const currentPage = usePdfStore((state) => state.currentPage);
   const pageCount = usePdfStore((state) => state.pageCount);
@@ -95,7 +147,7 @@ export const StatusBar = (): JSX.Element => {
   const setFilterCriteria = usePdfStore((state) => state.setFilterCriteria);
   const pageData = usePdfStore((state) => state.pageData);
   const cursorPdfPoint = useCursorStore((state) => state.cursorPdfPoint);
-  const filterSummary = describeFilterCriteria(filterCriteria);
+  const filterSummary = describeFilterCriteria(filterCriteria, t);
 
   // In Diff mode the status bar describes the comparison instead of the
   // Inspect document, which stays open but is not what the user is looking at.
@@ -128,17 +180,21 @@ export const StatusBar = (): JSX.Element => {
 
   if (diffActive) {
     return (
-      <footer className={styles.statusBar} aria-label="Application status">
+      <footer className={styles.statusBar} aria-label={t('status.application')}>
         <span className={styles.documentStatus}>
           {diffLoading
-            ? 'Diff: comparing documents…'
+            ? t('status.diff.comparing')
             : diffResult
-              ? `Diff page ${diffPageIndex + 1}/${diffResult.pages.length} · ${diffChangeCount} changes`
-              : 'Diff: no comparison yet'}
+              ? t('status.diff.page', {
+                  page: diffPageIndex + 1,
+                  count: diffResult.pages.length,
+                  changes: translatePlural(locale, 'status.diff.changeCount', diffChangeCount),
+                })
+              : t('status.diff.noComparison')}
         </span>
         {diffResult && (
           <span className={styles.pageGeometry}>
-            {diffResult.old.pages} vs {diffResult.new.pages} pages
+            {t('status.diff.pages', { old: diffResult.old.pages, new: diffResult.new.pages })}
           </span>
         )}
         <StatusTail sidecarRunning={sidecarRunning} />
@@ -149,19 +205,30 @@ export const StatusBar = (): JSX.Element => {
   if (auditActive) {
     const auditSummary = auditReport?.summary;
     return (
-      <footer className={styles.statusBar} aria-label="Application status">
+      <footer className={styles.statusBar} aria-label={t('status.application')}>
         <span className={styles.documentStatus} data-testid="status-audit">
           {auditProgress
-            ? `Audit: ${auditProgress.done}/${auditProgress.total} pages`
+            ? t('status.audit.progress', {
+                done: auditProgress.done,
+                total: auditProgress.total,
+              })
             : auditSummary
-              ? `Audit: ${plural(auditSummary.errors, 'error')} · ${plural(auditSummary.warnings, 'warning')} · ${plural(auditSummary.info, 'info', 'info')}`
+              ? t('status.audit.summary', {
+                  errors: translatePlural(locale, 'status.audit.errorCount', auditSummary.errors),
+                  warnings: translatePlural(
+                    locale,
+                    'status.audit.warningCount',
+                    auditSummary.warnings,
+                  ),
+                  info: translatePlural(locale, 'status.audit.infoCount', auditSummary.info),
+                })
               : auditLoading
-                ? 'Audit: running…'
-                : 'Audit: no report yet'}
+                ? t('status.audit.running')
+                : t('status.audit.noReport')}
         </span>
         {auditError && (
           <span className={styles.error} role="alert">
-            Audit failed: {auditError}
+            {t('status.audit.failed', { error: auditError })}
           </span>
         )}
         <StatusTail sidecarRunning={sidecarRunning} />
@@ -171,21 +238,24 @@ export const StatusBar = (): JSX.Element => {
 
   if (rawActive) {
     return (
-      <footer className={styles.statusBar} aria-label="Application status">
+      <footer className={styles.statusBar} aria-label={t('status.application')}>
         <span className={styles.documentStatus} data-testid="status-raw">
-          {formatRawStatus({
-            document: rawDocument,
-            tab: rawTab,
-            selected: rawSelected,
-            object: rawObject,
-            content: rawContent,
-            contentPage: rawContentPage,
-            loading: rawLoading,
-          })}
+          {formatRawStatus(
+            {
+              document: rawDocument,
+              tab: rawTab,
+              selected: rawSelected,
+              object: rawObject,
+              content: rawContent,
+              contentPage: rawContentPage,
+              loading: rawLoading,
+            },
+            t,
+          )}
         </span>
         {rawError && (
           <span className={styles.error} role="alert">
-            Raw failed: {rawError}
+            {t('status.raw.failed', { error: rawError })}
           </span>
         )}
         <StatusTail sidecarRunning={sidecarRunning} />
@@ -194,23 +264,29 @@ export const StatusBar = (): JSX.Element => {
   }
 
   return (
-    <footer className={styles.statusBar} aria-label="Application status">
+    <footer className={styles.statusBar} aria-label={t('status.application')}>
       <span className={styles.documentStatus}>
-        {isLoading ? 'Loading…' : `Page ${currentPage}/${pageCount} · ${objectCount} objects`}
+        {isLoading
+          ? t('common.loading')
+          : t('status.document', {
+              page: currentPage,
+              count: pageCount,
+              objects: translatePlural(locale, 'status.objectCount', objectCount),
+            })}
       </span>
       {pageData && (
         <span
           className={styles.pageGeometry}
-          title={`Page size ${formatPageGeometry(pageData)}`}
+          title={t('status.pageSize', { geometry: formatPageGeometry(pageData, t) })}
         >
-          {formatPageGeometry(pageData)}
+          {formatPageGeometry(pageData, t)}
         </span>
       )}
       {cursorPdfPoint && (
         <span
           className={styles.cursorPosition}
           role="group"
-          aria-label={`Cursor ${formatCursorPoint(cursorPdfPoint)}`}
+          aria-label={t('status.cursor', { cursor: formatCursorPoint(cursorPdfPoint) })}
         >
           {formatCursorPoint(cursorPdfPoint)}
         </span>
@@ -222,43 +298,53 @@ export const StatusBar = (): JSX.Element => {
         <span
           className={styles.selectionSummary}
           role="group"
-          aria-label={`Selected ${selectedObject.type} on page ${selectedObject.page}`}
+          aria-label={t('status.selected', {
+            type: selectedObject.type,
+            page: selectedObject.page,
+          })}
         >
           <span className={styles.selectionType}>{selectedObject.type}</span>
-          <span>page {selectedObject.page}</span>
+          <span>{t('status.pageShort', { page: selectedObject.page })}</span>
         </span>
       )}
       {filterSummary.count > 0 && (
         <span
           className={styles.filterSummary}
           role="group"
-          title={`Filter: ${filterSummary.label}`}
-          aria-label={`Active filters: ${filterSummary.label}`}
+          title={t('status.filterTooltip', { summary: filterSummary.label })}
+          aria-label={t('status.activeFilters', { summary: filterSummary.label })}
         >
-          <span className={styles.filterLabel}>Filter:</span>
+          <span className={styles.filterLabel}>{t('status.filter')}</span>
           <span className={styles.filterText}>{filterSummary.label}</span>
           <button
             type="button"
             className={styles.clearButton}
             onClick={() => setFilterCriteria({})}
           >
-            Clear
+            {t('status.clearFilter')}
           </button>
         </span>
       )}
       {exportProgress && (
         <span className={styles.documentStatus}>
-          Exporting {exportProgress.done}/{exportProgress.total}…
+          {t('status.exportProgress', {
+            done: exportProgress.done,
+            total: exportProgress.total,
+          })}
         </span>
       )}
       {/* The Fonts tab keeps analyzing while another tab is active, so the run
           has to stay visible here and not only inside that panel. */}
       {fontProgress && (
         <span className={styles.documentStatus} role="status" aria-live="polite">
-          Analyzing fonts {fontProgress.done}/{fontProgress.total}…
+          {t('status.fontProgress', { done: fontProgress.done, total: fontProgress.total })}
         </span>
       )}
-      {error && <span className={styles.error} role="alert">Error: {error}</span>}
+      {error && (
+        <span className={styles.error} role="alert">
+          {t('common.errorDetail', { error })}
+        </span>
+      )}
       <StatusTail sidecarRunning={sidecarRunning} />
     </footer>
   );

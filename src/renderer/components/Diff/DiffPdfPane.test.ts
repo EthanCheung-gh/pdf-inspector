@@ -3,6 +3,7 @@ import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DiffIgnoreRegion, DiffPageSize } from '../../../shared/diff-types';
+import { useI18nStore } from '../../i18n';
 import type { DiffBoxSpec } from '../../services/diff-view';
 
 interface ViewportParams {
@@ -115,6 +116,8 @@ beforeEach(() => {
   getDocument.mockReset();
   destroyDoc.mockReset();
   renderPage.mockReset();
+  // A Chinese test must not leak its locale into the English assertions.
+  useI18nStore.setState({ locale: 'en' });
   context2d.strokeRect.mockReset();
   context2d.fillRect.mockReset();
   // jsdom has no canvas implementation; the pane only needs a 2D context to
@@ -130,6 +133,22 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   delete (HTMLCanvasElement.prototype as unknown as Record<string, unknown>).getContext;
+});
+
+describe('DiffPdfPane localization', () => {
+  it('translates the pane label, page header and placeholder states', async () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+
+    renderPane({ label: '旧' });
+    expect(screen.getByRole('region', { name: '旧 面板' })).toBeTruthy();
+    await waitFor(() => expect(screen.getByText('第 1 页 · 612 × 792 pt')).toBeTruthy());
+
+    cleanup();
+    renderPane({ label: '旧', pageNumber: null, pageSize: null, boxes: [] });
+    // The pane's own labels follow the locale; the empty/missing messages are
+    // props supplied (already translated) by the workspace.
+    await waitFor(() => expect(screen.getByText('无页面')).toBeTruthy());
+  });
 });
 
 describe('DiffPdfPane', () => {

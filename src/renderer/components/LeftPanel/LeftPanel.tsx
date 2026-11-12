@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useT, type MessageKey } from '../../i18n';
 import { usePdfStore } from '../../store/pdf-store';
 import {
   LEFT_PANEL_TABS,
@@ -12,23 +13,27 @@ import { FontsTab } from './FontsTab';
 import { LayersPanel } from './LayersPanel';
 import styles from './LeftPanel.module.css';
 
-const TAB_LABELS: Record<LeftPanelTab, string> = {
-  objects: 'Objects',
-  outline: 'Outline',
-  fonts: 'Fonts',
-  layers: 'Layers',
-  // The 200px minimum panel width cannot spell out "Annotations" for a fifth
-  // tab, so the label stays short and the full name lives in the tooltip.
-  annotations: 'Annots',
+/**
+ * Visible label per tab. The 200px minimum panel width cannot spell out
+ * "Annotations" for a fifth tab, so that label stays short and the full name
+ * lives in the tooltip.
+ */
+export const LEFT_PANEL_TAB_LABEL_KEYS: Record<LeftPanelTab, MessageKey> = {
+  objects: 'leftPanel.tab.objects',
+  outline: 'leftPanel.tab.outline',
+  fonts: 'leftPanel.tab.fonts',
+  layers: 'leftPanel.tab.layers',
+  annotations: 'leftPanel.tab.annotations',
 };
 
-/** Visible label and tooltip per tab; only Annots needs a different title. */
-const TAB_TITLES: Record<LeftPanelTab, string> = {
-  ...TAB_LABELS,
-  annotations: 'Annotations',
+/** Tooltip per tab; only Annots needs a different title. */
+const TAB_TITLE_KEYS: Record<LeftPanelTab, MessageKey> = {
+  ...LEFT_PANEL_TAB_LABEL_KEYS,
+  annotations: 'leftPanel.tab.annotationsTitle',
 };
 
 export const LeftPanel: React.FC = () => {
+  const t = useT();
   const leftTab = useWorkspaceStore((state) => state.leftTab);
   const setLeftTab = useWorkspaceStore((state) => state.setLeftTab);
   const toggleLeftCollapsed = useWorkspaceStore((state) => state.toggleLeftCollapsed);
@@ -46,11 +51,11 @@ export const LeftPanel: React.FC = () => {
   const fontsMounted = fontsVisited || leftTab === 'fonts';
 
   return (
-    <aside className={styles.panel} aria-label="Document navigation">
+    <aside className={styles.panel} aria-label={t('leftPanel.aria')}>
       {/* The tablist must contain only tabs, so the collapse control lives in
           this wrapper row rather than inside the `role="tablist"` element. */}
       <div className={styles.tabHeader}>
-        <div className={styles.tabBar} role="tablist" aria-label="Document navigation tabs">
+        <div className={styles.tabBar} role="tablist" aria-label={t('leftPanel.tabsAria')}>
           {LEFT_PANEL_TABS.map((tab) => (
             <button
               className={`${styles.tabButton} ${leftTab === tab ? styles.activeTab : ''}`}
@@ -58,21 +63,21 @@ export const LeftPanel: React.FC = () => {
               type="button"
               role="tab"
               aria-selected={leftTab === tab}
-              title={TAB_TITLES[tab]}
+              title={t(TAB_TITLE_KEYS[tab])}
               onClick={() => {
                 if (tab === 'fonts') setFontsVisited(true);
                 setLeftTab(tab);
               }}
             >
-              {TAB_LABELS[tab]}
+              {t(LEFT_PANEL_TAB_LABEL_KEYS[tab])}
             </button>
           ))}
         </div>
         <button
           className={styles.collapseButton}
           type="button"
-          aria-label="Hide left panel"
-          title="Hide left panel"
+          aria-label={t('leftPanel.hide')}
+          title={t('leftPanel.hide')}
           onClick={toggleLeftCollapsed}
         >
           <span aria-hidden="true">‹</span>

@@ -3,6 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import { isFileSource, type DiffIgnoreRegion, type DiffPageSize, type DiffSource } from '../../../shared/diff-types';
 import { pathToFileUrl } from '../../../shared/path-utils';
+import { useT } from '../../i18n';
 import { diffBoxRects, type DiffBoxSpec } from '../../services/diff-view';
 import { createMediaViewport } from '../../services/page-viewport';
 import { ensurePdfWorker } from '../../services/pdf-worker';
@@ -60,10 +61,18 @@ type LoadStatus = 'idle' | 'loading' | 'ready' | 'error';
 interface DocumentState {
   doc: PDFDocumentProxy | null;
   status: LoadStatus;
+  /** Raw PDF.js detail; the translated label is added at render time. */
   error: string | null;
+  /** A source this runtime cannot address (no readable URL). */
+  unsupported: boolean;
 }
 
-const IDLE_DOCUMENT: DocumentState = { doc: null, status: 'idle', error: null };
+const IDLE_DOCUMENT: DocumentState = {
+  doc: null,
+  status: 'idle',
+  error: null,
+  unsupported: false,
+};
 
 /** A rendered page held at the shared bitmap resolution. */
 interface CachedSide {
@@ -149,7 +158,7 @@ function pageSizeOf(page: PDFPageProxy, pageSize: DiffPageSize | null): DiffPage
  * pane unmounts; a load that finishes after that is destroyed instead of
  * leaking. Modeled on `DiffPdfPane` so both views behave identically.
  */
-function useDiffDocument(source: DiffSource | null, side: 'old' | 'new'): DocumentState {
+function useDiffDocument(source: DiffSource | null): DocumentState {
   const [state, setState] = useState<DocumentState>(IDLE_DOCUMENT);
 
   useEffect(() => {
@@ -158,18 +167,14 @@ function useDiffDocument(source: DiffSource | null, side: 'old' | 'new'): Docume
 
     const url = sourceUrl(source);
     if (!url) {
-      setState({
-        doc: null,
-        status: 'error',
-        error: `The ${side} document cannot be displayed in the browser`,
-      });
+      setState({ doc: null, status: 'error', error: null, unsupported: true });
       return;
     }
     const isObjectUrl = isFileSource(source);
 
     let cancelled = false;
     let loaded: PDFDocumentProxy | null = null;
-    setState({ doc: null, status: 'loading', error: null });
+    setState({ doc: null, status: 'loading', error: null, unsupported: false });
 
     ensurePdfWorker();
     pdfjsLib
@@ -180,14 +185,15 @@ function useDiffDocument(source: DiffSource | null, side: 'old' | 'new'): Docume
           return;
         }
         loaded = document;
-        setState({ doc: document, status: 'ready', error: null });
+        setState({ doc: document, status: 'ready', error: null, unsupported: false });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         setState({
           doc: null,
           status: 'error',
-          error: err instanceof Error ? err.message : `Failed to load the ${side} PDF`,
+          error: err instanceof Error ? err.message : null,
+          unsupported: false,
         });
       });
 
@@ -198,7 +204,7 @@ function useDiffDocument(source: DiffSource | null, side: 'old' | 'new'): Docume
         URL.revokeObjectURL(url);
       }
     };
-  }, [source, side]);
+  }, [source]);
 
   return state;
 }
@@ -262,8 +268,9 @@ export const DiffVisualPane: React.FC<DiffVisualPaneProps> = ({
   ignoreRegions,
   onRenderStats,
 }) => {
-  const oldState = useDiffDocument(oldSource, 'old');
-  const newState = useDiffDocument(newSource, 'new');
+  const oldState = useDiffDocument(oldSource);
+  const newState = useDiffDocument(newSource);
+  const t = useT();
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
@@ -512,7 +519,7 @@ export const DiffVisualPane: React.FC<DiffVisualPaneProps> = ({
         notifyStats(diff ? pixelDiffStats(diff) : null);
       } catch (err) {
         if (!isCurrent() || isRenderCancelled(err)) return;
-        setRenderError(err instanceof Error ? err.message : 'Failed to render the pages');
+        setRenderError(err instanceof Error ? err.message : '');
         notifyStats(null);
       } finally {
         if (isCurrent()) setRendering(false);
@@ -549,30 +556,37 @@ export const DiffVisualPane: React.FC<DiffVisualPaneProps> = ({
   }, [oldPageNumber, newPageNumber, oldSource, newSource]);
 
   const loading = oldState.status === 'loading' || newState.status === 'loading';
-  const loadError =
-    oldState.status === 'error'
-      ? `Failed to load the old document: ${oldState.error ?? 'unknown error'}`
-      : newState.status === 'error'
-        ? `Failed to load the new document: ${newState.error ?? 'unknown error'}`
-        : null;
+  const loadError = ((): string | null => {
+    const failed = [['old', oldState], ['new', newState]] as const;
+    for (const [side, state] of failed) {
+      if (state.status !== 'error') continue;
+      if (state.unsupported) {
+        return t(side === 'old' ? 'diff.visual.unsupportedOld' : 'diff.visual.unsupportedNew');
+      }
+      return t(side === 'old' ? 'diff.visual.loadFailedOld' : 'diff.visual.loadFailedNew', {
+        error: state.error ?? t('common.unknownError'),
+      });
+    }
+    return null;
+  })();
 
   const hasSource = Boolean(oldSource) || Boolean(newSource);
   const hasPage = oldPageNumber !== null || newPageNumber !== null;
   const oneSidedNotice =
     newPageNumber !== null && oldPageNumber === null
-      ? 'This page exists only in the new document — showing the new page.'
+      ? t('diff.visual.oneSidedNew')
       : oldPageNumber !== null && newPageNumber === null
-        ? 'This page exists only in the old document — showing the old page.'
+        ? t('diff.visual.oneSidedOld')
         : null;
 
   const pageLabel =
     oldPageNumber !== null && newPageNumber !== null
-      ? `Old ${oldPageNumber} · New ${newPageNumber}`
+      ? t('diff.visual.pagePair', { old: oldPageNumber, new: newPageNumber })
       : newPageNumber !== null
-        ? `New page ${newPageNumber}`
+        ? t('diff.page.added', { page: newPageNumber })
         : oldPageNumber !== null
-          ? `Old page ${oldPageNumber}`
-          : 'No page';
+          ? t('diff.page.removed', { page: oldPageNumber })
+          : t('diff.pane.noPage');
 
   // The canvas element must exist before the render effect can paint into it,
   // so it is mounted as soon as a page is addressable; until PDF.js reports the
@@ -585,25 +599,25 @@ export const DiffVisualPane: React.FC<DiffVisualPaneProps> = ({
   return (
     <section
       className={styles.pane}
-      aria-label="Visual diff pane"
+      aria-label={t('diff.visual.aria')}
       data-testid="diff-visual-pane"
       data-style={style}
     >
       <header className={styles.header}>
-        <span className={styles.badge}>Visual</span>
+        <span className={styles.badge}>{t('diff.workspace.visual')}</span>
         <span className={styles.pageInfo}>{pageLabel}</span>
         <span className={styles.spacer} />
         {rendering && (
           <span className={styles.busy} role="status">
-            Rendering pages…
+            {t('diff.visual.rendering')}
           </span>
         )}
       </header>
 
       <div className={styles.scroll} ref={scrollRef}>
-        {!hasSource && <p className={styles.state}>Choose two PDFs to compare.</p>}
+        {!hasSource && <p className={styles.state}>{t('diff.pane.emptyBoth')}</p>}
 
-        {loading && <p className={styles.state}>Loading documents…</p>}
+        {loading && <p className={styles.state}>{t('diff.visual.loading')}</p>}
 
         {loadError && (
           <p className={styles.error} role="alert">
@@ -618,7 +632,7 @@ export const DiffVisualPane: React.FC<DiffVisualPaneProps> = ({
         )}
 
         {!loading && !loadError && hasSource && !hasPage && (
-          <p className={styles.state}>This page has no renderable side.</p>
+          <p className={styles.state}>{t('diff.pane.missingSide')}</p>
         )}
 
         {showCanvas && (
@@ -632,9 +646,9 @@ export const DiffVisualPane: React.FC<DiffVisualPaneProps> = ({
           >
             <canvas ref={canvasRef} className={styles.canvas} />
             <canvas ref={overlayRef} className={styles.overlay} aria-hidden="true" />
-            {renderError && (
+            {renderError !== null && (
               <div className={styles.renderError} role="alert">
-                {renderError}
+                {renderError || t('diff.visual.renderFailed')}
               </div>
             )}
           </div>

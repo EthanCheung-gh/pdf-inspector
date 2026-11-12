@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { translatePlural, useI18nStore, useT } from '../../i18n';
 import { ipc } from '../../services/ipc-client';
 import { useRawStore } from '../../store/raw-store';
 import type { RawObject, RawRef, RawRoot, RawValue } from '../../types/raw-pdf';
@@ -43,6 +44,8 @@ function errorMessage(error: unknown): string {
  * chevron only reads the object into the tree.
  */
 export const RawTree: React.FC = () => {
+  const t = useT();
+  const locale = useI18nStore((state) => state.locale);
   const document = useRawStore((state) => state.document);
   const selected = useRawStore((state) => state.selected);
 
@@ -121,7 +124,7 @@ export const RawTree: React.FC = () => {
   }, []);
 
   if (!document) {
-    return <p className={styles.message}>Loading the raw document…</p>;
+    return <p className={styles.message}>{t('raw.tree.loading')}</p>;
   }
 
   const renderRef = (ref: RawRef, label: string, path: string, depth: number): JSX.Element => {
@@ -132,6 +135,7 @@ export const RawTree: React.FC = () => {
     const state = refStates[path];
     const object = objectsRef.current.get(key);
     const isSelected = selected !== null && refKey(selected) === key;
+    const toggleLabel = t(isOpen ? 'raw.tree.collapse' : 'raw.tree.expand', { label });
 
     let children: React.ReactNode = null;
     if (isOpen && canExpand) {
@@ -141,22 +145,20 @@ export const RawTree: React.FC = () => {
         children = (
           <li className={styles.messageRow} role="alert">
             <span className={styles.errorText}>
-              Failed to read {text}: {state.error}
+              {t('raw.tree.readFailed', { ref: text, error: state.error ?? '' })}
             </span>
             <button
               className={styles.retryButton}
               type="button"
               onClick={() => void loadRef(ref, path)}
             >
-              Retry
+              {t('common.retry')}
             </button>
           </li>
         );
       } else {
         children = (
-          <li className={styles.messageRow}>
-            Loading {text}…
-          </li>
+          <li className={styles.messageRow}>{t('raw.tree.reading', { ref: text })}</li>
         );
       }
     }
@@ -169,8 +171,8 @@ export const RawTree: React.FC = () => {
               className={styles.toggle}
               type="button"
               aria-expanded={isOpen}
-              aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${label}`}
-              title={`${isOpen ? 'Collapse' : 'Expand'} ${text}`}
+              aria-label={toggleLabel}
+              title={t(isOpen ? 'raw.tree.collapse' : 'raw.tree.expand', { label: text })}
               onClick={() => toggle(ref, path)}
             >
               <span aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
@@ -183,7 +185,7 @@ export const RawTree: React.FC = () => {
             className={`${styles.refButton} ${isSelected ? styles.refSelected : ''}`}
             type="button"
             aria-pressed={isSelected}
-            title={`Select object ${text}`}
+            title={t('raw.tree.selectObject', { ref: text })}
             onClick={() => handleSelect(ref)}
           >
             {text}
@@ -193,7 +195,7 @@ export const RawTree: React.FC = () => {
         {isOpen && canExpand && <ul className={styles.children}>{children}</ul>}
         {!canExpand && (
           <p className={styles.notice} data-testid="raw-tree-depth-notice">
-            Depth limit {RAW_TREE_MAX_DEPTH} reached; deeper references stay collapsed.
+            {t('raw.tree.depthRefs', { limit: RAW_TREE_MAX_DEPTH })}
           </p>
         )}
       </li>
@@ -214,12 +216,15 @@ export const RawTree: React.FC = () => {
           )}
           {entries.length < value.entries.length && (
             <li className={styles.noticeRow} data-testid="raw-tree-truncated">
-              Showing the first {entries.length} of {value.entries.length} entries.
+              {t('raw.tree.entriesShown', {
+                shown: entries.length,
+                total: value.entries.length,
+              })}
             </li>
           )}
           {entries.length === value.entries.length && value.truncated && (
             <li className={styles.noticeRow} data-testid="raw-tree-truncated">
-              The sidecar truncated this dictionary.
+              {t('raw.tree.dictTruncated')}
             </li>
           )}
         </>
@@ -235,12 +240,12 @@ export const RawTree: React.FC = () => {
           )}
           {items.length < value.items.length && (
             <li className={styles.noticeRow} data-testid="raw-tree-truncated">
-              Showing the first {items.length} of {value.items.length} items.
+              {t('raw.tree.itemsShown', { shown: items.length, total: value.items.length })}
             </li>
           )}
           {items.length === value.items.length && value.truncated && (
             <li className={styles.noticeRow} data-testid="raw-tree-truncated">
-              The sidecar truncated this array.
+              {t('raw.tree.arrayTruncated')}
             </li>
           )}
         </>
@@ -249,18 +254,18 @@ export const RawTree: React.FC = () => {
 
     return (
       <>
-        {renderValue(value.dict, 'Dictionary', `${path}/dict`, depth + 1)}
+        {renderValue(value.dict, t('raw.tree.dictionary'), `${path}/dict`, depth + 1)}
         {/* A stream has no readable body when the sidecar withholds a preview
             (binary filters); that is a different fact from a truncated preview
             and must not be reported as one. */}
         {value.preview === null && (
           <li className={styles.noticeRow} data-testid="raw-tree-stream-binary">
-            Binary stream — metadata only.
+            {t('raw.tree.streamBinary')}
           </li>
         )}
         {value.truncated && value.preview !== null && (
           <li className={styles.noticeRow} data-testid="raw-tree-truncated">
-            The stream preview is truncated.
+            {t('raw.tree.streamTruncated')}
           </li>
         )}
       </>
@@ -281,7 +286,7 @@ export const RawTree: React.FC = () => {
                 className={styles.toggle}
                 type="button"
                 aria-expanded={isOpen}
-                aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${label}`}
+                aria-label={t(isOpen ? 'raw.tree.collapse' : 'raw.tree.expand', { label })}
                 onClick={() => toggle(null, path)}
               >
                 <span aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
@@ -291,13 +296,13 @@ export const RawTree: React.FC = () => {
             )}
             <span className={styles.label}>{label}</span>
             <span className={styles.summary} data-kind={value.kind}>
-              {rawValueSummary(value)}
+              {rawValueSummary(value, t)}
             </span>
           </div>
           {isOpen && canExpand && <ul className={styles.children}>{renderChildren(value, path, depth)}</ul>}
           {!canExpand && (
             <p className={styles.notice} data-testid="raw-tree-depth-notice">
-              Depth limit {RAW_TREE_MAX_DEPTH} reached; deeper values are not shown.
+              {t('raw.tree.depthValues', { limit: RAW_TREE_MAX_DEPTH })}
             </p>
           )}
         </li>
@@ -329,14 +334,16 @@ export const RawTree: React.FC = () => {
     if (value.kind === 'dict' || value.kind === 'array' || value.kind === 'stream') {
       return renderChildren(value, `${path}/value`, depth);
     }
-    if (value.kind === 'ref') return renderRef(value.ref, 'Value', `${path}/value`, depth + 1);
+    if (value.kind === 'ref') {
+      return renderRef(value.ref, t('raw.tree.value'), `${path}/value`, depth + 1);
+    }
 
     const text = rawScalarText(value) ?? '';
     return (
       <li className={styles.node} key={`${path}/value`}>
         <div className={styles.row}>
           <span className={styles.togglePlaceholder} aria-hidden="true" />
-          <span className={styles.label}>Value</span>
+          <span className={styles.label}>{t('raw.tree.value')}</span>
           <span className={styles.value} data-kind={value.kind} title={text}>
             {text}
           </span>
@@ -354,20 +361,22 @@ export const RawTree: React.FC = () => {
         <div className={styles.row}>
           <span className={styles.togglePlaceholder} aria-hidden="true" />
           <span className={styles.label}>{root.label}</span>
-          <span className={styles.summary}>not present</span>
+          <span className={styles.summary}>{t('raw.tree.notPresent')}</span>
         </div>
       </li>
     );
   };
 
-  const version = document.version ?? 'unknown version';
-  const pages = `${document.pages} ${document.pages === 1 ? 'page' : 'pages'}`;
+  const version = document.version ?? t('raw.tree.unknownVersion');
+  const pages = translatePlural(locale, 'raw.count.page', document.pages);
+  const meta = document.encrypted
+    ? t('raw.tree.metaEncrypted', { version, pages })
+    : t('raw.tree.meta', { version, pages });
 
   return (
-    <nav className={styles.tree} aria-label="Raw PDF object tree">
+    <nav className={styles.tree} aria-label={t('raw.tree.nav')}>
       <p className={styles.meta} data-testid="raw-tree-meta">
-        PDF {version} · {pages}
-        {document.encrypted ? ' · encrypted' : ''}
+        {meta}
       </p>
       <ul className={styles.roots}>{document.roots.map(renderRoot)}</ul>
     </nav>

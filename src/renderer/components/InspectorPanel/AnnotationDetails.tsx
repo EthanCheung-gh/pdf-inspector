@@ -1,6 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
 import {
+  DEFAULT_LOCALE,
+  translate,
+  useT,
+  type MessageKey,
+  type TranslateFn,
+} from '../../i18n';
+import {
   annotationKindLabel,
   annotationSubtypeLabel,
   formatAnnotationValue,
@@ -24,27 +31,35 @@ const KIND_BADGE_CLASSES: Record<AnnotationKind, string> = {
 };
 
 /** Form flags worth surfacing, in a stable order. */
-const FORM_FLAGS: ReadonlyArray<[keyof AnnotationForm, string]> = [
-  ['readOnly', 'Read only'],
-  ['required', 'Required'],
-  ['checkBox', 'Check box'],
-  ['radioButton', 'Radio button'],
-  ['pushButton', 'Push button'],
-  ['multiLine', 'Multi-line'],
-  ['combo', 'Combo box'],
+const FORM_FLAGS: ReadonlyArray<[keyof AnnotationForm, MessageKey]> = [
+  ['readOnly', 'annotation.flag.readOnly'],
+  ['required', 'annotation.flag.required'],
+  ['checkBox', 'annotation.flag.checkBox'],
+  ['radioButton', 'annotation.flag.radioButton'],
+  ['pushButton', 'annotation.flag.pushButton'],
+  ['multiLine', 'annotation.flag.multiLine'],
+  ['combo', 'annotation.flag.combo'],
 ];
 
-/** Shown instead of an action when PDF.js only had an unsafe target. */
-export const UNSAFE_TARGET_WARNING =
-  'Only http(s) links can be opened. This target is display-only.';
+/**
+ * English wording of the unsafe-target warning, kept as an export because
+ * existing callers/tests compare against it. The UI renders the catalog key so
+ * a locale switch still translates the sentence.
+ */
+export const UNSAFE_TARGET_WARNING: string = translate(
+  DEFAULT_LOCALE,
+  'annotation.unsafeTarget',
+);
 
 /** Field-type labels; unknown values are shown raw so nothing is hidden. */
-const FIELD_TYPE_LABELS: Record<string, string> = {
-  Tx: 'Text (Tx)',
-  Btn: 'Button (Btn)',
-  Ch: 'Choice (Ch)',
-  Sig: 'Signature (Sig)',
+const FIELD_TYPE_MESSAGE_KEYS: Record<string, MessageKey> = {
+  Tx: 'annotation.fieldType.Tx',
+  Btn: 'annotation.fieldType.Btn',
+  Ch: 'annotation.fieldType.Ch',
+  Sig: 'annotation.fieldType.Sig',
 };
+
+type LinkError = { kind: 'raw'; message: string } | { kind: 'key'; key: MessageKey };
 
 const formatNumber = (value: number): string =>
   Number.isInteger(value) ? value.toString() : value.toFixed(2);
@@ -54,9 +69,11 @@ function formatRect(rect: PageBox | null): string {
   return `${formatNumber(rect.x0)}, ${formatNumber(rect.y0)} → ${formatNumber(rect.x1)}, ${formatNumber(rect.y1)}`;
 }
 
-function fieldTypeLabel(fieldType: string | null): string {
+function fieldTypeLabel(fieldType: string | null, t: TranslateFn): string {
   if (fieldType === null) return DASH;
-  return FIELD_TYPE_LABELS[fieldType] ?? fieldType;
+  const key = FIELD_TYPE_MESSAGE_KEYS[fieldType];
+  // Unknown values stay raw so nothing is hidden.
+  return key ? t(key) : fieldType;
 }
 
 interface SectionProps {
@@ -97,11 +114,13 @@ interface AnnotationDetailsProps {
  * text — there is no input, no form element and no write-back path.
  */
 export const AnnotationDetails: React.FC<AnnotationDetailsProps> = ({ annotation }) => {
+  const t = useT();
   const setSelected = useAnnotationStore((state) => state.setSelected);
   const { navigate } = usePageNavigation();
   // Opening a link can fail (unsafe target, no handler); the message belongs to
-  // this panel, not to the document-wide `pdf-store` error banner.
-  const [linkError, setLinkError] = useState<string | null>(null);
+  // this panel, not to the document-wide `pdf-store` error banner. Our own
+  // fallback is stored as a key so it follows a locale switch.
+  const [linkError, setLinkError] = useState<LinkError | null>(null);
 
   // A different selection starts clean; an old failure must not describe it.
   useEffect(() => {
@@ -119,7 +138,13 @@ export const AnnotationDetails: React.FC<AnnotationDetailsProps> = ({ annotation
     if (link === null || link.url === null) return;
     setLinkError(null);
     const result = await openExternalUrl(link.url);
-    if (!result.ok) setLinkError(result.error ?? 'Could not open the link');
+    if (!result.ok) {
+      setLinkError(
+        result.error
+          ? { kind: 'raw', message: result.error }
+          : { kind: 'key', key: 'annotation.openFailed' },
+      );
+    }
   };
 
   const handleGoToPage = (): void => {
@@ -132,18 +157,20 @@ export const AnnotationDetails: React.FC<AnnotationDetailsProps> = ({ annotation
 
   return (
     <div className={styles.details}>
-      <Section title="Annotation">
-        <Row label="Kind">
+      <Section title={t('annotation.section.annotation')}>
+        <Row label={t('annotation.row.kind')}>
           <span className={`${styles.badge} ${KIND_BADGE_CLASSES[annotation.kind]}`}>
-            {annotationKindLabel(annotation.kind)}
+            {annotationKindLabel(annotation.kind, t)}
           </span>
         </Row>
-        <Row label="Subtype">
+        <Row label={t('annotation.row.subtype')}>
           <span title={annotation.subtype}>{annotationSubtypeLabel(annotation.subtype)}</span>
         </Row>
-        <Row label="Page">{annotation.page}</Row>
-        <Row label="Rect">{formatRect(annotation.rect)}</Row>
-        <Row label="Hidden">{annotation.hidden ? 'Yes' : 'No'}</Row>
+        <Row label={t('annotation.row.page')}>{annotation.page}</Row>
+        <Row label={t('annotation.row.rect')}>{formatRect(annotation.rect)}</Row>
+        <Row label={t('annotation.row.hidden')}>
+          {annotation.hidden ? t('annotation.yes') : t('annotation.no')}
+        </Row>
       </Section>
 
       {(annotation.title !== null ||
@@ -151,18 +178,20 @@ export const AnnotationDetails: React.FC<AnnotationDetailsProps> = ({ annotation
         annotation.modificationDate !== null ||
         annotation.color !== null ||
         opacity !== null) && (
-        <Section title="Content">
-          {annotation.title !== null && <Row label="Title">{annotation.title}</Row>}
+        <Section title={t('annotation.section.content')}>
+          {annotation.title !== null && (
+            <Row label={t('annotation.row.title')}>{annotation.title}</Row>
+          )}
           {annotation.contents !== null && (
-            <Row label="Contents">
+            <Row label={t('annotation.row.contents')}>
               <span className={styles.text}>{annotation.contents}</span>
             </Row>
           )}
           {annotation.modificationDate !== null && (
-            <Row label="Modified">{annotation.modificationDate}</Row>
+            <Row label={t('annotation.row.modified')}>{annotation.modificationDate}</Row>
           )}
           {annotation.color !== null && (
-            <Row label="Color">
+            <Row label={t('annotation.row.color')}>
               <span className={styles.colorValue}>
                 <span className={styles.colorSwatch} style={{ backgroundColor: annotation.color }} />
                 {annotation.color}
@@ -170,29 +199,31 @@ export const AnnotationDetails: React.FC<AnnotationDetailsProps> = ({ annotation
             </Row>
           )}
           {opacity !== null && (
-            <Row label="Opacity">{Math.round(opacity * 100)}%</Row>
+            <Row label={t('annotation.row.opacity')}>{Math.round(opacity * 100)}%</Row>
           )}
         </Section>
       )}
 
       {link !== null && (
-        <Section title="Link">
+        <Section title={t('annotation.section.link')}>
           {link.url !== null && (
-            <Row label="Target">
+            <Row label={t('annotation.row.target')}>
               <span className={styles.url}>{link.url}</span>
             </Row>
           )}
           {unsafeTarget && (
             <>
-              <Row label="Target">
+              <Row label={t('annotation.row.target')}>
                 <span className={styles.unsafeUrl}>{link.unsafeUrl}</span>
               </Row>
-              <Row label="Warning">
-                <span className={styles.warning}>{UNSAFE_TARGET_WARNING}</span>
+              <Row label={t('annotation.row.warning')}>
+                <span className={styles.warning}>{t('annotation.unsafeTarget')}</span>
               </Row>
             </>
           )}
-          {link.newWindow && <Row label="Window">New window</Row>}
+          {link.newWindow && (
+            <Row label={t('annotation.row.window')}>{t('annotation.newWindow')}</Row>
+          )}
 
           <div className={styles.actions}>
             <button
@@ -201,50 +232,50 @@ export const AnnotationDetails: React.FC<AnnotationDetailsProps> = ({ annotation
               disabled={link.url === null}
               title={
                 link.url === null
-                  ? 'Only http(s) links can be opened'
-                  : `Open ${link.url} in the default browser`
+                  ? t('annotation.openOnlySafe')
+                  : t('annotation.openTitle', { url: link.url })
               }
               onClick={() => void handleOpenLink()}
             >
-              Open link
+              {t('annotation.openLink')}
             </button>
             {internalPage !== null && (
               <button type="button" className={styles.button} onClick={handleGoToPage}>
-                Go to page {internalPage}
+                {t('annotation.goToPage', { page: internalPage })}
               </button>
             )}
           </div>
 
           {unresolvedTarget && (
-            <div className={styles.note}>No resolvable link target.</div>
+            <div className={styles.note}>{t('annotation.noTarget')}</div>
           )}
           {linkError !== null && (
             <div className={styles.error} role="alert">
-              {linkError}
+              {linkError.kind === 'raw' ? linkError.message : t(linkError.key)}
             </div>
           )}
         </Section>
       )}
 
       {form !== null && (
-        <Section title="Form field">
-          <Row label="Field name">{form.fieldName ?? DASH}</Row>
-          <Row label="Field type">{fieldTypeLabel(form.fieldType)}</Row>
-          <Row label="Value">
+        <Section title={t('annotation.section.form')}>
+          <Row label={t('annotation.row.fieldName')}>{form.fieldName ?? DASH}</Row>
+          <Row label={t('annotation.row.fieldType')}>{fieldTypeLabel(form.fieldType, t)}</Row>
+          <Row label={t('annotation.row.value')}>
             <span className={styles.text}>
               {formatAnnotationValue(form.value) || DASH}
             </span>
           </Row>
-          <Row label="Default">
+          <Row label={t('annotation.row.default')}>
             <span className={styles.text}>
               {formatAnnotationValue(form.defaultValue) || DASH}
             </span>
           </Row>
-          <Row label="Flags">
-            {flags.length === 0 ? 'None' : flags.map(([, label]) => label).join(', ')}
+          <Row label={t('annotation.row.flags')}>
+            {flags.length === 0 ? t('annotation.none') : flags.map(([, key]) => t(key)).join(', ')}
           </Row>
           {form.options.length > 0 && (
-            <Row label="Options">
+            <Row label={t('annotation.row.options')}>
               <ul className={styles.options}>
                 {form.options.map((option, index) => (
                   <li className={styles.option} key={`${index}:${option.value}`}>
@@ -256,14 +287,14 @@ export const AnnotationDetails: React.FC<AnnotationDetailsProps> = ({ annotation
           )}
           {/* A signature field is shown as a field only; nothing is verified. */}
           {form.fieldType === 'Sig' && (
-            <div className={styles.note}>Signature not verified.</div>
+            <div className={styles.note}>{t('annotation.signatureNotVerified')}</div>
           )}
         </Section>
       )}
 
       <div className={styles.footer}>
         <button type="button" className={styles.button} onClick={() => setSelected(null)}>
-          Clear selection
+          {t('annotation.clearSelection')}
         </button>
       </div>
     </div>

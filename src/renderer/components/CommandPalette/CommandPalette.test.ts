@@ -7,6 +7,7 @@ import {
   registerCommands,
   type CommandDefinition,
 } from '../../services/command-registry';
+import { useI18nStore } from '../../i18n/store';
 import { usePdfStore } from '../../store/pdf-store';
 import { useRegisterCommands } from '../../hooks/useRegisterCommands';
 
@@ -50,6 +51,7 @@ const searchBox = (): HTMLInputElement =>
 beforeEach(() => {
   navigate.mockReset();
   navigate.mockResolvedValue(undefined);
+  useI18nStore.setState({ locale: 'en' });
   usePdfStore.setState({ pageCount: 5, currentPage: 3, isLoading: false });
 });
 
@@ -315,5 +317,31 @@ describe('CommandPalette', () => {
 
     view.unmount();
     expect(listCommands().some((entry) => entry.id === 'palette-host.cmd')).toBe(false);
+  });
+
+  it('translates the palette chrome, groups and built-in commands', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    register('palette-i18n', [makeCommand('palette-i18n.alpha', 'Alpha', 'File')]);
+    render(React.createElement(CommandPalette));
+    openPalette();
+
+    expect(screen.getByRole('dialog', { name: '命令面板' })).toBeTruthy();
+    const search = screen.getByRole('combobox', { name: '搜索命令' }) as HTMLInputElement;
+    expect(search.getAttribute('placeholder')).toBe('输入命令…');
+    expect(screen.getByRole('option', { name: '跳转到页面…' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /关闭命令面板/ })).toBeTruthy();
+    expect(screen.getByRole('group', { name: '文件' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: '导航' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: '视图' })).toBeTruthy();
+    expect(screen.getByText('↑↓ 移动 · Enter 运行 · Esc 关闭')).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByRole('dialog', { name: 'Command palette' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Go to page…' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'File' })).toBeTruthy();
+    expect(screen.getByText('↑↓ navigate · Enter run · Esc close')).toBeTruthy();
   });
 });

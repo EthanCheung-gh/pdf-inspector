@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useT, type TranslateFn } from '../../i18n';
 import { ipc } from '../../services/ipc-client';
 import type { OpenPdfResult } from '../../types/ipc-protocol';
 import styles from './OpenUrlDialog.module.css';
@@ -13,25 +14,26 @@ export interface OpenUrlDialogProps {
 
 type Validation = { url: string } | { error: string };
 
-function validateUrl(raw: string): Validation {
+function validateUrl(raw: string, t: TranslateFn): Validation {
   const trimmed = raw.trim();
-  if (!trimmed) return { error: 'Enter a valid http(s) URL' };
+  if (!trimmed) return { error: t('openUrl.invalid') };
 
   let parsed: URL;
   try {
     parsed = new URL(trimmed);
   } catch {
-    return { error: 'Enter a valid http(s) URL' };
+    return { error: t('openUrl.invalid') };
   }
 
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return { error: 'Only http(s) URLs are supported' };
+    return { error: t('openUrl.unsupported') };
   }
 
   return { url: trimmed };
 }
 
 export const OpenUrlDialog: React.FC<OpenUrlDialogProps> = ({ open, onClose, onOpened }) => {
+  const t = useT();
   const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -67,7 +69,7 @@ export const OpenUrlDialog: React.FC<OpenUrlDialogProps> = ({ open, onClose, onO
   const handleSubmit = useCallback(async () => {
     if (busy) return;
 
-    const validation = validateUrl(value);
+    const validation = validateUrl(value, t);
     if ('error' in validation) {
       setError(validation.error);
       return;
@@ -81,11 +83,11 @@ export const OpenUrlDialog: React.FC<OpenUrlDialogProps> = ({ open, onClose, onO
       await onOpened(result);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to open PDF from URL');
+      setError(err instanceof Error ? err.message : t('openUrl.failed'));
     } finally {
       setBusy(false);
     }
-  }, [busy, onClose, onOpened, value]);
+  }, [busy, onClose, onOpened, t, value]);
 
   const handleBackdropClick = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -102,7 +104,7 @@ export const OpenUrlDialog: React.FC<OpenUrlDialogProps> = ({ open, onClose, onO
     <div className={styles.backdrop} onClick={handleBackdropClick}>
       <div className={styles.dialog} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <h2 id={titleId} className={styles.title}>
-          Open URL
+          {t('openUrl.title')}
         </h2>
 
         <form
@@ -113,7 +115,7 @@ export const OpenUrlDialog: React.FC<OpenUrlDialogProps> = ({ open, onClose, onO
           }}
         >
           <label className={styles.label} htmlFor={inputId}>
-            PDF URL
+            {t('openUrl.label')}
           </label>
           <input
             ref={inputRef}
@@ -142,14 +144,14 @@ export const OpenUrlDialog: React.FC<OpenUrlDialogProps> = ({ open, onClose, onO
               onClick={onClose}
               disabled={busy}
             >
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               className={`${styles.button} ${styles.primary}`}
               type="submit"
               disabled={busy || value.trim() === ''}
             >
-              {busy ? 'Opening…' : 'Open'}
+              {busy ? t('common.opening') : t('common.open')}
             </button>
           </div>
         </form>

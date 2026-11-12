@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useT } from '../../i18n';
 import { useRawStore } from '../../store/raw-store';
 import type { RawRef } from '../../types/raw-pdf';
 import { formatRawRef, RawValueView } from './RawValueView';
@@ -15,6 +16,7 @@ type CopyStatus = 'idle' | 'copied' | 'failed';
  * panel can never disagree about which object is shown.
  */
 export const RawObjectPanel: React.FC = () => {
+  const t = useT();
   const selected = useRawStore((state) => state.selected);
   const object = useRawStore((state) => state.object);
   const loading = useRawStore((state) => state.loading);
@@ -52,10 +54,12 @@ export const RawObjectPanel: React.FC = () => {
   }, []);
 
   return (
-    <section className={styles.panel} aria-label="Raw object" data-testid="raw-object-panel">
+    <section className={styles.panel} aria-label={t('raw.object.aria')} data-testid="raw-object-panel">
       <header className={styles.panelHeader}>
         <span className={styles.panelTitle}>
-          {selectedLabel ? `Object ${selectedLabel}` : 'Object'}
+          {selectedLabel
+            ? t('raw.object.title', { ref: selectedLabel })
+            : t('raw.object.titleEmpty')}
         </span>
         {object && (
           <span className={styles.panelSummary} title={object.summary}>
@@ -68,13 +72,13 @@ export const RawObjectPanel: React.FC = () => {
           type="button"
           onClick={() => void handleCopy()}
           disabled={!object}
-          title="Copy the selected object as JSON"
+          title={t('raw.object.copyTitle')}
         >
-          Copy JSON
+          {t('raw.object.copy')}
         </button>
         {copyStatus !== 'idle' && (
           <span className={styles.copyStatus} role="status" aria-live="polite">
-            {copyStatus === 'copied' ? 'Copied' : 'Copy failed'}
+            {copyStatus === 'copied' ? t('raw.object.copied') : t('raw.object.copyFailed')}
           </span>
         )}
       </header>
@@ -82,24 +86,26 @@ export const RawObjectPanel: React.FC = () => {
       <div className={styles.panelBody}>
         {!selected && (
           <p className={styles.empty} data-testid="raw-object-empty">
-            Select a reference in the tree to read its object.
+            {t('raw.object.empty')}
           </p>
         )}
 
         {selected && error && !object && (
           <div className={styles.errorBlock} role="alert">
             <span className={styles.errorText}>
-              Failed to read {selectedLabel}: {error}
+              {t('raw.object.readFailed', { ref: selectedLabel ?? '', error })}
             </span>
             <button className={styles.button} type="button" onClick={handleRetry}>
-              Retry
+              {t('common.retry')}
             </button>
           </div>
         )}
 
         {selected && !object && !error && (
           <p className={styles.loading} role="status" aria-live="polite">
-            {loading ? `Reading ${selectedLabel}…` : `No object loaded for ${selectedLabel}.`}
+            {loading
+              ? t('raw.object.reading', { ref: selectedLabel ?? '' })
+              : t('raw.object.notLoaded', { ref: selectedLabel ?? '' })}
           </p>
         )}
 

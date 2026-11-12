@@ -1,4 +1,5 @@
 import React, { useCallback } from 'react';
+import { useT } from '../../i18n';
 import { useRawStore } from '../../store/raw-store';
 import { RawContentPanel } from './RawContentPanel';
 import { RawObjectPanel } from './RawObjectPanel';
@@ -18,6 +19,7 @@ const TAB_CONTENT_ID = 'raw-tab-content';
  * selection, filters and export state stay exactly as they were).
  */
 export const RawWorkspace: React.FC = () => {
+  const t = useT();
   const filePath = useRawStore((state) => state.filePath);
   const fileName = useRawStore((state) => state.fileName);
   const document = useRawStore((state) => state.document);
@@ -40,18 +42,22 @@ export const RawWorkspace: React.FC = () => {
   }, []);
 
   return (
-    <section className={styles.workspace} aria-label="Raw PDF workspace" data-testid="raw-workspace">
+    <section
+      className={styles.workspace}
+      aria-label={t('raw.workspaceAria')}
+      data-testid="raw-workspace"
+    >
       <header className={styles.toolbar}>
         <button className={styles.button} type="button" onClick={close}>
-          Back to Inspect
+          {t('workspace.backToInspect')}
         </button>
         <span className={styles.separator} />
-        <span className={styles.title}>Raw</span>
+        <span className={styles.title}>{t('raw.title')}</span>
         <span className={styles.fileName} title={fileName ?? '—'} data-testid="raw-file-name">
           {fileName ?? '—'}
         </span>
 
-        <div className={styles.tabs} role="tablist" aria-label="Raw detail tabs">
+        <div className={styles.tabs} role="tablist" aria-label={t('raw.detailTabs')}>
           <button
             className={`${styles.tab} ${tab === 'object' ? styles.activeTab : ''}`}
             type="button"
@@ -61,7 +67,7 @@ export const RawWorkspace: React.FC = () => {
             aria-controls={TAB_PANEL_ID}
             onClick={() => setTab('object')}
           >
-            Object
+            {t('raw.tab.object')}
           </button>
           <button
             className={`${styles.tab} ${tab === 'content' ? styles.activeTab : ''}`}
@@ -72,7 +78,7 @@ export const RawWorkspace: React.FC = () => {
             aria-controls={TAB_PANEL_ID}
             onClick={() => setTab('content')}
           >
-            Content stream
+            {t('raw.tab.content')}
           </button>
         </div>
 
@@ -83,15 +89,15 @@ export const RawWorkspace: React.FC = () => {
           type="button"
           onClick={handleReload}
           disabled={!filePath}
-          title="Read the document and its object graph again"
+          title={t('raw.reloadTitle')}
         >
-          {loading && !document ? 'Reloading…' : 'Reload'}
+          {loading && !document ? t('raw.reloading') : t('raw.reload')}
         </button>
       </header>
 
       {!document && error && (
         <p className={styles.error} role="alert">
-          Raw view failed: {error}
+          {t('raw.loadFailed', { error })}
         </p>
       )}
 
@@ -99,17 +105,17 @@ export const RawWorkspace: React.FC = () => {
         <div className={styles.status}>
           {loading ? (
             <p className={styles.loading} role="status" aria-live="polite">
-              Loading the raw object graph…
+              {t('raw.loadingGraph')}
             </p>
           ) : (
             <p className={styles.empty} data-testid="raw-workspace-empty">
-              Open a PDF to read its raw objects and content streams.
+              {t('raw.empty')}
             </p>
           )}
         </div>
       ) : (
         <div className={styles.body}>
-          <aside className={styles.treePane} aria-label="Raw object tree">
+          <aside className={styles.treePane} aria-label={t('raw.tree.aria')}>
             <RawTree />
           </aside>
           <div

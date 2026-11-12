@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useI18nStore } from '../../i18n';
 import { useAnnotationStore } from '../../store/annotation-store';
 import { usePdfStore } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
@@ -62,31 +63,33 @@ const widgetAnnotation: PdfAnnotation = {
   },
 };
 
-describe('LeftPanel', () => {
-  afterEach(cleanup);
-
-  beforeEach(() => {
-    navigate.mockReset();
-    usePdfStore.setState({
-      filePath: null,
-      metadata: null,
-      pageCount: 0,
-      outline: null,
-      pdfDocRef: null,
-      pageData: null,
-      fontStats: null,
-      fontProgress: null,
-      error: null,
-      isLoading: false,
-    });
-    useWorkspaceStore.setState({ leftTab: 'objects', overlayOpacity: 1 });
-    useAnnotationStore.getState().clear();
-    useAnnotationStore.setState({
-      kindFilter: 'all',
-      subtypeFilter: 'all',
-      showBoxes: true,
-    });
+beforeEach(() => {
+  navigate.mockReset();
+  useI18nStore.setState({ locale: 'en' });
+  usePdfStore.setState({
+    filePath: null,
+    metadata: null,
+    pageCount: 0,
+    outline: null,
+    pdfDocRef: null,
+    pageData: null,
+    fontStats: null,
+    fontProgress: null,
+    error: null,
+    isLoading: false,
   });
+  useWorkspaceStore.setState({ leftTab: 'objects', overlayOpacity: 1 });
+  useAnnotationStore.getState().clear();
+  useAnnotationStore.setState({
+    kindFilter: 'all',
+    subtypeFilter: 'all',
+    showBoxes: true,
+  });
+});
+
+afterEach(cleanup);
+
+describe('LeftPanel', () => {
 
   it('switches between Objects and Outline tabs', () => {
     render(React.createElement(LeftPanel));
@@ -369,5 +372,83 @@ describe('LeftPanel', () => {
     expect(
       screen.getByRole('button', { name: /field = value/ }).getAttribute('aria-pressed'),
     ).toBe('true');
+  });
+});
+
+describe('LeftPanel localization', () => {
+  it('translates the tab labels, the Annots tooltip and the collapse control', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    render(React.createElement(LeftPanel));
+
+    expect(screen.getByRole('complementary', { name: '文档导航' })).toBeTruthy();
+    expect(screen.getByRole('tablist', { name: '文档导航标签页' })).toBeTruthy();
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+      '对象',
+      '大纲',
+      '字体',
+      '图层',
+      '注释',
+    ]);
+    // Chinese "注释" fits the tab, so the label and its tooltip agree.
+    expect(screen.getByRole('tab', { name: '注释' }).getAttribute('title')).toBe('注释');
+    expect(screen.getByRole('button', { name: '隐藏左侧面板' }).getAttribute('title')).toBe(
+      '隐藏左侧面板',
+    );
+  });
+
+  it('translates the empty Objects and Outline panes', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    render(React.createElement(LeftPanel));
+
+    expect(screen.getByText('打开 PDF 以查看其结构。')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('tab', { name: '大纲' }));
+
+    expect(screen.getByText('此文档没有书签。')).toBeTruthy();
+  });
+
+  it('keeps document-provided bookmark titles while translating the outline chrome', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    usePdfStore.setState({
+      outline: [{ title: 'Chapter 3', bold: false, italic: false, dest: null, items: [] }],
+    });
+    render(React.createElement(LeftPanel));
+
+    fireEvent.click(screen.getByRole('tab', { name: '大纲' }));
+
+    expect(screen.getByRole('navigation', { name: 'PDF 书签' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Chapter 3' })).toBeTruthy();
+  });
+
+  it('translates the oversized-outline warning', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    usePdfStore.setState({
+      outline: Array.from({ length: 2001 }, (_, index) => ({
+        title: `Bookmark ${index + 1}`,
+        bold: false,
+        italic: false,
+        dest: null,
+        items: [],
+      })),
+    });
+    render(React.createElement(LeftPanel));
+
+    fireEvent.click(screen.getByRole('tab', { name: '大纲' }));
+
+    expect(screen.getByText('此文档有 2001 个书签，大纲过大，无法显示。')).toBeTruthy();
+  });
+
+  it('returns to English without a reload', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    render(React.createElement(LeftPanel));
+    expect(screen.getByRole('tab', { name: '对象' })).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByRole('tab', { name: 'Objects' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Hide left panel' })).toBeTruthy();
+    expect(screen.getByRole('complementary', { name: 'Document navigation' })).toBeTruthy();
   });
 });

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { DiffSide } from '../../../shared/diff-types';
+import { useT } from '../../i18n';
 import { ipc } from '../../services/ipc-client';
 import { useElapsedSeconds } from '../../hooks/useElapsedSeconds';
 import { selectCharacterLevelChanges, useDiffStore } from '../../store/diff-store';
@@ -13,6 +14,7 @@ import styles from './DiffSetupDialog.module.css';
  * instance without duplicating source state.
  */
 export const DiffSetupDialog: React.FC = () => {
+  const t = useT();
   const open = useDiffStore((s) => s.setupOpen);
   const oldName = useDiffStore((s) => s.oldName);
   const newName = useDiffStore((s) => s.newName);
@@ -68,12 +70,12 @@ export const DiffSetupDialog: React.FC = () => {
         const picked = await ipc.pickDiffPdf(side);
         useDiffStore.getState().acceptPickedSource(side, picked);
       } catch (err) {
-        setPickError(err instanceof Error ? err.message : 'Failed to choose a PDF');
+        setPickError(err instanceof Error ? err.message : t('diff.setup.pickFailed'));
       } finally {
         setPicking(null);
       }
     },
-    [picking],
+    [picking, t],
   );
 
   const handleCompare = useCallback(async () => {
@@ -89,9 +91,11 @@ export const DiffSetupDialog: React.FC = () => {
       useDiffStore.getState().enterWorkspace();
     } catch (err) {
       useDiffStore.getState().setLoading(false);
-      useDiffStore.getState().setError(err instanceof Error ? err.message : 'Diff failed');
+      useDiffStore
+        .getState()
+        .setError(err instanceof Error ? err.message : t('diff.setup.diffFailed'));
     }
-  }, []);
+  }, [t]);
 
   const handleBackdropClick = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -118,48 +122,46 @@ export const DiffSetupDialog: React.FC = () => {
         ref={dialogRef}
       >
         <h2 id={titleId} className={styles.title}>
-          Compare PDFs
+          {t('diff.setup.title')}
         </h2>
-        <p className={styles.hint}>
-          Diff runs on two throwaway documents: the PDF open in Inspect stays untouched.
-        </p>
+        <p className={styles.hint}>{t('diff.setup.hint')}</p>
 
         <div className={styles.pickerRow}>
-          <span className={styles.rowLabel}>Old</span>
+          <span className={styles.rowLabel}>{t('diff.setup.old')}</span>
           <span className={styles.fileName} title={oldName ?? undefined}>
-            {oldName ?? 'No file selected'}
+            {oldName ?? t('diff.setup.noFileSelected')}
           </span>
           <button
             className={styles.button}
             type="button"
             onClick={() => void handlePick('old')}
             disabled={loading || picking !== null}
-            aria-label="Choose old PDF"
+            aria-label={t('diff.setup.chooseOld')}
           >
-            {picking === 'old' ? 'Choosing…' : 'Choose…'}
+            {picking === 'old' ? t('diff.setup.choosing') : t('diff.setup.choose')}
           </button>
         </div>
 
         <div className={styles.pickerRow}>
-          <span className={styles.rowLabel}>New</span>
+          <span className={styles.rowLabel}>{t('diff.setup.new')}</span>
           <span className={styles.fileName} title={newName ?? undefined}>
-            {newName ?? 'No file selected'}
+            {newName ?? t('diff.setup.noFileSelected')}
           </span>
           <button
             className={styles.button}
             type="button"
             onClick={() => void handlePick('new')}
             disabled={loading || picking !== null}
-            aria-label="Choose new PDF"
+            aria-label={t('diff.setup.chooseNew')}
           >
-            {picking === 'new' ? 'Choosing…' : 'Choose…'}
+            {picking === 'new' ? t('diff.setup.choosing') : t('diff.setup.choose')}
           </button>
         </div>
 
         <div className={styles.options}>
           <div className={styles.toleranceRow}>
             <label className={styles.rowLabel} htmlFor={toleranceId}>
-              Position tolerance
+              {t('diff.setup.positionTolerance')}
             </label>
             <input
               id={toleranceId}
@@ -182,7 +184,7 @@ export const DiffSetupDialog: React.FC = () => {
               disabled={loading}
               onChange={(event) => setOptions({ ignoreFonts: event.target.checked })}
             />
-            Ignore fonts
+            {t('diff.setup.ignoreFonts')}
           </label>
           <label className={styles.checkboxRow}>
             <input
@@ -191,7 +193,7 @@ export const DiffSetupDialog: React.FC = () => {
               disabled={loading}
               onChange={(event) => setOptions({ ignoreColors: event.target.checked })}
             />
-            Ignore colours
+            {t('diff.setup.ignoreColours')}
           </label>
           <label className={styles.checkboxRow}>
             <input
@@ -200,7 +202,7 @@ export const DiffSetupDialog: React.FC = () => {
               disabled={loading}
               onChange={(event) => setOptions({ ignoreImages: event.target.checked })}
             />
-            Ignore images
+            {t('diff.setup.ignoreImages')}
           </label>
           {/*
             Character-level diffs are off by default: word-level changes already
@@ -214,12 +216,9 @@ export const DiffSetupDialog: React.FC = () => {
               disabled={loading}
               onChange={(event) => setCharacterLevelChanges(event.target.checked)}
             />
-            Character-level changes
+            {t('diff.setup.characterLevel')}
           </label>
-          <p className={styles.optionHint}>
-            Word-level changes are always reported. Character-level changes are optional
-            because a large text PDF can produce millions of one-glyph changes.
-          </p>
+          <p className={styles.optionHint}>{t('diff.setup.characterLevelHint')}</p>
         </div>
 
         <div className={styles.errorArea} role="alert">
@@ -228,7 +227,7 @@ export const DiffSetupDialog: React.FC = () => {
 
         {loading && (
           <div className={styles.progress} role="status" aria-live="polite">
-            Comparing documents…
+            {t('diff.setup.comparing')}
             {' '}
             <span className={styles.elapsed} data-testid="diff-elapsed">
               {elapsedSeconds}s
@@ -239,10 +238,7 @@ export const DiffSetupDialog: React.FC = () => {
               pass), so the dialog states why a large pair takes a while
               instead of inventing a number.
             */}
-            <span className={styles.progressHint}>
-              Large PDFs can take several minutes; the comparison continues while pages make
-              progress.
-            </span>
+            <span className={styles.progressHint}>{t('diff.setup.comparingHint')}</span>
           </div>
         )}
 
@@ -253,7 +249,7 @@ export const DiffSetupDialog: React.FC = () => {
             onClick={closeSetup}
             disabled={loading}
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             className={`${styles.button} ${styles.primary}`}
@@ -261,7 +257,7 @@ export const DiffSetupDialog: React.FC = () => {
             onClick={() => void handleCompare()}
             disabled={!canCompare}
           >
-            {loading ? 'Comparing…' : 'Compare'}
+            {loading ? t('diff.setup.comparingButton') : t('diff.setup.compare')}
           </button>
         </div>
       </div>

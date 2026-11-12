@@ -1,5 +1,12 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import {
+  translatePlural,
+  useI18nStore,
+  useT,
+  type MessageKey,
+  type TranslateFn,
+} from '../../i18n';
+import {
   MAX_SEARCH_MATCHES,
   type SearchMatch,
   type SearchOptions,
@@ -21,24 +28,32 @@ export interface SearchResultsPanelProps {
 
 interface OptionToggle {
   key: keyof SearchOptions;
-  label: string;
-  name: string;
-  title: string;
+  /** The visible glyph is a search convention and stays the same in both locales. */
+  glyph: string;
+  nameKey: MessageKey;
+  titleKey: MessageKey;
 }
 
-const OPTION_TOGGLES: OptionToggle[] = [
-  { key: 'caseSensitive', label: 'Aa', name: 'Match case', title: 'Match case' },
-  { key: 'wholeWord', label: 'W', name: 'Whole word', title: 'Whole word' },
-  { key: 'regex', label: '.*', name: 'Regular expression', title: 'Regular expression' },
+const OPTION_TOGGLES: readonly OptionToggle[] = [
+  {
+    key: 'caseSensitive',
+    glyph: 'Aa',
+    nameKey: 'search.matchCase',
+    titleKey: 'search.matchCase',
+  },
+  { key: 'wholeWord', glyph: 'W', nameKey: 'search.wholeWord', titleKey: 'search.wholeWord' },
+  { key: 'regex', glyph: '.*', nameKey: 'search.regex', titleKey: 'search.regex' },
 ];
 
 /**
  * Hits produced before previews existed (or by another caller) still need a
  * readable row, so fall back to the offset inside the page text.
  */
-function previewText(match: SearchMatch): string {
+function previewText(match: SearchMatch, t: TranslateFn): string {
   const preview = match.preview?.trim();
-  return preview && preview.length > 0 ? preview : `Match at ${match.begin + 1}`;
+  return preview && preview.length > 0
+    ? preview
+    : t('search.matchAt', { offset: match.begin + 1 });
 }
 
 /**
@@ -59,6 +74,8 @@ export const SearchResultsPanel: React.FC<SearchResultsPanelProps> = ({
   const truncated = usePdfStore((s) => s.searchTruncated);
   const error = usePdfStore((s) => s.searchError);
   const progress = usePdfStore((s) => s.searchIndexProgress);
+  const locale = useI18nStore((s) => s.locale);
+  const t = useT();
   const listRef = useRef<HTMLUListElement>(null);
 
   // Keep the active hit visible while ↑/↓ or Enter move through the list. jsdom
@@ -106,30 +123,30 @@ export const SearchResultsPanel: React.FC<SearchResultsPanelProps> = ({
       id={SEARCH_RESULTS_PANEL_ID}
       className={styles.panel}
       role="dialog"
-      aria-label="Search results"
+      aria-label={t('search.results')}
       onKeyDown={handleKeyDown}
     >
       <div className={styles.header}>
-        <span className={styles.title}>Results</span>
-        {OPTION_TOGGLES.map(({ key, label, name, title }) => (
+        <span className={styles.title}>{t('search.resultsHeading')}</span>
+        {OPTION_TOGGLES.map(({ key, glyph, nameKey, titleKey }) => (
           <button
             key={key}
             type="button"
             className={styles.toggle}
             aria-pressed={options[key]}
-            aria-label={name}
-            title={title}
+            aria-label={t(nameKey)}
+            title={t(titleKey)}
             onClick={() => toggleOption(key)}
           >
-            {label}
+            {glyph}
           </button>
         ))}
         <button
           type="button"
           className={styles.close}
           onClick={onClose}
-          aria-label="Close results"
-          title="Close results (Esc)"
+          aria-label={t('search.closeResults')}
+          title={t('search.closeResultsTitle')}
         >
           ✕
         </button>
@@ -144,11 +161,11 @@ export const SearchResultsPanel: React.FC<SearchResultsPanelProps> = ({
           <>
             {progress && (
               <p className={styles.status} role="status">
-                Indexing {progress.done}/{progress.total}…
+                {t('search.indexing', { done: progress.done, total: progress.total })}
               </p>
             )}
             {matches.length === 0
-              ? !progress && <p className={styles.empty}>No matches</p>
+              ? !progress && <p className={styles.empty}>{t('search.noMatches')}</p>
               : (
                 <ul className={styles.list} ref={listRef}>
                   {matches.map((match, index) => {
@@ -165,8 +182,10 @@ export const SearchResultsPanel: React.FC<SearchResultsPanelProps> = ({
                             onClose();
                           }}
                         >
-                          <span className={styles.page}>p.{match.page}</span>
-                          <span className={styles.preview}>{previewText(match)}</span>
+                          <span className={styles.page}>
+                            {t('search.pageShort', { page: match.page })}
+                          </span>
+                          <span className={styles.preview}>{previewText(match, t)}</span>
                         </button>
                       </li>
                     );
@@ -175,7 +194,9 @@ export const SearchResultsPanel: React.FC<SearchResultsPanelProps> = ({
               )}
             {truncated && (
               <p className={styles.truncated}>
-                Showing first {MAX_SEARCH_MATCHES.toLocaleString('en-US')} matches
+                {translatePlural(locale, 'search.truncated', MAX_SEARCH_MATCHES, {
+                  limit: MAX_SEARCH_MATCHES.toLocaleString(locale),
+                })}
               </p>
             )}
           </>

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import type { PageViewport } from 'pdfjs-dist';
+import { useT } from '../../i18n';
 import {
   PAGE_BOX_KEYS,
   useWorkspaceStore,
@@ -116,6 +117,7 @@ export const PageGeometryOverlay: React.FC<PageGeometryOverlayProps> = ({
   viewport,
   boxes,
 }) => {
+  const t = useT();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pageBoxVisibility = useWorkspaceStore((state) => state.pageBoxVisibility);
 
@@ -142,7 +144,7 @@ export const PageGeometryOverlay: React.FC<PageGeometryOverlayProps> = ({
   return (
     <canvas
       ref={canvasRef}
-      aria-label={`PDF page ${pageNum} page boxes`}
+      aria-label={t('viewport.pageBoxes', { page: pageNum })}
       style={{
         position: 'absolute',
         top: 0,

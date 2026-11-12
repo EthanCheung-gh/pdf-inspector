@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { TextLayer as PdfjsTextLayer, type PDFDocumentProxy } from 'pdfjs-dist';
+import { useT } from '../../i18n';
 import { mapMatchToDivOffsets, type SearchMatch } from '../../services/pdf-search';
 import { usePdfStore } from '../../store/pdf-store';
 import styles from './TextLayer.module.css';
@@ -72,6 +73,7 @@ function applyHighlights(
 }
 
 export const TextLayer: React.FC<TextLayerProps> = ({ pageNum, pdfDoc, zoom }) => {
+  const t = useT();
   const containerRef = useRef<HTMLDivElement>(null);
   const textLayerRef = useRef<PdfjsTextLayer | null>(null);
   const textSelectionMode = usePdfStore((s) => s.textSelectionMode);
@@ -149,6 +151,7 @@ export const TextLayer: React.FC<TextLayerProps> = ({ pageNum, pdfDoc, zoom }) =
     <div
       ref={containerRef}
       className={styles.textLayer}
+      aria-label={t('viewport.textLayer', { page: pageNum })}
       style={{
         pointerEvents: textSelectionMode ? 'auto' : 'none',
         userSelect: textSelectionMode ? 'text' : 'none',

@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import React, { useState } from 'react';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useI18nStore } from '../i18n';
 import { EXPORT_OBJECT_TYPES } from '../services/export-data';
 import type { PdfObjectType } from '../types/pdf-objects';
 import { EXPORT_TYPE_LABELS, ExportTypeSelector } from './ExportTypeSelector';
@@ -49,6 +50,10 @@ function group(name = 'Object types'): HTMLElement {
 function checkbox(name: string): HTMLInputElement {
   return within(group()).getByRole('checkbox', { name }) as HTMLInputElement;
 }
+
+beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
+});
 
 describe('ExportTypeSelector', () => {
   afterEach(cleanup);
@@ -119,5 +124,45 @@ describe('ExportTypeSelector', () => {
     renderSelector({ label: 'Export types' });
 
     expect(screen.getByRole('group', { name: 'Export types' })).toBeTruthy();
+  });
+});
+
+describe('ExportTypeSelector localization', () => {
+  afterEach(cleanup);
+
+  beforeEach(() => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+  });
+
+  it('translates labels and actions while emitted values stay identifiers', () => {
+    const onChange = renderStateful(ALL);
+
+    const zhGroup = within(screen.getByRole('group', { name: '对象类型' }));
+    expect(zhGroup.getByText('7/7')).toBeTruthy();
+    expect((zhGroup.getByRole('checkbox', { name: '字符' }) as HTMLInputElement).value).toBe(
+      'char',
+    );
+    expect((zhGroup.getByRole('checkbox', { name: '词' }) as HTMLInputElement).value).toBe('word');
+    expect((zhGroup.getByRole('checkbox', { name: '矩形' }) as HTMLInputElement).value).toBe(
+      'rect',
+    );
+    expect(zhGroup.getByRole('checkbox', { name: '线条' })).toBeTruthy();
+    expect(zhGroup.getByRole('checkbox', { name: '曲线' })).toBeTruthy();
+    expect(zhGroup.getByRole('checkbox', { name: '图像' })).toBeTruthy();
+    expect(zhGroup.getByRole('checkbox', { name: '表格' })).toBeTruthy();
+    expect(zhGroup.getByRole('button', { name: '全选' })).toBeTruthy();
+    expect(zhGroup.getByRole('button', { name: '清除' })).toBeTruthy();
+
+    fireEvent.click(zhGroup.getByRole('checkbox', { name: '字符' }));
+    expect(onChange).toHaveBeenCalledWith(ALL.filter((type) => type !== 'char'));
+    expect(zhGroup.getByText('6/7')).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByRole('group', { name: 'Object types' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Select all' })).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: 'Chars' })).toBeTruthy();
   });
 });

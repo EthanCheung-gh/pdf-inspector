@@ -22,6 +22,7 @@ export const InspectorHighlight: React.FC<InspectorHighlightProps> = ({ pageNum 
 
   return (
     <div
+      aria-hidden="true"
       style={{
         position: 'absolute',
         pointerEvents: 'none',

@@ -3,6 +3,7 @@ import React from 'react';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DiffPageSize } from '../../../shared/diff-types';
+import { useI18nStore } from '../../i18n';
 import type { DiffBoxSpec } from '../../services/diff-view';
 import type { PixelDiffStats } from '../../services/visual-diff';
 
@@ -135,6 +136,8 @@ beforeEach(() => {
   getDocument.mockReset();
   destroyDoc.mockReset();
   renderPage.mockReset();
+  // A Chinese test must not leak its locale into the English assertions.
+  useI18nStore.setState({ locale: 'en' });
   fills.clear();
   contexts.clear();
   renderCount = 0;
@@ -319,8 +322,46 @@ describe('DiffVisualPane composition', () => {
   });
 });
 
-describe('DiffVisualPane one-sided pages', () => {
-  it('shows the new page alone with an explanatory notice', async () => {
+describe('DiffVisualPane localization', () => {
+  it('translates the pane label, page pair and empty states', async () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+
+    renderPane();
+    expect(screen.getByRole('region', { name: '视觉对比面板' })).toBeTruthy();
+    expect(screen.getByText('旧 1 · 新 1')).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId('diff-visual-page')).toBeTruthy());
+
+    cleanup();
+    renderPane({ oldSource: null, newSource: null, oldPageNumber: null, newPageNumber: null });
+    expect(screen.getByText('请选择两份 PDF 以进行对比。')).toBeTruthy();
+
+    cleanup();
+    renderPane({ oldPageNumber: null, newPageNumber: null });
+    await waitFor(() => expect(screen.getByText('此页面没有可渲染的一侧。')).toBeTruthy());
+  });
+
+  it('translates the one-sided notice and the load failure', async () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    getDocument.mockReturnValueOnce({
+      promise: Promise.reject(new Error('Invalid PDF structure')),
+    });
+
+    renderPane({ onRenderStats: vi.fn() });
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain(
+        '加载旧文档失败：Invalid PDF structure',
+      ),
+    );
+
+    cleanup();
+    stubDocument();
+    renderPane({ oldSource: null, oldPageNumber: null, oldSize: null, onRenderStats: vi.fn() });
+    expect(screen.getByText('此页面仅存在于新文档中——正在显示新页面。')).toBeTruthy();
+  });
+});
+
+describe('DiffVisualPane one-sided pages', () => {  it('shows the new page alone with an explanatory notice', async () => {
     const stats = vi.fn();
     renderPane({
       oldSource: null,

@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useI18nStore } from '../../i18n';
 import type { PageData, PageRotation, PdfWord } from '../../types/pdf-objects';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { useCursorStore } from '../../store/cursor-store';
@@ -260,6 +261,10 @@ const renderPage = (
   return { page, pdfDoc };
 };
 
+beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
+});
+
 describe('PdfPage page geometry', () => {
   beforeEach(() => {
     mocks.geometryProps.mockClear();
@@ -350,6 +355,25 @@ describe('PdfPage page geometry', () => {
       expect(viewport.rotation).toBe(rotation);
     },
   );
+
+  it('translates the page frame label and rotation notice, then switches back', async () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    renderPage(makePageData({ rotation: 90, width: 792, height: 612 }), {
+      rotation: 90,
+      cropBox: [0, 0, 612, 792],
+    });
+    await waitForGeometryViewport();
+
+    expect(screen.getByRole('group', { name: 'PDF 页面 1' })).toBeTruthy();
+    expect(screen.getByText('旋转页面：对象叠加层不可用')).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByRole('group', { name: 'PDF page 1' })).toBeTruthy();
+    expect(screen.getByText('Rotated page: object overlay unavailable')).toBeTruthy();
+  });
 
   it('keeps loading the annotation list on a rotated page without the overlay', async () => {
     const media = { x0: 0, y0: 0, x1: 612, y1: 792 };

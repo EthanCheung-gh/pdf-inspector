@@ -13,6 +13,11 @@
  * where an ignore region lands on that page.
  */
 import type { DiffBBox, DiffPageSize } from '../../shared/diff-types';
+import { DEFAULT_LOCALE } from '../i18n/locales';
+import { translate, type TranslateFn } from '../i18n/translate';
+
+/** English label for non-React callers; components pass their `useT()`. */
+const defaultTranslate: TranslateFn = (key, params) => translate(DEFAULT_LOCALE, key, params);
 
 /** Per-channel delta (0-255) above which a pixel counts as changed. */
 export const DEFAULT_PIXEL_THRESHOLD = 24;
@@ -349,8 +354,13 @@ export function formatPixelPercent(ratio: number): string {
 }
 
 /** One-line pixel summary: `1,234 / 484,704 px changed (0.25%)`. */
-export function formatPixelDiffStats(stats: PixelDiffStats): string {
-  const changed = groupDigits(stats.changedPixels);
-  const total = groupDigits(stats.totalPixels);
-  return `${changed} / ${total} px changed (${formatPixelPercent(stats.ratio)})`;
+export function formatPixelDiffStats(
+  stats: PixelDiffStats,
+  t: TranslateFn = defaultTranslate,
+): string {
+  return t('diff.visual.pixelStats', {
+    changed: groupDigits(stats.changedPixels),
+    total: groupDigits(stats.totalPixels),
+    percent: formatPixelPercent(stats.ratio),
+  });
 }

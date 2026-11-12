@@ -1,8 +1,13 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest';
+import React from 'react';
+import { act, cleanup, render, screen } from '@testing-library/react';
+import type { PageViewport } from 'pdfjs-dist';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { useI18nStore } from '../../i18n';
 import type { PageBoxes, PageRotation } from '../../types/pdf-objects';
 import {
   PAGE_BOX_STYLES,
+  PageGeometryOverlay,
   drawPageBoxes,
   pageBoxToViewportRect,
   type PageBoxCanvas,
@@ -79,6 +84,10 @@ const visibility = {
   art: false,
 };
 
+beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
+});
+
 describe('pageBoxToViewportRect', () => {
   it('flips the y axis for an unrotated page', () => {
     const rect = pageBoxToViewportRect(createViewport(0), boxes.crop!);
@@ -148,5 +157,30 @@ describe('drawPageBoxes', () => {
     drawPageBoxes(context, createViewport(0), null, visibility);
 
     expect(calls).toEqual([{ type: 'clearRect', args: [0, 0, PAGE_WIDTH, PAGE_HEIGHT] }]);
+  });
+});
+
+describe('PageGeometryOverlay label', () => {
+  afterEach(cleanup);
+
+  it('translates the overlay label and switches back to English', () => {
+    const viewport = createViewport(0) as unknown as PageViewport;
+    useI18nStore.setState({ locale: 'zh-CN' });
+
+    render(
+      React.createElement(PageGeometryOverlay, {
+        pageNum: 1,
+        viewport,
+        boxes,
+      }),
+    );
+
+    expect(screen.getByLabelText('PDF 第 1 页页面框')).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByLabelText('PDF page 1 page boxes')).toBeTruthy();
   });
 });

@@ -1,5 +1,6 @@
 import React from 'react';
 import type { PageViewport } from 'pdfjs-dist';
+import { useT } from '../../i18n';
 import { useWorkspaceStore, type PageUnits } from '../../store/workspace-store';
 import styles from './PageRuler.module.css';
 
@@ -156,6 +157,7 @@ interface PageRulerProps {
 }
 
 export const PageRuler: React.FC<PageRulerProps> = ({ width, height, viewport }) => {
+  const t = useT();
   const unit = useWorkspaceStore((state) => state.pageUnits);
   if (!viewport) return null;
 
@@ -164,7 +166,13 @@ export const PageRuler: React.FC<PageRulerProps> = ({ width, height, viewport })
   const vertical = computeRulerTicks({ length: height, pxPerPt, unit, edge: 'left' });
 
   return (
-    <div className={styles.rulers} aria-hidden="true" data-testid="page-ruler">
+    <div
+      className={styles.rulers}
+      role="img"
+      aria-label={t('ruler.aria', { unit })}
+      data-testid="page-ruler"
+    >
+      {/* pt/mm are unit symbols; the tick numbers need no translation. */}
       <div className={styles.corner}>{unit}</div>
       <div className={styles.topRuler} style={{ width }}>
         {horizontal.map((tick, index) => (

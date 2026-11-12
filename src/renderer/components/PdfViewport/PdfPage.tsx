@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useMemo, useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
+import { useT } from '../../i18n';
 import { useCursorStore } from '../../store/cursor-store';
 import { usePdfStore } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
@@ -22,6 +23,7 @@ interface PdfPageProps {
 }
 
 export const PdfPage: React.FC<PdfPageProps> = ({ pageNum, zoom, pdfDoc }) => {
+  const t = useT();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
   // CSS-pixel viewport (scale = zoom, no device pixel ratio). Page geometry,
@@ -156,6 +158,8 @@ export const PdfPage: React.FC<PdfPageProps> = ({ pageNum, zoom, pdfDoc }) => {
     <div
       className={styles.pageFrame}
       data-testid="pdf-page-frame"
+      role="group"
+      aria-label={t('viewport.page', { page: pageNum })}
       style={{ width: layoutWidth, height: layoutHeight }}
     >
       <div
@@ -198,7 +202,7 @@ export const PdfPage: React.FC<PdfPageProps> = ({ pageNum, zoom, pdfDoc }) => {
         {!isRotated && <InspectorHighlight pageNum={pageNum} />}
         {isRotated && (
           <div className={styles.rotationNotice} role="status">
-            Rotated page: object overlay unavailable
+            {t('viewport.rotatedNotice')}
           </div>
         )}
       </div>

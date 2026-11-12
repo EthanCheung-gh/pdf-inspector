@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useI18nStore } from '../../i18n';
 import { usePdfStore } from '../../store/pdf-store';
 import { pagesToJson } from '../../services/export-data';
 import type { PageData, PdfTable } from '../../types/pdf-objects';
@@ -56,6 +57,10 @@ const renderGrid = (value: PdfTable): HTMLElement => {
   render(React.createElement(TableGrid, { table: value, tableIndex: 0 }));
   return screen.getByRole('group', { name: /cells/i });
 };
+
+beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
+});
 
 describe('TableGrid', () => {
   beforeEach(() => {
@@ -297,5 +302,75 @@ describe('InspectTab table section', () => {
     fireEvent.mouseOver(screen.getByRole('button', { name: 'Cell row 1 column 2: b' }));
     // tableIndex points at the second table of the page, not the first one.
     expect(usePdfStore.getState().hoveredTableCell?.tableIndex).toBe(1);
+  });
+});
+
+describe('TableGrid localization', () => {
+  beforeEach(() => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    usePdfStore.setState({
+      pageData: null,
+      allObjects: [],
+      hoveredObject: null,
+      selectedObject: null,
+      hoveredTableCell: null,
+      selectedTableCell: null,
+    });
+  });
+
+  afterEach(cleanup);
+
+  it('translates the grid label, cell names, details and hint', () => {
+    render(
+      React.createElement(TableGrid, {
+        table: table({ cellBoxes: boxes }),
+        tableIndex: 0,
+      }),
+    );
+
+    expect(screen.getByRole('group', { name: '表格 1 单元格' })).toBeTruthy();
+    expect(screen.getByText('悬停单元格可预览，点击可选中。')).toBeTruthy();
+
+    fireEvent.mouseOver(screen.getByRole('button', { name: '单元格 第 1 行 第 1 列：a' }));
+
+    const details = screen.getByLabelText('选中的单元格');
+    expect(details.textContent).toContain('行1');
+    expect(details.textContent).toContain('列1');
+    expect(details.textContent).toContain('文本a');
+    expect(details.textContent).toContain('外框');
+  });
+
+  it('translates merged and missing-geometry labels', () => {
+    render(
+      React.createElement(TableGrid, {
+        table: table({
+          cellBoxes: [[boxes[0][0], null], [boxes[1][0], boxes[1][1]]],
+          cellSpans: [[{ rowSpan: 1, colSpan: 2 }, null], [null, null]],
+        }),
+        tableIndex: 0,
+      }),
+    );
+
+    expect(screen.getByRole('img', { name: '合并覆盖单元格 第 1 行 第 2 列' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /单元格 第 1 行 第 2 列/ })).toBeNull();
+
+    cleanup();
+
+    render(
+      React.createElement(TableGrid, {
+        table: table({ cellBoxes: [[boxes[0][0], null], [boxes[1][0], boxes[1][1]]] }),
+        tableIndex: 0,
+      }),
+    );
+
+    const missing = screen.getByRole('button', { name: '单元格 第 1 行 第 2 列：b' });
+    expect(missing.getAttribute('title')).toBe('单元格 第 1 行 第 2 列 · 无单元格边框');
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByRole('button', { name: 'Cell row 1 column 2: b' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'Table 1 cells' })).toBeTruthy();
   });
 });

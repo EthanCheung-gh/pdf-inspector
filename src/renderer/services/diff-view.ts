@@ -17,8 +17,17 @@ import {
   type DiffPageSize,
   type DiffSide,
 } from '../../shared/diff-types';
+import { DEFAULT_LOCALE } from '../i18n/locales';
+import { translate, type MessageKey, type TranslateFn } from '../i18n/translate';
 import { MAX_FIT_WIDTH_ZOOM, MIN_FIT_WIDTH_ZOOM } from './page-geometry';
 import { exportStemFromName } from './export-data';
+
+/**
+ * English labels for non-React callers and plain unit tests. Components pass
+ * their `useT()` translator instead, so a locale switch re-renders the diff
+ * without touching these helpers.
+ */
+const defaultTranslate: TranslateFn = (key, params) => translate(DEFAULT_LOCALE, key, params);
 
 export const DIFF_CHANGE_KINDS: readonly DiffChangeKind[] = [
   'added',
@@ -309,36 +318,45 @@ export function resolveDiffPageJump(value: string, totalPages: number): number |
 }
 
 /** Page label for the list/navigation bar; unpaired pages read as one-sided. */
-export function diffPageLabel(page: DiffPage): string {
+export function diffPageLabel(page: DiffPage, t: TranslateFn = defaultTranslate): string {
   if (page.oldIndex !== null && page.newIndex !== null) {
     return page.oldIndex === page.newIndex
-      ? `Page ${page.oldIndex}`
-      : `Old ${page.oldIndex} → New ${page.newIndex}`;
+      ? t('diff.page.same', { page: page.oldIndex })
+      : t('diff.page.pair', { old: page.oldIndex, new: page.newIndex });
   }
-  if (page.newIndex !== null) return `New page ${page.newIndex}`;
-  if (page.oldIndex !== null) return `Old page ${page.oldIndex}`;
-  return 'Unpaired page';
+  if (page.newIndex !== null) return t('diff.page.added', { page: page.newIndex });
+  if (page.oldIndex !== null) return t('diff.page.removed', { page: page.oldIndex });
+  return t('diff.page.unpaired');
 }
 
-export const DIFF_PAGE_STATUS_LABELS: Record<DiffPage['status'], string> = {
-  added: 'added',
-  removed: 'removed',
-  changed: 'changed',
-  unchanged: 'unchanged',
+const PAGE_STATUS_KEYS: Record<DiffPage['status'], MessageKey> = {
+  added: 'diff.page.status.added',
+  removed: 'diff.page.status.removed',
+  changed: 'diff.page.status.changed',
+  unchanged: 'diff.page.status.unchanged',
 };
 
+/** Translated badge text of a diff page status. */
+export const diffPageStatusLabel = (
+  status: DiffPage['status'],
+  t: TranslateFn = defaultTranslate,
+): string => t(PAGE_STATUS_KEYS[status]);
+
 /** One-line preview for a change row. */
-export function diffChangePreview(change: DiffChange): string {
+export function diffChangePreview(
+  change: DiffChange,
+  t: TranslateFn = defaultTranslate,
+): string {
   const text = (change.textNew ?? change.textOld ?? '').replace(/\s+/g, ' ').trim();
   if (text) return text;
 
-  if (isPageGeometryChange(change)) return 'Page size / rotation changed';
+  if (isPageGeometryChange(change)) return t('diff.change.geometry');
 
   const bbox = change.oldBBox ?? change.newBBox;
   if (bbox) {
     return `${bbox.x0.toFixed(0)}, ${bbox.y0.toFixed(0)} → ${bbox.x1.toFixed(0)}, ${bbox.y1.toFixed(0)}`;
   }
-  return '(no text)';
+  return t('diff.change.noText');
 }
 
 export const formatDiffBBox = (bbox: DiffBBox | null): string => {
@@ -353,19 +371,19 @@ export interface DiffDetailRow {
   newValue: string;
 }
 
-const DETAIL_LABELS: Record<string, string> = {
-  fontName: 'Font',
-  fontSize: 'Size',
-  color: 'Colour',
-  stroke: 'Stroke',
-  fill: 'Fill',
-  strokeWidth: 'Stroke width',
-  size: 'Size',
-  points: 'Points',
-  contentHash: 'Content hash',
-  pixelSize: 'Pixels',
-  rows: 'Rows',
-  cols: 'Columns',
+const DETAIL_LABEL_KEYS: Record<string, MessageKey> = {
+  fontName: 'diff.detail.label.font',
+  fontSize: 'diff.detail.label.size',
+  color: 'diff.detail.label.colour',
+  stroke: 'diff.detail.label.stroke',
+  fill: 'diff.detail.label.fill',
+  strokeWidth: 'diff.detail.label.strokeWidth',
+  size: 'diff.detail.label.size',
+  points: 'diff.detail.label.points',
+  contentHash: 'diff.detail.label.contentHash',
+  pixelSize: 'diff.detail.label.pixels',
+  rows: 'diff.detail.label.rows',
+  cols: 'diff.detail.label.columns',
 };
 
 interface DetailPair {
@@ -379,13 +397,13 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isPair = (value: unknown): value is DetailPair =>
   isRecord(value) && ('old' in value || 'new' in value);
 
-const formatValue = (value: unknown): string => {
+const formatValue = (value: unknown, t: TranslateFn): string => {
   if (value === undefined || value === null) return '—';
-  if (typeof value === 'string') return value === '' ? '(empty)' : value;
+  if (typeof value === 'string') return value === '' ? t('diff.detail.empty') : value;
   if (typeof value === 'number') {
     return Number.isFinite(value) ? String(Math.round(value * 1000) / 1000) : '—';
   }
-  if (typeof value === 'boolean') return value ? 'yes' : 'no';
+  if (typeof value === 'boolean') return value ? t('diff.detail.yes') : t('diff.detail.no');
   if (isRecord(value)) {
     const width = value.width;
     const height = value.height;
@@ -397,7 +415,7 @@ const formatValue = (value: unknown): string => {
     }
     return JSON.stringify(value);
   }
-  if (Array.isArray(value)) return value.map((item) => formatValue(item)).join(', ');
+  if (Array.isArray(value)) return value.map((item) => formatValue(item, t)).join(', ');
   return String(value);
 };
 
@@ -407,15 +425,24 @@ const formatValue = (value: unknown): string => {
  * `cellChanges` and `pageGeometry` are handled by their own renderers, so they
  * are excluded here.
  */
-export function describeDiffDetails(change: DiffChange): DiffDetailRow[] {
+export function describeDiffDetails(
+  change: DiffChange,
+  t: TranslateFn = defaultTranslate,
+): DiffDetailRow[] {
   const details = change.details ?? {};
   return Object.entries(details).reduce<DiffDetailRow[]>((rows, [key, value]) => {
     if (key === 'cellChanges' || key === 'pageGeometry') return rows;
-    const label = DETAIL_LABELS[key] ?? key;
+    const labelKey = DETAIL_LABEL_KEYS[key];
+    // Unknown detail keys are engine field names: show them verbatim.
+    const label = labelKey ? t(labelKey) : key;
     if (isPair(value)) {
-      rows.push({ label, oldValue: formatValue(value.old), newValue: formatValue(value.new) });
+      rows.push({
+        label,
+        oldValue: formatValue(value.old, t),
+        newValue: formatValue(value.new, t),
+      });
     } else {
-      rows.push({ label, oldValue: formatValue(value), newValue: '—' });
+      rows.push({ label, oldValue: formatValue(value, t), newValue: '—' });
     }
     return rows;
   }, []);
@@ -447,16 +474,29 @@ export function tableCellChanges(change: DiffChange): TableCellChange[] {
 }
 
 /** Human summary of a page size/rotation change, empty for other changes. */
-export function pageGeometrySummary(change: DiffChange): string[] {
+export function pageGeometrySummary(
+  change: DiffChange,
+  t: TranslateFn = defaultTranslate,
+): string[] {
   const geometry = change.details?.pageGeometry;
   if (!isRecord(geometry)) return [];
 
   const lines: string[] = [];
   if (isPair(geometry.size)) {
-    lines.push(`Page size ${formatValue(geometry.size.old)} → ${formatValue(geometry.size.new)} pt`);
+    lines.push(
+      t('diff.geometry.size', {
+        old: formatValue(geometry.size.old, t),
+        new: formatValue(geometry.size.new, t),
+      }),
+    );
   }
   if (isPair(geometry.rotation)) {
-    lines.push(`Rotation ${formatValue(geometry.rotation.old)}° → ${formatValue(geometry.rotation.new)}°`);
+    lines.push(
+      t('diff.geometry.rotation', {
+        old: formatValue(geometry.rotation.old, t),
+        new: formatValue(geometry.rotation.new, t),
+      }),
+    );
   }
   return lines;
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { useT, type MessageKey } from "../../i18n";
 import { ipc } from "../../services/ipc-client";
 import { useAnnotationStore } from "../../store/annotation-store";
 import { usePdfStore } from "../../store/pdf-store";
@@ -38,6 +39,8 @@ const isTable = (object: PdfObject): object is PdfTable => object.type === "tabl
 
 const formatNumber = (value: number): string =>
   Number.isInteger(value) ? value.toString() : value.toFixed(2);
+
+type ImageError = { kind: "raw"; message: string } | { kind: "key"; key: MessageKey };
 
 const imageMimeTypes = new Set(["png", "jpeg", "gif", "webp"]);
 
@@ -84,8 +87,11 @@ export const InspectTab = (): JSX.Element => {
   const image = object && isImage(object) ? object : null;
   const imageStreamId = image?.stream_id;
   const imageFormat = image?.format;
+  const t = useT();
   const [imageData, setImageData] = useState<{ base64: string; format: string } | null>(null);
-  const [imageError, setImageError] = useState<string | null>(null);
+  // A sidecar error is shown verbatim; our own fallbacks stay as keys so a
+  // locale switch re-translates them instead of freezing the old language.
+  const [imageError, setImageError] = useState<ImageError | null>(null);
   const [imageLoading, setImageLoading] = useState(false);
 
   useEffect(() => {
@@ -108,7 +114,11 @@ export const InspectTab = (): JSX.Element => {
         if (cancelled) return;
 
         if (result.error || !result.base64) {
-          setImageError(result.error ?? "Image data is unavailable.");
+          setImageError(
+            result.error
+              ? { kind: "raw", message: result.error }
+              : { kind: "key", key: "inspect.image.unavailable" },
+          );
           return;
         }
 
@@ -118,7 +128,11 @@ export const InspectTab = (): JSX.Element => {
         });
       } catch (error) {
         if (!cancelled) {
-          setImageError(error instanceof Error ? error.message : "Unable to load image preview.");
+          setImageError(
+            error instanceof Error
+              ? { kind: "raw", message: error.message }
+              : { kind: "key", key: "inspect.image.loadFailed" },
+          );
         }
       } finally {
         if (!cancelled) setImageLoading(false);
@@ -144,36 +158,35 @@ export const InspectTab = (): JSX.Element => {
       {annotation !== null && <AnnotationDetails annotation={annotation} />}
 
       {annotation === null && !object && (
-        <div className={styles.emptyState}>
-          Hover over or select an object to inspect its properties.
-        </div>
+        <div className={styles.emptyState}>{t("inspect.empty")}</div>
       )}
 
       {annotation === null && object && (
         <>
-          <Section title="Object">
-            <Row label="Type">
+          <Section title={t("inspect.section.object")}>
+            <Row label={t("inspect.row.type")}>
               <span className={`${styles.badge} ${badgeClassNames[object.type]}`}>{object.type}</span>
             </Row>
-            <Row label="Page">{object.page}</Row>
-            {isTextObject(object) && <Row label="Text">{object.text}</Row>}
+            <Row label={t("inspect.row.page")}>{object.page}</Row>
+            {isTextObject(object) && <Row label={t("inspect.row.text")}>{object.text}</Row>}
           </Section>
 
-          <Section title="Position">
+          <Section title={t("inspect.section.position")}>
+            {/* Coordinate names are PDF data, not copy. */}
             <Row label="x0">{formatNumber(object.x0)}</Row>
             <Row label="y0">{formatNumber(object.y0)}</Row>
             <Row label="x1">{formatNumber(object.x1)}</Row>
             <Row label="y1">{formatNumber(object.y1)}</Row>
-            <Row label="Width">{formatNumber(width)}</Row>
-            <Row label="Height">{formatNumber(height)}</Row>
+            <Row label={t("inspect.row.width")}>{formatNumber(width)}</Row>
+            <Row label={t("inspect.row.height")}>{formatNumber(height)}</Row>
           </Section>
 
           {hasFontInfo(object) && (
-            <Section title="Font">
-              <Row label="Name">{object.fontname}</Row>
-              <Row label="Size">{formatNumber(object.size)}</Row>
+            <Section title={t("inspect.section.font")}>
+              <Row label={t("inspect.row.name")}>{object.fontname}</Row>
+              <Row label={t("inspect.row.size")}>{formatNumber(object.size)}</Row>
               {object.color && (
-                <Row label="Color">
+                <Row label={t("inspect.row.color")}>
                   <span className={styles.colorValue}>
                     <span className={styles.colorSwatch} style={{ backgroundColor: object.color }} />
                     {object.color}
@@ -184,29 +197,30 @@ export const InspectTab = (): JSX.Element => {
           )}
 
           {isTable(object) && (
-            <Section title="Table">
-              <Row label="Rows">{object.rows}</Row>
-              <Row label="Columns">{object.cols}</Row>
+            <Section title={t("inspect.section.table")}>
+              <Row label={t("inspect.row.rows")}>{object.rows}</Row>
+              <Row label={t("inspect.row.columns")}>{object.cols}</Row>
               {tableIndex >= 0 && <TableGrid table={object} tableIndex={tableIndex} />}
             </Section>
           )}
 
           {isImage(object) && (
-            <Section title="Image">
-              <Row label="Width">{object.width}</Row>
-              <Row label="Height">{object.height}</Row>
-              <Row label="Format">{object.format}</Row>
-              <Row label="Preview">
-                {imageLoading && "Loading image preview..."}
-                {imageError && imageError}
+            <Section title={t("inspect.section.image")}>
+              <Row label={t("inspect.row.width")}>{object.width}</Row>
+              <Row label={t("inspect.row.height")}>{object.height}</Row>
+              <Row label={t("inspect.row.format")}>{object.format}</Row>
+              <Row label={t("inspect.row.preview")}>
+                {imageLoading && t("inspect.image.loading")}
+                {imageError &&
+                  (imageError.kind === "raw" ? imageError.message : t(imageError.key))}
                 {imageData && (
                   <img
                     src={`data:image/${imageData.format};base64,${imageData.base64}`}
-                    alt="PDF image preview"
+                    alt={t("inspect.image.alt")}
                     style={{ display: "block", maxWidth: "100%", maxHeight: 240, objectFit: "contain" }}
                     onError={() => {
                       setImageData(null);
-                      setImageError("Unable to display image preview.");
+                      setImageError({ kind: "key", key: "inspect.image.displayFailed" });
                     }}
                   />
                 )}
@@ -214,7 +228,7 @@ export const InspectTab = (): JSX.Element => {
             </Section>
           )}
 
-          <Section title="Raw JSON">
+          <Section title={t("inspect.section.rawJson")}>
             <pre className={styles.json}>{JSON.stringify(object, null, 2)}</pre>
           </Section>
         </>

@@ -6,6 +6,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SearchResultsPanel } from './SearchResultsPanel';
+import { useI18nStore } from '../../i18n/store';
 import { usePdfStore } from '../../store/pdf-store';
 import { DEFAULT_SEARCH_OPTIONS, MAX_SEARCH_MATCHES } from '../../services/pdf-search';
 
@@ -43,6 +44,10 @@ const panelCss = (): string =>
     join(process.cwd(), 'src/renderer/components/Toolbar/SearchResultsPanel.module.css'),
     'utf8',
   );
+
+beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
+});
 
 describe('SearchResultsPanel', () => {
   beforeEach(() => {
@@ -270,5 +275,29 @@ describe('SearchResultsPanel', () => {
     expect(rule('.panel')).toContain('z-index:');
     expect(rule('.body')).toMatch(/overflow-y:\s*auto/);
     expect(rule('.row')).toContain('content-visibility: auto');
+  });
+
+  it('translates the panel chrome, options, rows and empty state', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    renderPanel();
+
+    expect(screen.getByRole('dialog', { name: '搜索结果' })).toBeTruthy();
+    expect(screen.getByText('结果')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '区分大小写' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '全词匹配' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '正则表达式' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '关闭结果' })).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: /第 \d+ 页/ })).toHaveLength(3);
+
+    cleanup();
+    usePdfStore.setState({ searchMatches: [], currentMatchIndex: -1 });
+    renderPanel();
+    expect(screen.getByText('无匹配结果')).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+    expect(screen.getByRole('dialog', { name: 'Search results' })).toBeTruthy();
+    expect(screen.getByText('No matches')).toBeTruthy();
   });
 });

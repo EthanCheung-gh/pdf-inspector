@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { translate, type TranslateFn } from '../../i18n/translate';
 import {
   DIFF_BOX_COLORS,
   buildDiffPageGroups,
@@ -11,6 +12,7 @@ import {
   diffBoxRects,
   diffChangePreview,
   diffPageLabel,
+  diffPageStatusLabel,
   firstInterestingPageIndex,
   isDiffResultEmpty,
   isPageGeometryChange,
@@ -257,6 +259,32 @@ describe('labels and previews', () => {
     expect(diffChangePreview(makeChange({ textOld: null, textNew: null }))).toBe(
       '10, 700 → 60, 712',
     );
+  });
+
+  it('renders labels and previews through a supplied translator', () => {
+    const tZh: TranslateFn = (key, params) => translate('zh-CN', key, params);
+
+    expect(diffPageLabel(makePage(), tZh)).toBe('第 1 页');
+    expect(diffPageLabel(makePage({ oldIndex: 2, newIndex: 3 }), tZh)).toBe('旧 2 → 新 3');
+    expect(diffPageLabel(makePage({ oldIndex: null, newIndex: 4 }), tZh)).toBe('新增页 4');
+    expect(diffPageStatusLabel('changed', tZh)).toBe('已变更');
+    expect(diffChangePreview(makeChange({ textOld: null, textNew: null }), tZh)).toBe(
+      '10, 700 → 60, 712',
+    );
+    expect(
+      describeDiffDetails(
+        makeChange({ details: { fontName: { old: 'Helvetica', new: 'Times' } } }),
+        tZh,
+      ),
+    ).toEqual([{ label: '字体', oldValue: 'Helvetica', newValue: 'Times' }]);
+    expect(
+      pageGeometrySummary(
+        makeChange({
+          details: { pageGeometry: { rotation: { old: 0, new: 90 } } },
+        }),
+        tZh,
+      ),
+    ).toEqual(['旋转 0° → 90°']);
   });
 });
 

@@ -10,6 +10,7 @@ import {
   type DiffSource,
 } from '../../../shared/diff-types';
 import { pathToFileUrl } from '../../../shared/path-utils';
+import { useT } from '../../i18n';
 import { diffBoxRects, projectDiffBBox, type DiffBoxSpec } from '../../services/diff-view';
 import { createMediaViewport } from '../../services/page-viewport';
 import { ensurePdfWorker } from '../../services/pdf-worker';
@@ -175,9 +176,13 @@ export const DiffPdfPane: React.FC<DiffPdfPaneProps> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const t = useT();
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [status, setStatus] = useState<LoadStatus>('idle');
+  /** Raw PDF.js detail; the translated label is added at render time. */
   const [error, setError] = useState<string | null>(null);
+  /** A source this runtime cannot address (no readable URL). */
+  const [unsupported, setUnsupported] = useState(false);
   const [viewport, setViewport] = useState<PageViewport | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [rotation, setRotation] = useState(0);
@@ -190,6 +195,7 @@ export const DiffPdfPane: React.FC<DiffPdfPaneProps> = ({
     setDoc(null);
     setViewport(null);
     setError(null);
+    setUnsupported(false);
     setRenderError(null);
     setRotation(0);
 
@@ -201,7 +207,7 @@ export const DiffPdfPane: React.FC<DiffPdfPaneProps> = ({
     const url = sourceUrl(source);
     if (!url) {
       setStatus('error');
-      setError('This document cannot be displayed in the browser');
+      setUnsupported(true);
       return;
     }
     const isObjectUrl = isFileSource(source);
@@ -225,7 +231,7 @@ export const DiffPdfPane: React.FC<DiffPdfPaneProps> = ({
       .catch((err: unknown) => {
         if (cancelled) return;
         setStatus('error');
-        setError(err instanceof Error ? err.message : 'Failed to load the PDF');
+        setError(err instanceof Error ? err.message : null);
       });
 
     return () => {
@@ -276,7 +282,7 @@ export const DiffPdfPane: React.FC<DiffPdfPaneProps> = ({
         await task.promise;
       } catch (err) {
         if (cancelled || isRenderCancelled(err)) return;
-        setRenderError(err instanceof Error ? err.message : 'Failed to render the page');
+        setRenderError(err instanceof Error ? err.message : '');
       }
     };
 
@@ -501,11 +507,11 @@ export const DiffPdfPane: React.FC<DiffPdfPaneProps> = ({
   const placeholderHeight = pageSize ? pageSize.height * zoom : 0;
 
   return (
-    <section className={styles.pane} aria-label={`${label} pane`} data-side={side}>
+    <section className={styles.pane} aria-label={t('diff.pane.aria', { label })} data-side={side}>
       <header className={styles.header}>
         <span className={styles.badge}>{label}</span>
         <span className={styles.pageInfo}>
-          {hasPage ? `Page ${pageNumber}` : 'No page'}
+          {hasPage ? t('diff.page.same', { page: pageNumber }) : t('diff.pane.noPage')}
           {pageSize ? ` · ${Math.round(pageSize.width)} × ${Math.round(pageSize.height)} pt` : ''}
         </span>
       </header>
@@ -513,11 +519,13 @@ export const DiffPdfPane: React.FC<DiffPdfPaneProps> = ({
       <div className={styles.scroll} ref={scrollRef}>
         {!source && <p className={styles.state}>{emptyMessage}</p>}
 
-        {source && status === 'loading' && <p className={styles.state}>Loading document…</p>}
+        {source && status === 'loading' && <p className={styles.state}>{t('diff.pane.loading')}</p>}
 
         {source && status === 'error' && (
           <p className={styles.error} role="alert">
-            {error ?? 'Failed to load the PDF'}
+            {unsupported
+              ? t('diff.pane.unsupported')
+              : error ?? t('diff.pane.loadFailed')}
           </p>
         )}
 
@@ -557,14 +565,12 @@ export const DiffPdfPane: React.FC<DiffPdfPaneProps> = ({
             />
             {isRotated && (
               <div className={styles.notice} role="status">
-                {regionMode
-                  ? 'Rotated page: regions unavailable'
-                  : 'Rotated page: diff boxes unavailable'}
+                {regionMode ? t('diff.pane.rotatedRegions') : t('diff.pane.rotatedBoxes')}
               </div>
             )}
-            {renderError && (
+            {renderError !== null && (
               <div className={styles.notice} role="alert">
-                {renderError}
+                {renderError || t('diff.pane.renderFailed')}
               </div>
             )}
           </div>

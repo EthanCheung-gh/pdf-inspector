@@ -2,6 +2,7 @@
 import React from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useI18nStore } from '../../i18n';
 import type { BBox } from '../../services/object-filter';
 import { filterByRegion } from '../../services/object-filter';
 import type { PdfChar, PdfObject, PdfRect, PdfWord } from '../../types/pdf-objects';
@@ -20,6 +21,10 @@ vi.mock('../../services/ipc-client', () => ({
 }));
 
 import { InspectorPanel } from './InspectorPanel';
+
+beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
+});
 
 const bbox: BBox = { x0: 0, y0: 0, x1: 10, y1: 10 };
 
@@ -539,5 +544,69 @@ describe('InspectorPanel annotation precedence', () => {
     const panel = screen.getByRole('tabpanel', { name: 'Inspect' });
     expect(within(panel).getByText('Position')).toBeTruthy();
     expect(within(panel).queryByText('Annotation')).toBeNull();
+  });
+});
+
+describe('InspectorPanel localization', () => {
+  afterEach(cleanup);
+
+  beforeEach(() => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    useWorkspaceStore.setState({ inspectorTab: 'inspect', rightCollapsed: false });
+    useAnnotationStore.getState().setSelected(null);
+    usePdfStore.setState({
+      filePath: '/tmp/doc.pdf',
+      currentPage: 1,
+      pageData: null,
+      allObjects: exportObjects,
+      hoveredObject: null,
+      selectedObject: null,
+      filterCriteria: {},
+      subset: null,
+      isLoading: false,
+      error: null,
+    });
+  });
+
+  it('translates the panel landmarks, tab labels and empty prompt', () => {
+    render(React.createElement(InspectorPanel));
+
+    expect(screen.getByLabelText('对象检查器')).toBeTruthy();
+    expect(screen.getByRole('tablist', { name: '检查器标签页' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '检查' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: '筛选' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '结果' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '页面' })).toBeTruthy();
+    expect(screen.getByText('悬停或选择一个对象以查看其属性。')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '隐藏右侧面板' })).toBeTruthy();
+  });
+
+  it('translates tab counts and object detail labels, then switches back to English', () => {
+    usePdfStore.setState({
+      selectedObject: exportWord,
+      filterCriteria: { fontname: 'F1' },
+      subset: { source: 'filter', mode: 'intersect', objects: [exportWord] },
+    });
+
+    render(React.createElement(InspectorPanel));
+
+    const panel = screen.getByRole('tabpanel', { name: '检查' });
+    expect(within(panel).getByText('对象')).toBeTruthy();
+    expect(within(panel).getByText('位置')).toBeTruthy();
+    expect(within(panel).getByText('文本')).toBeTruthy();
+    expect(within(panel).getByText('字号')).toBeTruthy();
+    expect(within(panel).getByText('hello')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '筛选（1）' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '结果（1）' })).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    const english = screen.getByRole('tabpanel', { name: 'Inspect' });
+    expect(within(english).getByText('Position')).toBeTruthy();
+    expect(within(english).getByText('Text')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Filter (1)' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Results (1)' })).toBeTruthy();
   });
 });

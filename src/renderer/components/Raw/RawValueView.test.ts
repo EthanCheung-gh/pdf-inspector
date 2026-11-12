@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { translate, useI18nStore, type TranslateFn } from '../../i18n';
 import type { RawValue } from '../../types/raw-pdf';
 import {
   RAW_VALUE_MAX_ENTRIES,
@@ -11,6 +12,13 @@ import {
   rawValueSummary,
   refKey,
 } from './RawValueView';
+
+/** Simplified Chinese translator for the pure helper tests. */
+const tZh: TranslateFn = (key, params) => translate('zh-CN', key, params);
+
+beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
+});
 
 afterEach(cleanup);
 
@@ -156,5 +164,46 @@ describe('RawValueView streams and refs', () => {
 
     expect(screen.queryByRole('button', { name: '15 0 R' })).toBeNull();
     expect(screen.getByText('15 0 R')).toBeTruthy();
+  });
+});
+
+describe('RawValueView localization', () => {
+  const dict: RawValue = {
+    kind: 'dict',
+    truncated: true,
+    entries: [{ key: 'Type', value: { kind: 'name', value: 'Catalog' } }],
+  };
+
+  const stream: RawValue = {
+    kind: 'stream',
+    dict: { kind: 'dict', truncated: false, entries: [] },
+    length: null,
+    filters: [],
+    preview: null,
+    truncated: false,
+  };
+
+  it('translates the value summaries through the translator', () => {
+    expect(rawValueSummary(dict)).toBe('dict · 1 entry (truncated)');
+    expect(rawValueSummary(dict, tZh)).toBe('字典 · 1 个条目（已截断）');
+    expect(rawValueSummary(stream)).toBe('stream · length unknown · no filter');
+    expect(rawValueSummary(stream, tZh)).toBe('流 · 长度未知 · 无过滤器');
+    expect(rawValueSummary({ kind: 'ref', ref: { objectNumber: 3, generation: 0 } }, tZh)).toBe(
+      '3 0 R',
+    );
+  });
+
+  it('translates the rendered metadata and notices', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    view(stream);
+
+    expect(screen.getByLabelText('流元数据')).toBeTruthy();
+    expect(screen.getByText('长度')).toBeTruthy();
+    expect(screen.getByText('过滤器')).toBeTruthy();
+    expect(screen.getByText('预览')).toBeTruthy();
+    expect(screen.getByTestId('raw-value-stream-binary').textContent).toBe(
+      '二进制流——仅显示元数据，从不显示字节。',
+    );
+    expect(screen.getByText('字典')).toBeTruthy();
   });
 });

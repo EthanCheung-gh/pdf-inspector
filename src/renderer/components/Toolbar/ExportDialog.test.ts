@@ -2,6 +2,7 @@
 import React from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useI18nStore } from '../../i18n/store';
 import { usePdfStore } from '../../store/pdf-store';
 import { listCommands } from '../../services/command-registry';
 import type { SaveFileRequest } from '../../types/ipc-protocol';
@@ -51,6 +52,10 @@ function makePage(page: number): PageData {
 }
 
 const pageOne = makePage(1);
+
+beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
+});
 
 describe('ExportDialog', () => {
   beforeEach(() => {
@@ -365,6 +370,28 @@ describe('ExportDialog', () => {
     expect(checkboxes).toHaveLength(7);
     checkboxes.forEach((box) => expect((box as HTMLInputElement).checked).toBe(true));
     expect(exportButton(dialog).disabled).toBe(false);
+  });
+
+  it('translates the dialog chrome, then restores English', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    render(React.createElement(ExportDialog));
+
+    fireEvent.click(screen.getByRole('button', { name: '导出' }));
+    const dialog = screen.getByRole('dialog', { name: '导出' });
+
+    expect(within(dialog).getByRole('radio', { name: '当前页' })).toBeTruthy();
+    expect(within(dialog).getByRole('radio', { name: '整个文档' })).toBeTruthy();
+    expect(within(dialog).getByLabelText('文件名')).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: '取消' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: '导出' })).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(within(dialog).getByRole('heading', { name: 'Export' })).toBeTruthy();
+    expect(within(dialog).getByRole('radio', { name: 'Current page' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeTruthy();
   });
 });
 

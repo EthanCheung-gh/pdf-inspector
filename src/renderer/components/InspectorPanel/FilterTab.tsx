@@ -1,10 +1,22 @@
 import type { ReactNode } from "react";
+import { useT, type MessageKey } from "../../i18n";
 import { usePdfStore } from "../../store/pdf-store";
 import type { FilterCriteria } from "../../services/object-filter";
 import type { PdfObjectType } from "../../types/pdf-objects";
 import styles from "./InspectorPanel.module.css";
 
 const OBJECT_TYPES: PdfObjectType[] = ["char", "word", "rect", "line", "curve", "image", "table"];
+
+/** Display names only; the checkbox value keeps the object type identifier. */
+const OBJECT_TYPE_LABEL_KEYS: Record<PdfObjectType, MessageKey> = {
+  char: "filter.type.char",
+  word: "filter.type.word",
+  rect: "filter.type.rect",
+  line: "filter.type.line",
+  curve: "filter.type.curve",
+  image: "filter.type.image",
+  table: "filter.type.table",
+};
 
 interface RowProps {
   label: string;
@@ -19,6 +31,7 @@ const Row = ({ label, children }: RowProps): JSX.Element => (
 );
 
 export const FilterTab = (): JSX.Element => {
+  const t = useT();
   const allObjects = usePdfStore((state) => state.allObjects);
   const filterCriteria = usePdfStore((state) => state.filterCriteria);
   const setFilterCriteria = usePdfStore((state) => state.setFilterCriteria);
@@ -51,30 +64,31 @@ export const FilterTab = (): JSX.Element => {
   return (
     <div className={styles.content}>
       <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>Filter</h3>
+        <h3 className={styles.sectionTitle}>{t("filter.title")}</h3>
         <div className={styles.sectionContent}>
           <div className={styles.filterTypes}>
             {OBJECT_TYPES.map((type) => (
               <label key={type} className={styles.checkLabel}>
                 <input
                   type="checkbox"
+                  value={type}
                   checked={filterCriteria.types?.includes(type) ?? false}
                   onChange={() => toggleType(type)}
                 />
-                {type}
+                {t(OBJECT_TYPE_LABEL_KEYS[type])}
               </label>
             ))}
           </div>
-          <Row label="Font">
+          <Row label={t("filter.font")}>
             <select
               className={styles.select}
-              aria-label="Font"
+              aria-label={t("filter.font")}
               value={filterCriteria.fontname ?? ""}
               onChange={(event) =>
                 patchCriteria({ fontname: event.target.value || undefined })
               }
             >
-              <option value="">Any font</option>
+              <option value="">{t("filter.anyFont")}</option>
               {fontnames.map((name) => (
                 <option key={name} value={name}>
                   {name}
@@ -82,34 +96,34 @@ export const FilterTab = (): JSX.Element => {
               ))}
             </select>
           </Row>
-          <Row label="Size">
+          <Row label={t("filter.size")}>
             <span className={styles.sizeInputs}>
               <input
                 className={styles.numberInput}
                 type="number"
-                placeholder="Min"
-                aria-label="Minimum font size"
+                placeholder={t("filter.min")}
+                aria-label={t("filter.minAria")}
                 value={filterCriteria.sizeMin ?? ""}
                 onChange={(event) => patchCriteria({ sizeMin: parseSize(event.target.value) })}
               />
               <input
                 className={styles.numberInput}
                 type="number"
-                placeholder="Max"
-                aria-label="Maximum font size"
+                placeholder={t("filter.max")}
+                aria-label={t("filter.maxAria")}
                 value={filterCriteria.sizeMax ?? ""}
                 onChange={(event) => patchCriteria({ sizeMax: parseSize(event.target.value) })}
               />
             </span>
           </Row>
-          <Row label="Color">
+          <Row label={t("filter.color")}>
             <select
               className={styles.select}
-              aria-label="Color"
+              aria-label={t("filter.color")}
               value={filterCriteria.color ?? ""}
               onChange={(event) => patchCriteria({ color: event.target.value || undefined })}
             >
-              <option value="">Any color</option>
+              <option value="">{t("filter.anyColor")}</option>
               {colorOptions.map((color) => (
                 <option key={color} value={color}>
                   {color}
@@ -119,7 +133,7 @@ export const FilterTab = (): JSX.Element => {
           </Row>
           <div className={styles.buttonRow}>
             <button type="button" className={styles.button} onClick={() => setFilterCriteria({})}>
-              Clear filter
+              {t("filter.clear")}
             </button>
           </div>
         </div>

@@ -4,14 +4,19 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildAuditReport, type AuditFinding } from '../../../shared/audit-types';
 import type { PageData, PdfWord } from '../../types/pdf-objects';
+import { translate, useI18nStore, type TranslateFn } from '../../i18n';
 import { useAuditStore } from '../../store/audit-store';
 import { useCursorStore } from '../../store/cursor-store';
 import { useDiffStore } from '../../store/diff-store';
 import { usePdfStore } from '../../store/pdf-store';
 import { useRawStore } from '../../store/raw-store';
+import { makeSampleResult } from '../../services/__tests__/diff-fixtures';
 import type { RawDocument, RawPageContent } from '../../types/raw-pdf';
 
 import { StatusBar, formatRawStatus, plural } from './StatusBar';
+
+/** Simplified Chinese translator for the raw status helper. */
+const translateZh: TranslateFn = (key, params) => translate('zh-CN', key, params);
 
 const selectedWord: PdfWord = {
   type: 'word',
@@ -37,6 +42,10 @@ const pageData: PageData = {
   images: [],
   tables: [],
 };
+
+beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
+});
 
 describe('StatusBar', () => {
   afterEach(cleanup);
@@ -191,6 +200,86 @@ describe('StatusBar', () => {
 
     expect(screen.queryByRole('group', { name: /^Cursor / })).toBeNull();
   });
+
+  it('translates the document summary, loading state and sidecar label', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    render(React.createElement(StatusBar));
+
+    expect(screen.getByLabelText('应用状态')).toBeTruthy();
+    expect(screen.getByText('第 3/12 页 · 0 个对象')).toBeTruthy();
+    expect(screen.getByText('Sidecar 已连接')).toBeTruthy();
+
+    act(() => {
+      usePdfStore.setState({ isLoading: true });
+    });
+
+    expect(screen.getByText('加载中…')).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByLabelText('Application status')).toBeTruthy();
+    expect(screen.getByText('Sidecar connected')).toBeTruthy();
+  });
+});
+
+describe('StatusBar diff mode', () => {
+  afterEach(() => {
+    cleanup();
+    // Diff wins the branch over Audit/Raw, so a leftover result would hide
+    // every later mode in this file.
+    useDiffStore.getState().reset();
+  });
+
+  const enterDiff = (overrides: Partial<ReturnType<typeof useDiffStore.getState>> = {}): void => {
+    useAuditStore.getState().reset();
+    useRawStore.getState().reset();
+    useDiffStore.setState({
+      active: true,
+      result: makeSampleResult(),
+      pageIndex: 0,
+      filter: { kind: 'all', type: 'all' },
+      loading: false,
+      error: null,
+      ...overrides,
+    });
+  };
+
+  it('describes the comparison instead of the Inspect document', () => {
+    enterDiff();
+
+    render(React.createElement(StatusBar));
+
+    expect(screen.getByText('Diff page 1/3 · 4 changes')).toBeTruthy();
+    expect(screen.getByText('2 vs 2 pages')).toBeTruthy();
+    expect(screen.queryByText(/^Page 3\/12/)).toBeNull();
+  });
+
+  it('translates the comparing, page and page-count lines', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    enterDiff();
+
+    render(React.createElement(StatusBar));
+
+    expect(screen.getByText('对比第 1/3 页 · 4 处变更')).toBeTruthy();
+    expect(screen.getByText('2 对 2 页')).toBeTruthy();
+
+    act(() => {
+      useDiffStore.setState({ loading: true });
+    });
+    expect(screen.getByText('对比：正在比较文档…')).toBeTruthy();
+
+    act(() => {
+      useDiffStore.setState({ loading: false, result: null });
+    });
+    expect(screen.getByText('对比：尚无比较结果')).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+    expect(screen.getByText('Diff: no comparison yet')).toBeTruthy();
+  });
 });
 
 describe('StatusBar audit mode', () => {
@@ -324,6 +413,102 @@ describe('StatusBar audit mode', () => {
 
     expect(screen.getByTestId('status-audit').textContent).toBe('Audit: no report yet');
     expect(screen.getByRole('alert').textContent).toBe('Audit failed: Sidecar is not running');
+  });
+
+  it('translates the audit summary, progress and failure lines', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    enterAudit();
+
+    render(React.createElement(StatusBar));
+
+    expect(screen.getByTestId('status-audit').textContent).toBe(
+      '审计：1 个错误 · 2 个警告 · 3 条信息',
+    );
+
+    act(() => {
+      useAuditStore.setState({ report: null, loading: true, progress: { done: 10, total: 25 } });
+    });
+    expect(screen.getByTestId('status-audit').textContent).toBe('审计：10/25 页');
+
+    act(() => {
+      useAuditStore.setState({ progress: null, loading: false, error: 'Sidecar is not running' });
+    });
+    expect(screen.getByTestId('status-audit').textContent).toBe('审计：尚无报告');
+    expect(screen.getByRole('alert').textContent).toBe('审计失败：Sidecar is not running');
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+    expect(screen.getByTestId('status-audit').textContent).toBe('Audit: no report yet');
+  });
+});
+
+describe('StatusBar Inspect localization', () => {
+  afterEach(cleanup);
+
+  beforeEach(() => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    usePdfStore.setState({
+      isLoading: false,
+      currentPage: 3,
+      pageCount: 12,
+      allObjects: [],
+      sidecarRunning: true,
+      exportProgress: null,
+      error: null,
+      fontProgress: null,
+      filterCriteria: {},
+      selectedObject: null,
+      pageData: null,
+    });
+    useCursorStore.setState({ cursorPdfPoint: null });
+    useAuditStore.getState().reset();
+    useDiffStore.getState().reset();
+    useRawStore.getState().reset();
+  });
+
+  it('translates the document summary, geometry, cursor, selection, filter and error', () => {
+    usePdfStore.setState({
+      pageData,
+      selectedObject: selectedWord,
+      error: 'sidecar exploded',
+      filterCriteria: {
+        fontname: 'Inter',
+        sizeMin: 12,
+        sizeMax: 18,
+        color: '#000000',
+        types: ['word', 'rect'],
+      },
+    });
+    useCursorStore.setState({ cursorPdfPoint: { x: 123.44, y: 56.7 } });
+
+    render(React.createElement(StatusBar));
+
+    expect(screen.getByText('第 3/12 页 · 0 个对象')).toBeTruthy();
+    expect(screen.getByText('612 × 792 pt · 旋转 90°')).toBeTruthy();
+    expect(screen.getByRole('group', { name: '光标 123.4, 56.7 pt' })).toBeTruthy();
+    expect(
+      screen.getByRole('group', { name: '已选中第 3 页的 word' }),
+    ).toBeTruthy();
+    const filters = screen.getByRole('group', {
+      name: '当前筛选：Inter · 12–18pt · #000000 · 2 种类型',
+    });
+    expect(filters.textContent).toContain('筛选：');
+    expect(filters.textContent).toContain('2 种类型');
+    expect(screen.getByRole('alert').textContent).toBe('错误：sidecar exploded');
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByText('Page 3/12 · 0 objects')).toBeTruthy();
+    expect(screen.getByText('612 × 792 pt · rot 90°')).toBeTruthy();
+    expect(
+      screen.getByRole('group', {
+        name: 'Active filters: Inter · 12–18pt · #000000 · 2 types',
+      }),
+    ).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toBe('Error: sidecar exploded');
   });
 });
 
@@ -481,5 +666,67 @@ describe('StatusBar raw mode', () => {
         loading: false,
       }),
     ).toBe('Raw: page 2/5 · 3 operators');
+  });
+
+  it('translates the raw page, object and missing-document lines', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    enterRaw({ tab: 'content', content, contentPage: 2 });
+    render(React.createElement(StatusBar));
+
+    expect(screen.getByTestId('status-raw').textContent).toBe('原始数据：第 2/5 页 · 3 个操作符');
+
+    act(() => {
+      useRawStore.setState({
+        tab: 'object',
+        selected: { objectNumber: 1, generation: 0 },
+        object: { ref: { objectNumber: 1, generation: 0 }, summary: 'dict · 2 entries', value: { kind: 'null' } },
+      });
+    });
+    expect(screen.getByTestId('status-raw').textContent).toBe(
+      '原始数据：对象 1 0 R · dict · 2 entries',
+    );
+
+    act(() => {
+      useRawStore.setState({ document: null, loading: false, error: 'sidecar is not running' });
+    });
+    expect(screen.getByTestId('status-raw').textContent).toBe('原始数据：无文档');
+    expect(screen.getByRole('alert').textContent).toBe('原始数据失败：sidecar is not running');
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+    expect(screen.getByTestId('status-raw').textContent).toBe('Raw: no document');
+    expect(screen.getByRole('alert').textContent).toBe('Raw failed: sidecar is not running');
+  });
+
+  it('translates the raw no-selection and loading lines on their own', () => {
+    expect(
+      formatRawStatus(
+        {
+          document,
+          tab: 'object',
+          selected: null,
+          object: null,
+          content: null,
+          contentPage: null,
+          loading: false,
+        },
+        translateZh,
+      ),
+    ).toBe('原始数据：未选择对象');
+    expect(
+      formatRawStatus(
+        {
+          document: null,
+          tab: 'object',
+          selected: null,
+          object: null,
+          content: null,
+          contentPage: null,
+          loading: true,
+        },
+        translateZh,
+      ),
+    ).toBe('原始数据：正在加载文档…');
   });
 });

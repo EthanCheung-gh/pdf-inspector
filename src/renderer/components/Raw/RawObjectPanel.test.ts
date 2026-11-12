@@ -13,6 +13,7 @@ const rawIpc = vi.hoisted(() => ({
 vi.mock('../../services/ipc-client', () => ({ ipc: rawIpc }));
 
 import { useRawStore } from '../../store/raw-store';
+import { useI18nStore } from '../../i18n';
 import { RawObjectPanel } from './RawObjectPanel';
 
 const CATALOG: RawRef = { objectNumber: 1, generation: 0 };
@@ -36,6 +37,7 @@ function makeObject(): RawObject {
 const writeText = vi.fn();
 
 beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
   useRawStore.getState().reset();
   rawIpc.rawObject.mockReset();
   writeText.mockReset();
@@ -139,5 +141,45 @@ describe('RawObjectPanel copy', () => {
 
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Copy failed'));
     expect(useRawStore.getState().object?.ref).toEqual(CATALOG);
+  });
+});
+
+describe('RawObjectPanel localization', () => {
+  it('translates the title, empty state and copy controls', async () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    useRawStore.setState({ selected: CATALOG, object: makeObject(), loading: false });
+    writeText.mockResolvedValue(undefined);
+    panel();
+
+    expect(screen.getByRole('region', { name: '原始对象' })).toBeTruthy();
+    expect(screen.getByText('对象 1 0 R')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '复制 JSON' })).toBeTruthy();
+    // The sidecar summary is data, not UI copy: it stays as reported.
+    expect(screen.getByTestId('raw-object-panel').textContent).toContain('dict · 2 entries');
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '复制 JSON' }));
+    });
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('已复制'));
+  });
+
+  it('translates the reading, empty and failure states', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    panel();
+
+    expect(screen.getByTestId('raw-object-empty').textContent).toBe(
+      '在对象树中选择一个引用以读取其对象。',
+    );
+
+    useRawStore.setState({ selected: CATALOG, object: null, loading: true });
+    cleanup();
+    panel();
+    expect(screen.getByRole('status').textContent).toBe('正在读取 1 0 R…');
+
+    cleanup();
+    useRawStore.setState({ error: 'sidecar is not running', loading: false });
+    panel();
+    expect(screen.getByRole('alert').textContent).toContain('无法读取 1 0 R：sidecar is not running');
+    expect(screen.getByRole('button', { name: '重试' })).toBeTruthy();
   });
 });

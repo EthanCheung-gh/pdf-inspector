@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useT } from '../../i18n';
 import {
   EXPORT_OBJECT_TYPES,
   pagesToCsv,
@@ -45,6 +46,7 @@ function generatedFileName(scope: Scope, format: Format): string {
  * the user cares about.
  */
 export const ExportDialog: React.FC = () => {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [scope, setScope] = useState<Scope>('page');
   const [format, setFormat] = useState<Format>('json');
@@ -129,7 +131,7 @@ export const ExportDialog: React.FC = () => {
     if (busy || types.length === 0) return;
     const store = usePdfStore.getState();
     if (!store.filePath) {
-      setError('No document is open.');
+      setError(t('export.noDocument'));
       return;
     }
 
@@ -138,7 +140,7 @@ export const ExportDialog: React.FC = () => {
     try {
       let pages: PageData[];
       if (scope === 'page') {
-        if (!store.pageData) throw new Error('Page data not loaded yet');
+        if (!store.pageData) throw new Error(t('export.pageDataMissing'));
         pages = [store.pageData];
       } else {
         store.setExportProgress({ done: 0, total: store.pageCount });
@@ -169,17 +171,17 @@ export const ExportDialog: React.FC = () => {
         return;
       }
       if (result.error) {
-        setError(`Export failed: ${result.error}`);
+        setError(t('export.failedDetail', { error: result.error }));
         return;
       }
       setOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Export failed');
+      setError(err instanceof Error ? err.message : t('export.failed'));
     } finally {
       usePdfStore.getState().setExportProgress(null);
       setBusy(false);
     }
-  }, [busy, fileName, format, scope, types]);
+  }, [busy, fileName, format, scope, t, types]);
 
   const handleBackdropClick = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -197,7 +199,7 @@ export const ExportDialog: React.FC = () => {
     () => [
       {
         id: 'export.objects',
-        title: 'Export objects…',
+        title: t('command.exportObjects'),
         group: 'Export',
         keywords: ['export', 'save', 'json', 'csv', 'objects'],
         isEnabled: () => {
@@ -207,7 +209,7 @@ export const ExportDialog: React.FC = () => {
         run: () => setOpen(true),
       },
     ],
-    [busy],
+    [busy, t],
   );
   useRegisterCommands('export-dialog', commands);
 
@@ -221,7 +223,7 @@ export const ExportDialog: React.FC = () => {
         aria-expanded={open}
         onClick={() => setOpen(true)}
       >
-        Export
+        {t('export.title')}
       </button>
 
       {open && (
@@ -235,12 +237,12 @@ export const ExportDialog: React.FC = () => {
             ref={dialogRef}
           >
             <h2 id={titleId} className={styles.title}>
-              Export
+              {t('export.title')}
             </h2>
 
             <div className={styles.row}>
               <span id={scopeLabelId} className={styles.rowLabel}>
-                Scope
+                {t('export.scope')}
               </span>
               <div className={styles.radios} role="radiogroup" aria-labelledby={scopeLabelId}>
                 <label className={styles.radioLabel}>
@@ -252,7 +254,7 @@ export const ExportDialog: React.FC = () => {
                     disabled={busy}
                     onChange={() => handleScopeChange('page')}
                   />
-                  Current page
+                  {t('export.scopePage')}
                 </label>
                 <label className={styles.radioLabel}>
                   <input
@@ -263,14 +265,14 @@ export const ExportDialog: React.FC = () => {
                     disabled={busy}
                     onChange={() => handleScopeChange('document')}
                   />
-                  Whole document
+                  {t('export.scopeDocument')}
                 </label>
               </div>
             </div>
 
             <div className={styles.row}>
               <span id={formatLabelId} className={styles.rowLabel}>
-                Format
+                {t('export.format')}
               </span>
               <div className={styles.radios} role="radiogroup" aria-labelledby={formatLabelId}>
                 <label className={styles.radioLabel}>
@@ -300,7 +302,7 @@ export const ExportDialog: React.FC = () => {
 
             <div className={styles.row}>
               <label htmlFor={fileNameId} className={styles.rowLabel}>
-                File name
+                {t('export.fileName')}
               </label>
               <input
                 id={fileNameId}
@@ -325,7 +327,10 @@ export const ExportDialog: React.FC = () => {
 
             {exportProgress && (
               <div className={styles.progress} role="status">
-                Extracting page {exportProgress.done} of {exportProgress.total}…
+                {t('export.progress', {
+                  done: exportProgress.done,
+                  total: exportProgress.total,
+                })}
               </div>
             )}
 
@@ -336,7 +341,7 @@ export const ExportDialog: React.FC = () => {
                 onClick={() => setOpen(false)}
                 disabled={busy}
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 className={`${styles.button} ${styles.primary}`}
@@ -344,7 +349,7 @@ export const ExportDialog: React.FC = () => {
                 onClick={() => void handleExport()}
                 disabled={exportDisabled}
               >
-                {busy ? 'Exporting…' : 'Export'}
+                {busy ? t('common.exporting') : t('export.title')}
               </button>
             </div>
           </div>

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useT } from '../../i18n';
 import type { AnnotationIndexResult } from '../../services/annotation-index';
 import {
   annotationIndexToCsv,
@@ -41,6 +42,7 @@ export const AnnotationExportDialog: React.FC<AnnotationExportDialogProps> = ({
   pageCount,
   onClose,
 }) => {
+  const t = useT();
   const [format, setFormat] = useState<Format>('json');
   const [fileName, setFileName] = useState('');
   // The generated suggestion `fileName` currently mirrors. While they are
@@ -133,16 +135,28 @@ export const AnnotationExportDialog: React.FC<AnnotationExportDialogProps> = ({
         return;
       }
       if (saved.error) {
-        setError(`Export failed: ${saved.error}`);
+        setError(t('export.failedDetail', { error: saved.error }));
         return;
       }
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Export failed');
+      setError(err instanceof Error ? err.message : t('export.failed'));
     } finally {
       setBusy(false);
     }
-  }, [busy, documentName, filePath, fileName, format, generatedName, onClose, pageCount, result, sourceUrl]);
+  }, [
+    busy,
+    documentName,
+    filePath,
+    fileName,
+    format,
+    generatedName,
+    onClose,
+    pageCount,
+    result,
+    sourceUrl,
+    t,
+  ]);
 
   const handleBackdropClick = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -166,12 +180,12 @@ export const AnnotationExportDialog: React.FC<AnnotationExportDialogProps> = ({
         ref={dialogRef}
       >
         <h2 id={titleId} className={styles.title}>
-          Export annotations
+          {t('annotationExport.title')}
         </h2>
 
         <div className={styles.row}>
           <span id={formatLabelId} className={styles.rowLabel}>
-            Format
+            {t('export.format')}
           </span>
           <div className={styles.radios} role="radiogroup" aria-labelledby={formatLabelId}>
             <label className={styles.radioLabel}>
@@ -201,7 +215,7 @@ export const AnnotationExportDialog: React.FC<AnnotationExportDialogProps> = ({
 
         <div className={styles.row}>
           <label htmlFor={fileNameId} className={styles.rowLabel}>
-            File name
+            {t('export.fileName')}
           </label>
           <input
             id={fileNameId}
@@ -222,7 +236,7 @@ export const AnnotationExportDialog: React.FC<AnnotationExportDialogProps> = ({
 
         <div className={styles.actions}>
           <button className={styles.button} type="button" onClick={onClose} disabled={busy}>
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             className={`${styles.button} ${styles.primary}`}
@@ -230,7 +244,7 @@ export const AnnotationExportDialog: React.FC<AnnotationExportDialogProps> = ({
             onClick={() => void handleExport()}
             disabled={busy}
           >
-            {busy ? 'Exporting…' : 'Export'}
+            {busy ? t('common.exporting') : t('annotationExport.export')}
           </button>
         </div>
       </div>

@@ -31,7 +31,13 @@ import {
   filterAuditFindings,
   suggestAuditJsonFilename,
 } from './AuditWorkspace';
+import { translate, useI18nStore, type TranslateFn } from '../../i18n';
 import { useAuditStore } from '../../store/audit-store';
+
+/** English translator for the pure helper tests. */
+const tEn: TranslateFn = (key, params) => translate('en', key, params);
+/** Simplified Chinese translator for the localization smoke tests. */
+const tZh: TranslateFn = (key, params) => translate('zh-CN', key, params);
 
 const TOOL = { name: 'pdf-inspector', version: '0.2.0' };
 
@@ -133,6 +139,8 @@ const rowNames = (): string[] =>
 
 beforeEach(() => {
   vi.resetAllMocks();
+  // Default locale: a Chinese test must not leak into the English assertions.
+  useI18nStore.setState({ locale: 'en' });
   store().reset();
   auditIpc.saveFile.mockResolvedValue({ canceled: false });
   auditIpc.auditDocument.mockResolvedValue({
@@ -444,10 +452,78 @@ describe('AuditWorkspace states', () => {
   });
 });
 
+describe('AuditWorkspace localization', () => {
+  it('translates the chrome, summary, filters and finding detail', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    showReport();
+    renderWorkspace();
+
+    expect(screen.getByRole('region', { name: 'PDF 审计工作区' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '返回 Inspect' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '重新运行' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '导出 JSON' })).toBeTruthy();
+
+    const summary = screen.getByTestId('audit-summary');
+    expect(within(summary).getByText('错误').nextSibling?.textContent).toBe('0');
+    expect(within(summary).getByText('警告').nextSibling?.textContent).toBe('2');
+    expect(within(summary).getByText('信息').nextSibling?.textContent).toBe('2');
+    expect(within(summary).getByText('总计').nextSibling?.textContent).toBe('4');
+
+    const document = screen.getByTestId('audit-document-info');
+    expect(within(document).getByText('页数').nextSibling?.textContent).toBe('12');
+    expect(within(document).getByText('加密').nextSibling?.textContent).toBe('否');
+    expect(within(document).getByText('标记（Tagged）').nextSibling?.textContent).toBe('是');
+
+    expect(screen.getByText('4 个发现')).toBeTruthy();
+    expect(screen.getByLabelText('按严重级别筛选')).toBeTruthy();
+    expect(screen.getByLabelText('按类别筛选')).toBeTruthy();
+
+    act(() => {
+      fireEvent.change(screen.getByLabelText('按严重级别筛选'), { target: { value: 'warning' } });
+    });
+
+    expect(screen.getByTestId('audit-filtered-count').textContent).toBe('2 / 4 个发现');
+    // Schema values (severity/category) stay as the engine reports them; only
+    // the page label is localized.
+    expect(rowNames()).toEqual([
+      'warning fonts 文档: Font not embedded: Inter',
+      'warning images 第 2 页: Low DPI image on page 2',
+    ]);
+
+    act(() => {
+      fireEvent.click(within(list()).getByRole('button', { name: /Low DPI image on page 2/ }));
+    });
+
+    const detail = screen.getByTestId('audit-finding-detail');
+    expect(within(detail).getByText('图片')).toBeTruthy();
+    expect(within(detail).getByText('第 2 页')).toBeTruthy();
+    expect(within(detail).getByText('证据')).toBeTruthy();
+    expect(within(detail).getByText('建议')).toBeTruthy();
+    expect(within(detail).getByRole('button', { name: '打开页面' })).toBeTruthy();
+  });
+
+  it('returns to English without a reload', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    showReport();
+    renderWorkspace();
+    expect(screen.getByRole('button', { name: '重新运行' })).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByRole('region', { name: 'PDF audit workspace' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Re-run' })).toBeTruthy();
+    expect(screen.getByText('4 findings')).toBeTruthy();
+  });
+});
+
 describe('audit workspace helpers', () => {
   it('labels document-level and page findings', () => {
-    expect(auditPageLabel(null)).toBe('Document');
-    expect(auditPageLabel(7)).toBe('Page 7');
+    expect(auditPageLabel(null, tEn)).toBe('Document');
+    expect(auditPageLabel(7, tEn)).toBe('Page 7');
+    expect(auditPageLabel(null, tZh)).toBe('文档');
+    expect(auditPageLabel(7, tZh)).toBe('第 7 页');
   });
 
   it('suggests a portable JSON file name', () => {

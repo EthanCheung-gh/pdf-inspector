@@ -6,6 +6,8 @@
  * React access so they can be unit tested directly.
  */
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
+import { DEFAULT_LOCALE } from '../i18n/locales';
+import { translate, type MessageKey, type TranslateFn } from '../i18n/translate';
 import type {
   AnnotationForm,
   AnnotationKind,
@@ -43,6 +45,23 @@ export const ANNOTATION_KIND_LABELS: Record<AnnotationKind, string> = {
   note: 'Note',
   stamp: 'Stamp',
   other: 'Other',
+};
+
+/**
+ * English translator for non-React callers (index search text, plain unit
+ * tests). Components pass their `useT()` translator instead, so a locale switch
+ * re-renders the labels without touching this module.
+ */
+const defaultTranslate: TranslateFn = (key, params) => translate(DEFAULT_LOCALE, key, params);
+
+/** Message key per kind; the display label for a kind is localizable copy. */
+const ANNOTATION_KIND_MESSAGE_KEYS: Record<AnnotationKind, MessageKey> = {
+  link: 'annots.kind.link',
+  form: 'annots.kind.form',
+  markup: 'annots.kind.markup',
+  note: 'annots.kind.note',
+  stamp: 'annots.kind.stamp',
+  other: 'annots.kind.other',
 };
 
 /** Subtypes rendered as a markup box (highlights, shapes, ink, redaction). */
@@ -92,8 +111,16 @@ export function annotationKind(subtype: string): AnnotationKind {
   }
 }
 
-export function annotationKindLabel(kind: AnnotationKind): string {
-  return ANNOTATION_KIND_LABELS[kind] || 'Other';
+/**
+ * Display label of a kind. The label is UI copy, so components pass their
+ * translator; the English default keeps `annotationSearchText` and plain unit
+ * tests locale-independent.
+ */
+export function annotationKindLabel(
+  kind: AnnotationKind,
+  t: TranslateFn = defaultTranslate,
+): string {
+  return t(ANNOTATION_KIND_MESSAGE_KEYS[kind] ?? 'annots.kind.other');
 }
 
 /**
@@ -139,6 +166,10 @@ export function formatAnnotationValue(value: string | string[] | null): string {
  * Build the lower-cased haystack used by the Annots tab search box. It folds
  * the subtype, kind, title/contents, form field details and link target into
  * one string.
+ *
+ * The kind label is added with the English default on purpose: the haystack is
+ * built once per document index, so making it depend on the active locale would
+ * change search results after a language switch.
  */
 export function annotationSearchText(annotation: PdfAnnotation): string {
   const parts: string[] = [

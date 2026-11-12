@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useT } from '../../i18n';
 import { clampPanelWidth, type WorkspacePanelSide } from '../../store/workspace-store';
 import styles from './PanelSplitter.module.css';
 
@@ -26,6 +27,7 @@ export const PanelSplitter = ({
   max,
   onResize,
 }: PanelSplitterProps): JSX.Element => {
+  const t = useT();
   const dragState = useRef<DragState | null>(null);
   const [dragging, setDragging] = useState(false);
   // While dragging we keep the candidate width locally and paint it straight onto
@@ -33,7 +35,7 @@ export const PanelSplitter = ({
   // re-renders the whole workspace (PDF included) and writes localStorage.
   const previewRef = useRef<number | null>(null);
   const [previewWidth, setPreviewWidth] = useState<number | null>(null);
-  const label = side === 'left' ? 'Resize left panel' : 'Resize right panel';
+  const label = side === 'left' ? t('panelSplitter.resizeLeft') : t('panelSplitter.resizeRight');
   const controls = side === 'left' ? 'workspace-left-pane' : 'workspace-right-pane';
 
   // Moving a left splitter right makes the left pane wider. A right splitter

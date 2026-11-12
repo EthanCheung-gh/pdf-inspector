@@ -13,6 +13,7 @@ const rawIpc = vi.hoisted(() => ({
 vi.mock('../../services/ipc-client', () => ({ ipc: rawIpc }));
 
 import { usePdfStore } from '../../store/pdf-store';
+import { useI18nStore } from '../../i18n';
 import { useRawStore } from '../../store/raw-store';
 import { RawContentPanel, clampRawPage, countContentOperators } from './RawContentPanel';
 
@@ -71,6 +72,7 @@ async function settleStore(): Promise<void> {
 }
 
 beforeEach(async () => {
+  useI18nStore.setState({ locale: 'en' });
   useRawStore.getState().reset();
   rawIpc.rawDocument.mockReset();
   rawIpc.rawDocument.mockResolvedValue(makeDocument());
@@ -278,5 +280,66 @@ describe('RawContentPanel data', () => {
 
     expect(screen.getByTestId('raw-content-empty').textContent).toContain('no pages');
     expect(rawIpc.rawPageContent).not.toHaveBeenCalled();
+  });
+});
+
+describe('RawContentPanel localization', () => {
+  it('translates the page summary, stream header and table labels', async () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    panel();
+
+    await waitFor(() =>
+      expect(screen.getByTestId('raw-content-summary').textContent).toBe(
+        '第 2/5 页 · 1 个流 · 3 个操作符',
+      ),
+    );
+
+    expect(screen.getByLabelText('内容页码')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '重新加载本页' })).toBeTruthy();
+    expect(screen.getByText('流 12 0 R')).toBeTruthy();
+    expect(screen.getByText('3 个操作符')).toBeTruthy();
+    // Operators and filter names are PDF identifiers, never translated.
+    expect(screen.getByText('BT')).toBeTruthy();
+    expect(screen.getByText('FlateDecode')).toBeTruthy();
+    expect(screen.getByText('偏移')).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByTestId('raw-content-summary').textContent).toBe(
+      'Page 2/5 · 1 stream · 3 operators',
+    );
+  });
+
+  it('translates the empty, error and notice states', async () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    rawIpc.rawPageContent.mockResolvedValue({
+      page: 2,
+      truncated: true,
+      streams: [
+        {
+          ref: null,
+          length: null,
+          filters: [],
+          operators: [],
+          truncated: true,
+          error: 'unexpected EOF',
+        },
+      ],
+    });
+    panel();
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('unexpected EOF'));
+    expect(screen.getByRole('alert').textContent).toBe('此流无法完整解码：unexpected EOF');
+    expect(screen.getByTestId('raw-content-page-truncated').textContent).toBe(
+      '该页的内容流多于 sidecar 返回的数量。',
+    );
+    expect(screen.getByTestId('raw-content-truncated').textContent).toBe(
+      '仅列出此流的开头部分操作符。',
+    );
+    expect(screen.getByText('此流中没有操作符。')).toBeTruthy();
+    expect(screen.getByText('长度未知')).toBeTruthy();
+    expect(screen.getByText('无过滤器')).toBeTruthy();
   });
 });

@@ -15,6 +15,7 @@ import {
   normalizeAnnotation,
   resolveDestinationPage,
 } from '../annotations';
+import { translate } from '../../i18n';
 import type { PdfAnnotation } from '../../types/annotations';
 
 const ORIGIN = { x: 0, y: 0 };
@@ -162,6 +163,20 @@ describe('annotationKind', () => {
       other: 'Other',
     });
     expect(annotationKindLabel('form')).toBe('Form field');
+  });
+
+  it('localizes the kind label through a translator', () => {
+    const tZh = (key: string, params?: Record<string, string | number>): string =>
+      translate('zh-CN', key as never, params);
+
+    expect(annotationKindLabel('link', tZh)).toBe('链接');
+    expect(annotationKindLabel('form', tZh)).toBe('表单字段');
+    expect(annotationKindLabel('other', tZh)).toBe('其他');
+    // The search haystack stays English so a language switch cannot change
+    // which rows the Annots search box matches.
+    expect(annotationSearchText(makeAnnotation({ kind: 'form', subtype: 'Widget' }))).toContain(
+      'form field',
+    );
   });
 
   it('spaces camel-cased subtypes for display', () => {

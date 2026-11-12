@@ -20,6 +20,7 @@ vi.mock('../../hooks/usePdfSearch', () => ({
 }));
 
 import { SearchBox } from './SearchBox';
+import { useI18nStore } from '../../i18n/store';
 import { usePdfStore } from '../../store/pdf-store';
 import { DEFAULT_SEARCH_OPTIONS } from '../../services/pdf-search';
 
@@ -34,6 +35,10 @@ const searchBoxCss = (): string =>
 /** Declarations of the first rule whose selector starts with `selector`. */
 const cssRule = (selector: string): string =>
   searchBoxCss().match(new RegExp(`${selector.replace('.', '\\.')}\\s*\\{[^}]*\\}`))?.[0] ?? '';
+
+beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
+});
 
 describe('SearchBox', () => {
   afterEach(() => {
@@ -194,6 +199,27 @@ describe('SearchBox', () => {
   it('positions the results popover against the search box', () => {
     // The popover hangs below the toolbar without widening the flex row.
     expect(cssRule('.searchBox')).toContain('position: relative');
+  });
+
+  it('translates the search controls and index status, then restores English', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    usePdfStore.setState({ searchIndexProgress: { done: 40, total: 120 } });
+
+    renderSearchBox();
+
+    expect(screen.getByLabelText('搜索文档')).toBeTruthy();
+    expect(screen.getByPlaceholderText('搜索…')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('正在建立索引 40/120…');
+    expect(screen.getByRole('button', { name: '关闭搜索' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '上一个匹配' })).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByLabelText('Search document')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('Indexing 40/120…');
+    expect(screen.getByRole('button', { name: 'Close search' })).toBeTruthy();
   });
 });
 

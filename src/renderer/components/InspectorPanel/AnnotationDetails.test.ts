@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useI18nStore } from '../../i18n';
 import { useAnnotationStore } from '../../store/annotation-store';
 import { usePdfStore } from '../../store/pdf-store';
 import type { AnnotationForm, PdfAnnotation } from '../../types/annotations';
@@ -60,6 +61,10 @@ function makeForm(overrides: Partial<AnnotationForm> = {}): AnnotationForm {
 
 const renderDetails = (annotation: PdfAnnotation): ReturnType<typeof render> =>
   render(React.createElement(AnnotationDetails, { annotation }));
+
+beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
+});
 
 describe('AnnotationDetails', () => {
   afterEach(cleanup);
@@ -263,5 +268,131 @@ describe('AnnotationDetails', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
 
     expect(useAnnotationStore.getState().selected).toBeNull();
+  });
+});
+
+describe('AnnotationDetails localization', () => {
+  afterEach(cleanup);
+
+  beforeEach(() => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    navigate.mockReset();
+    openExternalUrl.mockReset();
+    openExternalUrl.mockResolvedValue({ ok: true });
+    useAnnotationStore.setState({ selected: null });
+    usePdfStore.setState({ error: null });
+  });
+
+  it('translates the sections, row labels and form flags', () => {
+    renderDetails(
+      makeAnnotation({
+        subtype: 'Widget',
+        kind: 'form',
+        page: 2,
+        form: makeForm({
+          fieldName: 'country',
+          fieldType: 'Ch',
+          value: ['us', 'ca'],
+          defaultValue: 'us',
+          readOnly: true,
+          required: true,
+          combo: true,
+          options: [
+            { label: 'United States', value: 'us' },
+            { label: 'Canada', value: 'ca' },
+          ],
+        }),
+      }),
+    );
+
+    expect(screen.getByText('注释')).toBeTruthy();
+    // The section heading and the kind badge share the same copy; query the heading.
+    expect(screen.getByRole('heading', { name: '表单字段' })).toBeTruthy();
+    expect(screen.getByText('类别')).toBeTruthy();
+    expect(screen.getByText('子类型')).toBeTruthy();
+    expect(screen.getByText('页码')).toBeTruthy();
+    expect(screen.getByText('矩形')).toBeTruthy();
+    expect(screen.getByText('隐藏')).toBeTruthy();
+    expect(screen.getByText('否')).toBeTruthy();
+    expect(screen.getByText('字段名')).toBeTruthy();
+    expect(screen.getByText('字段类型')).toBeTruthy();
+    expect(screen.getByText('值')).toBeTruthy();
+    expect(screen.getByText('默认值')).toBeTruthy();
+    expect(screen.getByText('标志')).toBeTruthy();
+    expect(screen.getByText('选项')).toBeTruthy();
+    expect(screen.getByText('选择 (Ch)')).toBeTruthy();
+    expect(screen.getByText('只读, 必填, 组合框')).toBeTruthy();
+    expect(screen.getByText('United States (us)')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '清除选择' })).toBeTruthy();
+  });
+
+  it('translates flags that are unset and signature notes', () => {
+    renderDetails(
+      makeAnnotation({
+        subtype: 'Widget',
+        kind: 'form',
+        form: makeForm({ fieldName: 'comment', fieldType: 'Tx', value: 'Hi' }),
+      }),
+    );
+
+    expect(screen.getByText('文本 (Tx)')).toBeTruthy();
+    expect(screen.getByText('无')).toBeTruthy();
+
+    cleanup();
+
+    renderDetails(
+      makeAnnotation({
+        subtype: 'Widget',
+        kind: 'form',
+        form: makeForm({ fieldName: 'sig1', fieldType: 'Sig' }),
+      }),
+    );
+
+    expect(screen.getByText('签名 (Sig)')).toBeTruthy();
+    expect(screen.getByText('签名未验证。')).toBeTruthy();
+  });
+
+  it('translates link warnings and actions, then switches back to English', () => {
+    renderDetails(
+      makeAnnotation({
+        link: {
+          url: null,
+          unsafeUrl: 'javascript:alert(1)',
+          internalPage: 3,
+          newWindow: true,
+        },
+      }),
+    );
+
+    expect(screen.getByRole('heading', { name: '链接' })).toBeTruthy();
+    expect(screen.getByText('目标')).toBeTruthy();
+    expect(screen.getByText('警告')).toBeTruthy();
+    expect(screen.getByText('窗口')).toBeTruthy();
+    expect(screen.getByText('新窗口')).toBeTruthy();
+    expect(
+      screen.getByText('只能打开 http(s) 链接。此目标仅用于显示。'),
+    ).toBeTruthy();
+    expect(
+      (screen.getByRole('button', { name: '打开链接' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(screen.getByRole('button', { name: '跳转到第 3 页' })).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByText('Annotation')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open link' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Go to page 3' })).toBeTruthy();
+  });
+
+  it('translates an unresolved link target', () => {
+    renderDetails(
+      makeAnnotation({
+        link: { url: null, unsafeUrl: null, internalPage: null, newWindow: false },
+      }),
+    );
+
+    expect(screen.getByText('没有可解析的链接目标。')).toBeTruthy();
   });
 });

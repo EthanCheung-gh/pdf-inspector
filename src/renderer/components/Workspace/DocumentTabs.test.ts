@@ -3,6 +3,7 @@ import React from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDocumentTabsStore } from '../../store/document-tabs-store';
+import { useI18nStore } from '../../i18n/store';
 import { usePdfStore } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
 import type { IpcApi, OpenPdfResult } from '../../types/ipc-protocol';
@@ -94,6 +95,7 @@ function webSource(id: string, name: string, meta: PdfMetadata = metadata) {
 
 beforeEach(() => {
   installDesktopBridge();
+  useI18nStore.setState({ locale: 'en' });
   navigate.mockReset();
   navigate.mockResolvedValue(undefined);
   openPdfPath.mockReset();
@@ -154,6 +156,16 @@ describe('tab bar visibility', () => {
 
     expect(container.firstChild).toBeNull();
     expect(screen.queryByRole('tablist')).toBeNull();
+  });
+
+  it('translates the tab bar and close labels', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    tabStore().addTab(opened('/docs/a.pdf'));
+
+    render(React.createElement(DocumentTabs));
+
+    expect(screen.getByRole('tablist', { name: '已打开的文档' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '关闭 a.pdf' })).toBeTruthy();
   });
 });
 

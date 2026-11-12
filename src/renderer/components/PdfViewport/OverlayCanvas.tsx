@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { useT } from '../../i18n';
 import { useHitTest } from '../../hooks/useHitTest';
 import { useOverlay } from '../../hooks/useOverlay';
 import { useRegionSelect } from '../../hooks/useRegionSelect';
@@ -121,6 +122,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
   pdfWidth,
   pdfHeight,
 }) => {
+  const t = useT();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gridCanvasRef = useRef<HTMLCanvasElement>(null);
   const allObjects = usePdfStore((state) => state.allObjects);
@@ -308,7 +310,7 @@ export const OverlayCanvas: React.FC<OverlayCanvasProps> = ({
           cursor: textSelectionMode ? 'auto' : 'crosshair',
           pointerEvents: textSelectionMode ? 'none' : 'auto',
         }}
-        aria-label={`PDF page ${pageNum} object overlay`}
+        aria-label={t('viewport.objectOverlay', { page: pageNum })}
       />
       {/* Separate canvas for the table cell grid: it never intercepts pointer
           events, so clicking a cell still hits the table on the overlay above. */}

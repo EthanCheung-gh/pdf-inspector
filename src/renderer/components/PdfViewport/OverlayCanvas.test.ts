@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useI18nStore } from '../../i18n';
 import { usePdfStore } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
 import { OVERLAY_COLORS } from '../../services/overlay-style';
@@ -92,6 +93,10 @@ const pageData = (tables: PdfTable[]): PageData => ({
 
 const ofStyle = (calls: DrawCall[], style: string): DrawCall[] =>
   calls.filter((call) => call.strokeStyle === style && call.op === 'strokeRect');
+
+beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
+});
 
 describe('drawTableCells', () => {
   const geometry = { pageWidth: 400, pageHeight: 400, pdfWidth: 400, pdfHeight: 400 };
@@ -330,5 +335,18 @@ describe('OverlayCanvas table cell grid', () => {
     // Object boxes are drawn by the overlay canvas, not by the grid canvas.
     expect(ofStyle(contexts.get(overlay)!.calls, OVERLAY_COLORS.table)).toHaveLength(1);
     expect(ofStyle(contexts.get(grid)!.calls, OVERLAY_COLORS.table)).toHaveLength(0);
+  });
+
+  it('translates the object overlay label and switches back to English', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    renderCanvas();
+
+    expect(screen.getByLabelText('PDF 第 1 页对象叠加层')).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByLabelText('PDF page 1 object overlay')).toBeTruthy();
   });
 });

@@ -13,6 +13,7 @@ const rawIpc = vi.hoisted(() => ({
 vi.mock('../../services/ipc-client', () => ({ ipc: rawIpc }));
 
 import { usePdfStore } from '../../store/pdf-store';
+import { useI18nStore } from '../../i18n';
 import { useRawStore } from '../../store/raw-store';
 import { RawWorkspace } from './RawWorkspace';
 
@@ -42,6 +43,7 @@ function makeObject(): RawObject {
 const workspace = () => render(React.createElement(RawWorkspace));
 
 beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
   useRawStore.getState().reset();
   rawIpc.rawDocument.mockReset();
   rawIpc.rawDocument.mockResolvedValue(makeDocument());
@@ -151,5 +153,45 @@ describe('RawWorkspace states', () => {
     workspace();
 
     expect(screen.getByTestId('raw-workspace-empty').textContent).toContain('Open a PDF');
+  });
+});
+
+describe('RawWorkspace localization', () => {
+  it('translates the header, tabs, states and failure prefix', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    useRawStore.setState({ document: null, loading: false, error: null });
+    workspace();
+
+    expect(screen.getByRole('region', { name: '原始 PDF 工作区' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '返回 Inspect' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '重新加载' })).toBeTruthy();
+    expect(screen.getByRole('tablist', { name: '原始数据详情标签页' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '对象' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '内容流' })).toBeTruthy();
+    expect(screen.getByTestId('raw-workspace-empty').textContent).toBe(
+      '打开 PDF 以读取其原始对象和内容流。',
+    );
+
+    cleanup();
+
+    // The failure prefix is translated; the sidecar payload stays as reported.
+    useRawStore.setState({ document: null, loading: false, error: 'sidecar is not running' });
+    workspace();
+
+    expect(screen.getByRole('alert').textContent).toBe('原始数据视图失败：sidecar is not running');
+  });
+
+  it('returns to English without a reload', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    workspace();
+    expect(screen.getByRole('button', { name: '重新加载' })).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Content stream' })).toBeTruthy();
+    expect(screen.getByRole('navigation', { name: 'Raw PDF object tree' })).toBeTruthy();
   });
 });

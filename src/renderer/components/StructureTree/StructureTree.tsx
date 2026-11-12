@@ -1,12 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
+import { useT, type MessageKey, type TranslateFn } from '../../i18n';
 import { usePdfStore } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
 import { PageData, PdfObject, PdfObjectType } from '../../types/pdf-objects';
 import styles from './StructureTree.module.css';
 
 type ObjectGroup = {
-  label: string;
+  labelKey: MessageKey;
+  /** Lowercase noun used inside the truncation sentence. */
+  nounKey: MessageKey;
   icon: string;
   objects: PdfObject[];
 };
@@ -27,10 +30,19 @@ const formatCoordinate = (value: number): string => Math.round(value).toString()
 const truncate = (value: string, maxLength = 36): string =>
   value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
 
-const formatObjectLabel = (object: PdfObject): string => {
+/**
+ * Row label for one object. PDF type identifiers (`rect`, `line`, `curve`, …)
+ * and their raw coordinates are data, not copy, so they are never translated;
+ * only the descriptive table/image labels go through the translator.
+ */
+const formatObjectLabel = (object: PdfObject, t: TranslateFn): string => {
   if (object.type === 'word') return truncate(object.text);
-  if (object.type === 'table') return `Table ${object.rows} × ${object.cols}`;
-  if (object.type === 'image') return `Image ${object.width} × ${object.height}`;
+  if (object.type === 'table') {
+    return t('structure.tableLabel', { rows: object.rows, cols: object.cols });
+  }
+  if (object.type === 'image') {
+    return t('structure.imageLabel', { width: object.width, height: object.height });
+  }
 
   return `${object.type} (${formatCoordinate(object.x0)}, ${formatCoordinate(object.y0)})`;
 };
@@ -77,6 +89,7 @@ const getPageObjects = (data: PageData): PdfObject[] => [
 ];
 
 export const StructureTree: React.FC = () => {
+  const t = useT();
   const filePath = usePdfStore((state) => state.filePath);
   const metadata = usePdfStore((state) => state.metadata);
   const pageCount = usePdfStore((state) => state.pageCount);
@@ -98,17 +111,47 @@ export const StructureTree: React.FC = () => {
   }, [currentPage]);
 
   if (!filePath || !metadata || pageCount === 0) {
-    return <div className={styles.emptyState}>Open a PDF to view its structure.</div>;
+    return <div className={styles.emptyState}>{t('structure.empty')}</div>;
   }
 
   const groups: ObjectGroup[] = pageData
     ? [
-      { label: 'Words', icon: 'W', objects: pageData.words },
-      { label: 'Rects', icon: '▭', objects: pageData.rects },
-      { label: 'Lines', icon: '╱', objects: pageData.lines },
-      { label: 'Curves', icon: '⌒', objects: pageData.curves },
-      { label: 'Images', icon: '▧', objects: pageData.images },
-      { label: 'Tables', icon: '▦', objects: pageData.tables },
+      {
+        labelKey: 'structure.group.words',
+        nounKey: 'structure.group.words.noun',
+        icon: 'W',
+        objects: pageData.words,
+      },
+      {
+        labelKey: 'structure.group.rects',
+        nounKey: 'structure.group.rects.noun',
+        icon: '▭',
+        objects: pageData.rects,
+      },
+      {
+        labelKey: 'structure.group.lines',
+        nounKey: 'structure.group.lines.noun',
+        icon: '╱',
+        objects: pageData.lines,
+      },
+      {
+        labelKey: 'structure.group.curves',
+        nounKey: 'structure.group.curves.noun',
+        icon: '⌒',
+        objects: pageData.curves,
+      },
+      {
+        labelKey: 'structure.group.images',
+        nounKey: 'structure.group.images.noun',
+        icon: '▧',
+        objects: pageData.images,
+      },
+      {
+        labelKey: 'structure.group.tables',
+        nounKey: 'structure.group.tables.noun',
+        icon: '▦',
+        objects: pageData.tables,
+      },
     ]
     : [];
 
@@ -156,9 +199,13 @@ export const StructureTree: React.FC = () => {
 
   return (
     <div className={styles.treePanel}>
-      <form className={styles.jumpForm} aria-label="Page jump" onSubmit={handleJumpSubmit}>
+      <form
+        className={styles.jumpForm}
+        aria-label={t('structure.jumpAria')}
+        onSubmit={handleJumpSubmit}
+      >
         <label className={styles.jumpLabel} htmlFor={PAGE_JUMP_INPUT_ID}>
-          Go to page
+          {t('structure.jumpLabel')}
         </label>
         <div className={styles.jumpRow}>
           <input
@@ -168,17 +215,17 @@ export const StructureTree: React.FC = () => {
             inputMode="numeric"
             autoComplete="off"
             spellCheck={false}
-            placeholder={`1–${pageCount}`}
+            placeholder={t('structure.jumpPlaceholder', { count: pageCount })}
             value={jumpValue}
             onChange={(event) => setJumpValue(event.target.value)}
           />
           <button className={styles.jumpButton} type="submit">
-            Go
+            {t('structure.jumpGo')}
           </button>
         </div>
       </form>
 
-      <nav className={styles.tree} aria-label="PDF page structure">
+      <nav className={styles.tree} aria-label={t('structure.navAria')}>
         {Array.from({ length: pageCount }, (_, index) => {
           const pageNumber = index + 1;
           const isActive = pageNumber === currentPage;
@@ -194,7 +241,7 @@ export const StructureTree: React.FC = () => {
                 aria-expanded={isExpanded}
               >
                 <span className={styles.pageIcon}>{isExpanded ? '▾' : '▸'}</span>
-                Page {pageNumber}
+                {t('common.page', { page: pageNumber })}
               </button>
 
               {isExpanded && (
@@ -205,15 +252,15 @@ export const StructureTree: React.FC = () => {
                     const visibleObjects = type ? getVisibleObjects(type, group.objects) : [];
 
                     return (
-                      <section className={styles.group} key={group.label}>
+                      <section className={styles.group} key={group.labelKey}>
                         <div className={styles.groupHeader}>
                           <span className={styles.groupIcon} aria-hidden="true">{group.icon}</span>
-                          <span>{group.label}</span>
+                          <span>{t(group.labelKey)}</span>
                           <span className={styles.count}>{group.objects.length}</span>
                         </div>
                         {visibleObjects.map((object, index) => {
                           const isSelected = selectedObject !== null && objectsMatch(selectedObject, object);
-                          const label = formatObjectLabel(object);
+                          const label = formatObjectLabel(object, t);
 
                           return (
                             <button
@@ -229,7 +276,11 @@ export const StructureTree: React.FC = () => {
                         })}
                         {group.objects.length > limit && (
                           <div className={styles.truncationHint}>
-                            {`Showing first ${limit} of ${group.objects.length} ${group.label.toLowerCase()}`}
+                            {t('structure.truncation', {
+                              limit,
+                              total: group.objects.length,
+                              group: t(group.nounKey),
+                            })}
                           </div>
                         )}
                       </section>

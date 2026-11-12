@@ -13,6 +13,7 @@ const rawIpc = vi.hoisted(() => ({
 vi.mock('../../services/ipc-client', () => ({ ipc: rawIpc }));
 
 import { useRawStore } from '../../store/raw-store';
+import { useI18nStore } from '../../i18n';
 import { RawTree, RAW_TREE_MAX_DEPTH, RAW_TREE_MAX_ENTRIES } from './RawTree';
 
 const CATALOG: RawRef = { objectNumber: 1, generation: 0 };
@@ -89,6 +90,7 @@ function showTree(document: RawDocument = makeDocument()): void {
 const tree = () => render(React.createElement(RawTree));
 
 beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
   useRawStore.getState().reset();
   rawIpc.rawObject.mockReset();
   rawIpc.rawObject.mockImplementation(async (ref: RawRef) => makeObject(ref));
@@ -367,5 +369,53 @@ describe('RawTree streams', () => {
 
     expect(screen.queryByTestId('raw-tree-truncated')).toBeNull();
     expect(screen.queryByTestId('raw-tree-stream-binary')).toBeNull();
+  });
+});
+
+describe('RawTree localization', () => {
+  it('translates the meta line, root labels and limits', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    showTree(makeDocument({ pages: 1, encrypted: true }));
+    tree();
+
+    expect(screen.getByTestId('raw-tree-meta').textContent).toBe('PDF 1.7 · 1 页 · 已加密');
+    expect(screen.getByRole('navigation', { name: '原始 PDF 对象树' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '展开 ID' })).toBeTruthy();
+    expect(screen.getByTitle('选择对象 1 0 R')).toBeTruthy();
+    expect(screen.getByText('不存在')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '展开 ID' }));
+    expect(screen.getByText('[0]')).toBeTruthy();
+  });
+
+  it('translates the value summaries, depth and truncation notices', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    const items: RawValue[] = Array.from({ length: RAW_TREE_MAX_ENTRIES + 5 }, (_value, index) => ({
+      kind: 'number',
+      value: index,
+    }));
+    showTree(
+      makeDocument({
+        roots: [
+          { label: 'ID', ref: null, value: { kind: 'array', truncated: false, items } },
+          { label: 'Deep', ref: null, value: nestedDict(RAW_TREE_MAX_DEPTH + 2) },
+        ],
+      }),
+    );
+    tree();
+
+    fireEvent.click(screen.getByRole('button', { name: '展开 ID' }));
+    expect(screen.getByTestId('raw-tree-truncated').textContent).toBe(
+      `仅显示前 ${RAW_TREE_MAX_ENTRIES} 项，共 ${RAW_TREE_MAX_ENTRIES + 5} 项。`,
+    );
+    expect(screen.getByText(`数组 · ${RAW_TREE_MAX_ENTRIES + 5} 项`)).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByTestId('raw-tree-truncated').textContent).toBe(
+      `Showing the first ${RAW_TREE_MAX_ENTRIES} of ${RAW_TREE_MAX_ENTRIES + 5} items.`,
+    );
   });
 });

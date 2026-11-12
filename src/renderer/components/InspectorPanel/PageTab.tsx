@@ -1,3 +1,4 @@
+import { useT } from '../../i18n';
 import { usePdfStore } from '../../store/pdf-store';
 import {
   PAGE_BOX_KEYS,
@@ -41,6 +42,7 @@ export const formatPageBox = (box: PageBox | null | undefined, unit: PageUnits):
 const BOX_LABEL = (box: PageBoxKey): string => PAGE_BOX_STYLES[box].label;
 
 export const PageTab = (): JSX.Element => {
+  const t = useT();
   const pageData = usePdfStore((state) => state.pageData);
   const pageUnits = useWorkspaceStore((state) => state.pageUnits);
   const setPageUnits = useWorkspaceStore((state) => state.setPageUnits);
@@ -57,26 +59,23 @@ export const PageTab = (): JSX.Element => {
   return (
     <div className={styles.pageTab}>
       <section className={shared.section}>
-        <h3 className={shared.sectionTitle}>Page</h3>
+        <h3 className={shared.sectionTitle}>{t('page.section.page')}</h3>
         <div className={shared.sectionContent}>
           <div className={shared.row}>
-            <span className={shared.label}>Size</span>
+            <span className={shared.label}>{t('page.row.size')}</span>
             <span className={shared.value}>
               {pageData ? formatPageSize(pageData.width, pageData.height, pageUnits) : '—'}
             </span>
           </div>
           <div className={shared.row}>
-            <span className={shared.label}>Rotation</span>
+            <span className={shared.label}>{t('page.row.rotation')}</span>
             <span className={shared.value}>{pageData ? `${rotation}°` : '—'}</span>
           </div>
-          {rotated && (
-            <p className={styles.rotationWarning}>
-              Object overlay is unavailable on rotated pages. Page boxes and rulers still work.
-            </p>
-          )}
+          {rotated && <p className={styles.rotationWarning}>{t('page.rotationWarning')}</p>}
           <div className={shared.row}>
-            <span className={shared.label}>Units</span>
-            <div className={styles.unitToggle} role="group" aria-label="Page units">
+            <span className={shared.label}>{t('page.row.units')}</span>
+            <div className={styles.unitToggle} role="group" aria-label={t('page.unitsAria')}>
+              {/* pt/mm are unit symbols and stay identical in both locales. */}
               {(['pt', 'mm'] as const).map((unit) => (
                 <button
                   key={unit}
@@ -96,7 +95,7 @@ export const PageTab = (): JSX.Element => {
       </section>
 
       <section className={shared.section}>
-        <h3 className={shared.sectionTitle}>Page boxes</h3>
+        <h3 className={shared.sectionTitle}>{t('page.section.boxes')}</h3>
         <div className={shared.sectionContent}>
           {PAGE_BOX_KEYS.map((box) => {
             // A box the page does not define has nothing to show or hide, so the
@@ -110,7 +109,7 @@ export const PageTab = (): JSX.Element => {
                     type="checkbox"
                     checked={defined && pageBoxVisibility[box]}
                     disabled={!defined}
-                    aria-label={`Show ${BOX_LABEL(box)}`}
+                    aria-label={t('page.showBox', { box: BOX_LABEL(box) })}
                     onChange={(event) => {
                       // A disabled control can still emit a synthetic change in
                       // tests; a missing box must never be persisted as visible.
@@ -132,17 +131,17 @@ export const PageTab = (): JSX.Element => {
       </section>
 
       <section className={shared.section}>
-        <h3 className={shared.sectionTitle}>Display</h3>
+        <h3 className={shared.sectionTitle}>{t('page.section.display')}</h3>
         <div className={shared.sectionContent}>
           <div className={shared.row}>
-            <span className={shared.label}>Rulers</span>
+            <span className={shared.label}>{t('page.row.rulers')}</span>
             <label className={shared.checkLabel}>
               <input
                 type="checkbox"
                 checked={showRulers}
                 onChange={(event) => setShowRulers(event.target.checked)}
               />
-              Show rulers
+              {t('page.showRulers')}
             </label>
           </div>
         </div>

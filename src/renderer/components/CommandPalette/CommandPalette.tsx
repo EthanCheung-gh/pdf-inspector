@@ -8,6 +8,7 @@ import React, {
   useSyncExternalStore,
 } from 'react';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
+import { useT, type MessageKey } from '../../i18n';
 import {
   listCommands,
   sortCommands,
@@ -27,6 +28,20 @@ interface CommandGroupView {
   group: CommandGroup;
   items: { command: CommandDefinition; index: number }[];
 }
+
+/**
+ * Group ids stay stable English keys (they also drive sorting); only the
+ * displayed label follows the active locale.
+ */
+const GROUP_LABEL_KEYS = {
+  File: 'command.group.file',
+  Navigate: 'command.group.navigate',
+  View: 'command.group.view',
+  Analyze: 'command.group.analyze',
+  Export: 'command.group.export',
+} as const satisfies Record<CommandGroup, MessageKey>;
+
+const groupLabelKey = (group: CommandGroup): MessageKey => GROUP_LABEL_KEYS[group];
 
 const isCommandEnabled = (command: CommandDefinition): boolean => {
   if (!command.isEnabled) return true;
@@ -53,6 +68,7 @@ const matchesQuery = (command: CommandDefinition, query: string): boolean => {
  * the page number, then closes before navigating.
  */
 export const CommandPalette: React.FC = () => {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<PaletteMode>('commands');
@@ -93,7 +109,7 @@ export const CommandPalette: React.FC = () => {
     () => [
       {
         id: GO_TO_PAGE_COMMAND_ID,
-        title: 'Go to page…',
+        title: t('palette.goToPageCommand'),
         group: 'Navigate',
         keywords: ['page', 'goto', 'jump', 'navigate'],
         isEnabled: () => pageCount > 0,
@@ -103,14 +119,14 @@ export const CommandPalette: React.FC = () => {
       },
       {
         id: CLOSE_PALETTE_COMMAND_ID,
-        title: 'Close palette',
+        title: t('palette.closeCommand'),
         group: 'View',
         keywords: ['dismiss', 'close', 'escape'],
         shortcut: 'Esc',
         run: () => undefined,
       },
     ],
-    [pageCount],
+    [pageCount, t],
   );
 
   const commands = useMemo(() => {
@@ -305,35 +321,40 @@ export const CommandPalette: React.FC = () => {
         {mode === 'commands' ? (
           <>
             <h2 id={titleId} className={styles.title}>
-              Command palette
+              {t('palette.title')}
             </h2>
             <input
               ref={searchRef}
               className={styles.search}
               type="text"
               role="combobox"
-              aria-label="Search commands"
+              aria-label={t('palette.search')}
               aria-autocomplete="list"
               aria-expanded="true"
               aria-controls={listId}
               aria-activedescendant={
                 activeCommand ? `command-palette-option-${activeIndex}` : undefined
               }
-              placeholder="Type a command…"
+              placeholder={t('palette.placeholder')}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={handleSearchKeyDown}
               spellCheck={false}
               autoComplete="off"
             />
-            <div className={styles.list} id={listId} role="listbox" aria-label="Commands">
+            <div className={styles.list} id={listId} role="listbox" aria-label={t('palette.commands')}>
               {grouped.length === 0 ? (
-                <p className={styles.empty}>No matching commands</p>
+                <p className={styles.empty}>{t('palette.empty')}</p>
               ) : (
                 grouped.map(({ group, items }) => (
-                  <div key={group} className={styles.group} role="group" aria-label={group}>
+                  <div
+                    key={group}
+                    className={styles.group}
+                    role="group"
+                    aria-label={t(groupLabelKey(group))}
+                  >
                     <div className={styles.groupLabel} aria-hidden="true">
-                      {group}
+                      {t(groupLabelKey(group))}
                     </div>
                     {items.map(({ command, index }) => {
                       const enabled = isCommandEnabled(command);
@@ -364,12 +385,12 @@ export const CommandPalette: React.FC = () => {
                 ))
               )}
             </div>
-            <p className={styles.hint}>↑↓ navigate · Enter run · Esc close</p>
+            <p className={styles.hint}>{t('palette.hint')}</p>
           </>
         ) : (
           <>
             <h2 id={titleId} className={styles.title}>
-              Go to page
+              {t('palette.goToPage')}
             </h2>
             <button
               className={styles.backButton}
@@ -379,7 +400,7 @@ export const CommandPalette: React.FC = () => {
                 setPageInput('');
               }}
             >
-              ← Back to commands
+              {t('palette.back')}
             </button>
             <form
               className={styles.pageForm}
@@ -389,7 +410,7 @@ export const CommandPalette: React.FC = () => {
               }}
             >
               <label className={styles.pageLabel} htmlFor={pageInputId}>
-                Page number
+                {t('palette.pageNumber')}
               </label>
               <input
                 ref={pageRef}
@@ -404,16 +425,20 @@ export const CommandPalette: React.FC = () => {
                   event.preventDefault();
                   submitPage();
                 }}
-                placeholder={pageCount > 0 ? `1 – ${pageCount}` : 'No document'}
+                placeholder={
+                  pageCount > 0
+                    ? t('palette.pagePlaceholder', { count: pageCount })
+                    : t('palette.noDocument')
+                }
                 spellCheck={false}
                 autoComplete="off"
               />
               <button className={styles.goButton} type="submit" disabled={pageCount <= 0}>
-                Go
+                {t('palette.go')}
               </button>
             </form>
             <p className={styles.hint}>
-              Enter a page number; values outside 1 – {pageCount} are clamped.
+              {t('palette.pageHint', { count: pageCount })}
             </p>
           </>
         )}

@@ -2,22 +2,54 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   AUDIT_CATEGORIES,
   AUDIT_SEVERITIES,
+  type AuditCategory,
   type AuditFinding,
   type AuditReport,
   type AuditSeverity,
 } from '../../../shared/audit-types';
+import {
+  translatePlural,
+  useI18nStore,
+  useT,
+  type MessageKey,
+  type TranslateFn,
+} from '../../i18n';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { ipc } from '../../services/ipc-client';
 import { exportStemFromName } from '../../services/export-data';
 import { useAuditStore, type AuditFilter } from '../../store/audit-store';
 import styles from './AuditWorkspace.module.css';
 
-const capitalize = (value: string): string => value.charAt(0).toUpperCase() + value.slice(1);
-
 /** `Page 7` for a page finding, `Document` for a document-level one. */
-export function auditPageLabel(page: number | null): string {
-  return page === null ? 'Document' : `Page ${page}`;
+export function auditPageLabel(
+  page: number | null,
+  t: TranslateFn,
+): string {
+  return page === null ? t('audit.page.document') : t('audit.page.page', { page });
 }
+
+const CATEGORY_KEYS: Record<AuditCategory, MessageKey> = {
+  fonts: 'audit.category.fonts',
+  pages: 'audit.category.pages',
+  images: 'audit.category.images',
+  metadata: 'audit.category.metadata',
+  structure: 'audit.category.structure',
+  security: 'audit.category.security',
+};
+
+/** Translated display name of an audit category (schema values stay lowercase). */
+export const auditCategoryLabel = (category: AuditCategory, t: TranslateFn): string =>
+  t(CATEGORY_KEYS[category]);
+
+const SEVERITY_KEYS: Record<AuditSeverity, MessageKey> = {
+  error: 'audit.severity.error',
+  warning: 'audit.severity.warning',
+  info: 'audit.severity.info',
+};
+
+/** Translated display name of a severity, as used by filter options. */
+export const auditSeverityLabel = (severity: AuditSeverity, t: TranslateFn): string =>
+  t(SEVERITY_KEYS[severity]);
 
 /**
  * `report.pdf` -> `report.audit.json`, `测试 报告.pdf` -> `测试 报告.audit.json`.
@@ -48,20 +80,25 @@ export function filterAuditFindings(
 }
 
 const Summary: React.FC<{ report: AuditReport }> = ({ report }) => {
+  const t = useT();
   const { summary, document } = report;
-  const counts: Array<[string, number, AuditSeverity]> = [
-    ['Errors', summary.errors, 'error'],
-    ['Warnings', summary.warnings, 'warning'],
-    ['Info', summary.info, 'info'],
-    ['Total', summary.total, 'info'],
+  const counts: Array<[MessageKey, number, AuditSeverity]> = [
+    ['audit.summary.errors', summary.errors, 'error'],
+    ['audit.summary.warnings', summary.warnings, 'warning'],
+    ['audit.summary.info', summary.info, 'info'],
+    ['audit.summary.total', summary.total, 'info'],
   ];
 
   return (
     <>
-      <dl className={styles.summaryGrid} aria-label="Audit findings summary" data-testid="audit-summary">
-        {counts.map(([label, value, severity]) => (
-          <div key={label} className={styles.summaryItem}>
-            <dt className={styles.summaryLabel}>{label}</dt>
+      <dl
+        className={styles.summaryGrid}
+        aria-label={t('audit.summaryLabel')}
+        data-testid="audit-summary"
+      >
+        {counts.map(([labelKey, value, severity]) => (
+          <div key={labelKey} className={styles.summaryItem}>
+            <dt className={styles.summaryLabel}>{t(labelKey)}</dt>
             <dd className={styles.summaryValue} data-severity={severity}>
               {value}
             </dd>
@@ -71,27 +108,29 @@ const Summary: React.FC<{ report: AuditReport }> = ({ report }) => {
 
       <dl
         className={styles.documentGrid}
-        aria-label="Audit document information"
+        aria-label={t('audit.documentInfoLabel')}
         data-testid="audit-document-info"
       >
         <div className={styles.documentItem}>
-          <dt className={styles.summaryLabel}>Pages</dt>
+          <dt className={styles.summaryLabel}>{t('audit.document.pages')}</dt>
           <dd className={styles.summaryValue}>{document.pages}</dd>
         </div>
         <div className={styles.documentItem}>
-          <dt className={styles.summaryLabel}>Version</dt>
+          <dt className={styles.summaryLabel}>{t('audit.document.version')}</dt>
           <dd className={styles.summaryValue}>{document.version || '—'}</dd>
         </div>
         <div className={styles.documentItem}>
-          <dt className={styles.summaryLabel}>Encrypted</dt>
-          <dd className={styles.summaryValue}>{document.encrypted ? 'Yes' : 'No'}</dd>
+          <dt className={styles.summaryLabel}>{t('audit.document.encrypted')}</dt>
+          <dd className={styles.summaryValue}>
+            {document.encrypted ? t('audit.yes') : t('audit.no')}
+          </dd>
         </div>
         <div className={styles.documentItem}>
-          <dt className={styles.summaryLabel}>Tagged</dt>
-          <dd className={styles.summaryValue}>{document.tagged ? 'Yes' : 'No'}</dd>
+          <dt className={styles.summaryLabel}>{t('audit.document.tagged')}</dt>
+          <dd className={styles.summaryValue}>{document.tagged ? t('audit.yes') : t('audit.no')}</dd>
         </div>
         <div className={styles.documentItem}>
-          <dt className={styles.summaryLabel}>Language</dt>
+          <dt className={styles.summaryLabel}>{t('audit.document.language')}</dt>
           <dd className={styles.summaryValue}>{document.language ?? '—'}</dd>
         </div>
       </dl>
@@ -102,57 +141,61 @@ const Summary: React.FC<{ report: AuditReport }> = ({ report }) => {
 const FindingDetail: React.FC<{ finding: AuditFinding; onOpenPage: () => void }> = ({
   finding,
   onOpenPage,
-}) => (
-  <div className={styles.detailBody} data-testid="audit-finding-detail">
-    <h3 className={styles.detailTitle}>{finding.title}</h3>
+}) => {
+  const t = useT();
+  return (
+    <div className={styles.detailBody} data-testid="audit-finding-detail">
+      <h3 className={styles.detailTitle}>{finding.title}</h3>
 
-    <dl className={styles.detailList}>
-      <div className={styles.detailRow}>
-        <dt>Category</dt>
-        <dd>{capitalize(finding.category)}</dd>
-      </div>
-      <div className={styles.detailRow}>
-        <dt>Severity</dt>
-        <dd>
-          <span className={styles.severityBadge} data-severity={finding.severity}>
-            {finding.severity}
-          </span>
-        </dd>
-      </div>
-      <div className={styles.detailRow}>
-        <dt>Page</dt>
-        <dd>{auditPageLabel(finding.page)}</dd>
-      </div>
-    </dl>
+      <dl className={styles.detailList}>
+        <div className={styles.detailRow}>
+          <dt>{t('audit.detail.category')}</dt>
+          <dd>{auditCategoryLabel(finding.category, t)}</dd>
+        </div>
+        <div className={styles.detailRow}>
+          <dt>{t('audit.detail.severity')}</dt>
+          <dd>
+            {/* The badge shows the schema value so reports stay comparable. */}
+            <span className={styles.severityBadge} data-severity={finding.severity}>
+              {finding.severity}
+            </span>
+          </dd>
+        </div>
+        <div className={styles.detailRow}>
+          <dt>{t('audit.detail.page')}</dt>
+          <dd>{auditPageLabel(finding.page, t)}</dd>
+        </div>
+      </dl>
 
-    <p className={styles.detailText}>{finding.detail}</p>
+      <p className={styles.detailText}>{finding.detail}</p>
 
-    {finding.evidence !== null && finding.evidence !== '' && (
-      <section className={styles.block}>
-        <h4 className={styles.blockTitle}>Evidence</h4>
-        <pre className={styles.pre}>{finding.evidence}</pre>
-      </section>
-    )}
+      {finding.evidence !== null && finding.evidence !== '' && (
+        <section className={styles.block}>
+          <h4 className={styles.blockTitle}>{t('audit.detail.evidence')}</h4>
+          <pre className={styles.pre}>{finding.evidence}</pre>
+        </section>
+      )}
 
-    {finding.recommendation !== null && finding.recommendation !== '' && (
-      <section className={styles.block}>
-        <h4 className={styles.blockTitle}>Recommendation</h4>
-        <p className={styles.detailText}>{finding.recommendation}</p>
-      </section>
-    )}
+      {finding.recommendation !== null && finding.recommendation !== '' && (
+        <section className={styles.block}>
+          <h4 className={styles.blockTitle}>{t('audit.detail.recommendation')}</h4>
+          <p className={styles.detailText}>{finding.recommendation}</p>
+        </section>
+      )}
 
-    {finding.page !== null && (
-      <button
-        className={styles.button}
-        type="button"
-        onClick={onOpenPage}
-        title="Leave Audit and show this page in Inspect"
-      >
-        Open page
-      </button>
-    )}
-  </div>
-);
+      {finding.page !== null && (
+        <button
+          className={styles.button}
+          type="button"
+          onClick={onOpenPage}
+          title={t('audit.detail.openPageTitle')}
+        >
+          {t('audit.detail.openPage')}
+        </button>
+      )}
+    </div>
+  );
+};
 
 /**
  * The Audit workspace: document summary + filters, the findings list and the
@@ -163,6 +206,8 @@ const FindingDetail: React.FC<{ finding: AuditFinding; onOpenPage: () => void }>
  * in `open()` — this view only reports loading, progress and errors.
  */
 export const AuditWorkspace: React.FC = () => {
+  const t = useT();
+  const locale = useI18nStore((s) => s.locale);
   const fileName = useAuditStore((s) => s.fileName);
   const report = useAuditStore((s) => s.report);
   const loading = useAuditStore((s) => s.loading);
@@ -203,11 +248,17 @@ export const AuditWorkspace: React.FC = () => {
       });
       // A dismissed dialog is not an error; the user simply changed their mind.
       if (response.canceled) return;
-      if (response.error) setExportError(`Export failed: ${response.error}`);
+      if (response.error) {
+        setExportError(t('export.failedDetail', { error: response.error }));
+      }
     } catch (err) {
-      setExportError(err instanceof Error ? `Export failed: ${err.message}` : 'Export failed');
+      setExportError(
+        err instanceof Error
+          ? t('export.failedDetail', { error: err.message })
+          : t('export.failed'),
+      );
     }
-  }, []);
+  }, [t]);
 
   const handleOpenPage = useCallback(() => {
     const state = useAuditStore.getState();
@@ -221,17 +272,21 @@ export const AuditWorkspace: React.FC = () => {
 
   const progressText =
     progress && progress.total > 0
-      ? `Auditing pages ${progress.done}/${progress.total}…`
-      : 'Auditing document…';
+      ? t('audit.progressPages', { done: progress.done, total: progress.total })
+      : t('audit.progressDocument');
 
   return (
-    <section className={styles.workspace} aria-label="PDF audit workspace" data-testid="audit-workspace">
+    <section
+      className={styles.workspace}
+      aria-label={t('audit.workspaceLabel')}
+      data-testid="audit-workspace"
+    >
       <header className={styles.toolbar}>
         <button className={styles.button} type="button" onClick={close}>
-          Back to Inspect
+          {t('workspace.backToInspect')}
         </button>
         <span className={styles.separator} />
-        <span className={styles.title}>Audit</span>
+        <span className={styles.title}>{t('audit.title')}</span>
         <span
           className={styles.fileName}
           title={fileName ?? '—'}
@@ -248,18 +303,18 @@ export const AuditWorkspace: React.FC = () => {
             type="button"
             onClick={() => void runAudit()}
             disabled={loading}
-            title={report ? 'Audit the document again' : 'Audit the open document'}
+            title={report ? t('audit.reRunTitle') : t('audit.runTitle')}
           >
-            {loading ? 'Auditing…' : report ? 'Re-run' : 'Run'}
+            {loading ? t('audit.running') : report ? t('audit.reRun') : t('audit.run')}
           </button>
           <button
             className={styles.button}
             type="button"
             onClick={() => void handleExportJson()}
             disabled={!report}
-            title="Save the full AuditReport as JSON"
+            title={t('audit.exportTitle')}
           >
-            Export JSON
+            {t('common.exportJson')}
           </button>
         </div>
       </header>
@@ -271,48 +326,48 @@ export const AuditWorkspace: React.FC = () => {
       )}
 
       <div className={styles.body}>
-        <aside className={styles.summaryPane} aria-label="Audit summary">
+        <aside className={styles.summaryPane} aria-label={t('audit.summaryPaneLabel')}>
           {report ? (
             <Summary report={report} />
           ) : (
             <p className={styles.hint}>
-              {loading ? 'Reading the document…' : 'No audit yet.'}
+              {loading ? t('audit.reading') : t('audit.noAudit')}
             </p>
           )}
 
           <div className={styles.filters}>
             <label className={styles.filterLabel}>
-              Severity
+              {t('audit.filter.severity')}
               <select
                 className={styles.select}
-                aria-label="Filter by severity"
+                aria-label={t('audit.filter.severityTitle')}
                 value={filter.severity}
                 onChange={(event) =>
                   setFilter({ severity: event.target.value as AuditFilter['severity'] })
                 }
               >
-                <option value="all">All severities</option>
+                <option value="all">{t('audit.filter.allSeverities')}</option>
                 {AUDIT_SEVERITIES.map((severity) => (
                   <option key={severity} value={severity}>
-                    {capitalize(severity)}
+                    {auditSeverityLabel(severity, t)}
                   </option>
                 ))}
               </select>
             </label>
             <label className={styles.filterLabel}>
-              Category
+              {t('audit.filter.category')}
               <select
                 className={styles.select}
-                aria-label="Filter by category"
+                aria-label={t('audit.filter.categoryTitle')}
                 value={filter.category}
                 onChange={(event) =>
                   setFilter({ category: event.target.value as AuditFilter['category'] })
                 }
               >
-                <option value="all">All categories</option>
+                <option value="all">{t('audit.filter.allCategories')}</option>
                 {AUDIT_CATEGORIES.map((category) => (
                   <option key={category} value={category}>
-                    {capitalize(category)}
+                    {auditCategoryLabel(category, t)}
                   </option>
                 ))}
               </select>
@@ -323,7 +378,7 @@ export const AuditWorkspace: React.FC = () => {
               onClick={() => setFilter({ severity: 'all', category: 'all' })}
               disabled={!filterActive}
             >
-              Reset
+              {t('common.reset')}
             </button>
           </div>
         </aside>
@@ -331,7 +386,7 @@ export const AuditWorkspace: React.FC = () => {
         <div className={styles.center}>
           {error && (
             <p className={styles.error} role="alert">
-              Audit failed: {error}
+              {t('audit.failed', { error })}
             </p>
           )}
 
@@ -343,27 +398,27 @@ export const AuditWorkspace: React.FC = () => {
 
           {!report && !loading && !error && (
             <p className={styles.emptyState} data-testid="audit-empty">
-              No audit yet. Enter this workspace from the toolbar to check the open document.
+              {t('audit.emptyWorkspace')}
             </p>
           )}
 
           {report && findingCount === 0 && !loading && (
             <p className={styles.emptyState} role="status">
-              No findings — the document passed every check.
+              {t('audit.noFindings')}
             </p>
           )}
 
           {report && findingCount > 0 && (
             <p className={styles.listCount} data-testid="audit-filtered-count">
               {filterActive
-                ? `${filtered.length} of ${findingCount} findings`
-                : `${findingCount} finding${findingCount === 1 ? '' : 's'}`}
+                ? t('audit.filteredCount', { filtered: filtered.length, total: findingCount })
+                : translatePlural(locale, 'audit.count', findingCount)}
             </p>
           )}
 
           {report && findingCount > 0 && filtered.length === 0 && !loading && (
             <p className={styles.emptyState} role="status">
-              No findings match this filter.
+              {t('audit.noFilterMatch')}
             </p>
           )}
 
@@ -376,14 +431,14 @@ export const AuditWorkspace: React.FC = () => {
                     className={`${styles.findingItem} ${isSelected ? styles.findingItemSelected : ''}`}
                     type="button"
                     aria-pressed={isSelected}
-                    aria-label={`${finding.severity} ${finding.category} ${auditPageLabel(finding.page)}: ${finding.title}`}
+                    aria-label={`${finding.severity} ${finding.category} ${auditPageLabel(finding.page, t)}: ${finding.title}`}
                     onClick={() => selectFinding(finding)}
                   >
                     <span className={styles.severityBadge} data-severity={finding.severity}>
                       {finding.severity}
                     </span>
                     <span className={styles.findingCategory}>{finding.category}</span>
-                    <span className={styles.findingPage}>{auditPageLabel(finding.page)}</span>
+                    <span className={styles.findingPage}>{auditPageLabel(finding.page, t)}</span>
                     <span className={styles.findingTitle} title={finding.title}>
                       {finding.title}
                     </span>
@@ -394,11 +449,11 @@ export const AuditWorkspace: React.FC = () => {
           </ul>
         </div>
 
-        <aside className={styles.details} aria-label="Finding details">
+        <aside className={styles.details} aria-label={t('audit.detailsLabel')}>
           {selected ? (
             <FindingDetail finding={selected} onOpenPage={handleOpenPage} />
           ) : (
-            <p className={styles.hint}>Select a finding to see its detail, evidence and fix.</p>
+            <p className={styles.hint}>{t('audit.detail.selectFinding')}</p>
           )}
         </aside>
       </div>

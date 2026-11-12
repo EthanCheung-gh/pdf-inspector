@@ -1,4 +1,5 @@
 import { useId, useRef, useState, type KeyboardEvent } from "react";
+import { useT, type MessageKey } from "../../i18n";
 import { EXPORT_OBJECT_TYPES } from "../../services/export-data";
 import { describeFilterCriteria } from "../../services/filter-summary";
 import { usePdfStore } from "../../store/pdf-store";
@@ -14,14 +15,15 @@ import { PageTab } from "./PageTab";
 import { ResultsTab } from "./ResultsTab";
 import styles from "./InspectorPanel.module.css";
 
-const TAB_LABELS: Record<InspectorTab, string> = {
-  inspect: "Inspect",
-  filter: "Filter",
-  results: "Results",
-  page: "Page",
+const TAB_LABEL_KEYS: Record<InspectorTab, MessageKey> = {
+  inspect: "inspector.tab.inspect",
+  filter: "inspector.tab.filter",
+  results: "inspector.tab.results",
+  page: "inspector.tab.page",
 };
 
 export const InspectorPanel = (): JSX.Element => {
+  const t = useT();
   const inspectorTab = useWorkspaceStore((state) => state.inspectorTab);
   const setInspectorTab = useWorkspaceStore((state) => state.setInspectorTab);
   const toggleRightCollapsed = useWorkspaceStore((state) => state.toggleRightCollapsed);
@@ -34,7 +36,7 @@ export const InspectorPanel = (): JSX.Element => {
   const baseId = useId();
   const tabRefs = useRef<Partial<Record<InspectorTab, HTMLButtonElement | null>>>({});
 
-  const filterCount = describeFilterCriteria(filterCriteria).count;
+  const filterCount = describeFilterCriteria(filterCriteria, t).count;
   const resultsCount = subset ? subset.objects.length : null;
   const counts: Record<InspectorTab, number | null> = {
     inspect: null,
@@ -72,15 +74,15 @@ export const InspectorPanel = (): JSX.Element => {
   };
 
   return (
-    <aside className={styles.panel} aria-label="Object inspector">
+    <aside className={styles.panel} aria-label={t("inspector.aria")}>
       {/* The tablist keeps only tabs; the collapse control is its sibling so the
           keyed tab navigation stays a single, unambiguous group. */}
       <div className={styles.header}>
-        <div className={styles.tabs} role="tablist" aria-label="Inspector tabs">
+        <div className={styles.tabs} role="tablist" aria-label={t("inspector.tabsAria")}>
           {INSPECTOR_TABS.map((tab, index) => {
             const active = inspectorTab === tab;
             const count = counts[tab];
-            const label = TAB_LABELS[tab];
+            const label = t(TAB_LABEL_KEYS[tab]);
 
             return (
               <button
@@ -94,7 +96,9 @@ export const InspectorPanel = (): JSX.Element => {
                 id={tabId(tab)}
                 aria-selected={active}
                 aria-controls={panelId(tab)}
-                aria-label={count === null ? label : `${label} (${count})`}
+                aria-label={
+                  count === null ? label : t("inspector.tabAria", { label, count })
+                }
                 tabIndex={active ? 0 : -1}
                 onClick={() => setInspectorTab(tab)}
                 onKeyDown={(event) => handleTabKeyDown(event, index)}
@@ -112,8 +116,8 @@ export const InspectorPanel = (): JSX.Element => {
         <button
           className={styles.collapseButton}
           type="button"
-          aria-label="Hide right panel"
-          title="Hide right panel"
+          aria-label={t("inspector.hide")}
+          title={t("inspector.hide")}
           onClick={toggleRightCollapsed}
         >
           <span aria-hidden="true">›</span>

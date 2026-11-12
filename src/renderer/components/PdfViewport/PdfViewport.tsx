@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { useT } from '../../i18n';
 import { usePdfStore } from '../../store/pdf-store';
 import { usePdf } from '../../hooks/usePdf';
 import { computeFitWidthZoom } from '../../services/page-geometry';
@@ -14,6 +15,7 @@ const FIT_MODE_TOLERANCE = 0.01;
 export const WHEEL_ZOOM_STEP = 0.1;
 
 export const PdfViewport: React.FC = () => {
+  const t = useT();
   const filePath = usePdfStore((s) => s.filePath);
   const currentPage = usePdfStore((s) => s.currentPage);
   const zoom = usePdfStore((s) => s.zoom);
@@ -125,7 +127,7 @@ export const PdfViewport: React.FC = () => {
     return (
       <div className={styles.emptyState}>
         <div className={styles.emptyIcon}>📄</div>
-        <p>Open a PDF file to start inspecting</p>
+        <p>{t('viewer.empty')}</p>
       </div>
     );
   }
@@ -133,7 +135,7 @@ export const PdfViewport: React.FC = () => {
   if (loading) {
     return (
       <div className={styles.emptyState}>
-        <p>Loading PDF...</p>
+        <p>{t('viewer.loading')}</p>
       </div>
     );
   }
@@ -141,7 +143,7 @@ export const PdfViewport: React.FC = () => {
   if (error) {
     return (
       <div className={styles.emptyState}>
-        <p className={styles.errorText}>Error: {error}</p>
+        <p className={styles.errorText}>{t('common.errorDetail', { error })}</p>
       </div>
     );
   }

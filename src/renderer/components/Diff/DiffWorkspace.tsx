@@ -5,12 +5,18 @@ import type {
   DiffResult,
   DiffSide,
 } from '../../../shared/diff-types';
+import {
+  translatePlural,
+  useI18nStore,
+  useT,
+  type MessageKey,
+  type TranslateFn,
+} from '../../i18n';
 import { ipc } from '../../services/ipc-client';
 import { useElapsedSeconds } from '../../hooks/useElapsedSeconds';
 import {
   DIFF_CHANGE_KINDS,
   DIFF_OBJECT_TYPE_ORDER,
-  DIFF_PAGE_STATUS_LABELS,
   buildDiffPageGroups,
   collectOverlayBoxes,
   collectPageBoxes,
@@ -19,11 +25,11 @@ import {
   describeDiffDetails,
   diffChangePreview,
   diffPageLabel,
+  diffPageStatusLabel,
   firstInterestingPageIndex,
   formatDiffBBox,
   isDiffFilterActive,
   isDiffResultEmpty,
-  isPageGeometryChange,
   pageGeometrySummary,
   resolveDiffPageJump,
   suggestDiffJsonFilename,
@@ -46,64 +52,65 @@ const PANE_GAP = 8;
 /** Zoom step of the workspace's −/+ buttons, matching the Inspect toolbar. */
 const ZOOM_STEP = 0.25;
 
-/** Toolbar labels for the visual styles. */
-const VISUAL_STYLE_LABELS: Record<VisualDiffStyle, string> = {
-  blend: 'Blend',
-  heatmap: 'Heatmap',
-  boxes: 'Boxes',
+/** Message keys of the visual style buttons. */
+const VISUAL_STYLE_KEYS: Record<VisualDiffStyle, MessageKey> = {
+  blend: 'diff.visualStyle.blend',
+  heatmap: 'diff.visualStyle.heatmap',
+  boxes: 'diff.visualStyle.boxes',
 };
 
 /**
  * Side/page label of one ignore region: a paired region masks both pages, a
  * one-sided region only the page that exists.
  */
-export function describeIgnoreRegion(region: DiffIgnoreRegion): string {
+export function describeIgnoreRegion(region: DiffIgnoreRegion, t: TranslateFn): string {
   const side =
     region.oldPage !== null && region.newPage !== null
-      ? 'both'
+      ? t('diff.region.side.both')
       : region.newPage !== null
-        ? 'new'
-        : 'old';
+        ? t('diff.region.side.new')
+        : t('diff.region.side.old');
   const pages =
     region.oldPage !== null && region.newPage !== null
       ? region.oldPage === region.newPage
-        ? `page ${region.oldPage}`
-        : `old ${region.oldPage} → new ${region.newPage}`
+        ? t('diff.region.page', { page: region.oldPage })
+        : t('diff.region.pagePair', { old: region.oldPage, new: region.newPage })
       : region.newPage !== null
-        ? `page ${region.newPage}`
-        : `page ${region.oldPage}`;
+        ? t('diff.region.page', { page: region.newPage })
+        : t('diff.region.page', { page: region.oldPage ?? '—' });
   return `${side} · ${pages}`;
 }
 
-const changePages = (change: DiffChange): string => {
+const changePages = (change: DiffChange, t: TranslateFn): string => {
   if (change.oldPage !== null && change.newPage !== null) {
     return change.oldPage === change.newPage
-      ? `Page ${change.oldPage}`
-      : `Old ${change.oldPage} → New ${change.newPage}`;
+      ? t('diff.page.same', { page: change.oldPage })
+      : t('diff.page.pair', { old: change.oldPage, new: change.newPage });
   }
-  if (change.newPage !== null) return `New page ${change.newPage} (added)`;
-  if (change.oldPage !== null) return `Old page ${change.oldPage} (removed)`;
+  if (change.newPage !== null) return t('diff.change.pageAdded', { page: change.newPage });
+  if (change.oldPage !== null) return t('diff.change.pageRemoved', { page: change.oldPage });
   return '—';
 };
 
 const Summary: React.FC<{ result: DiffResult }> = ({ result }) => {
+  const t = useT();
   const { summary } = result;
-  const items: Array<[string, string]> = [
-    ['Pages', `${result.old.pages} → ${result.new.pages}`],
-    ['Changed pages', String(summary.pagesChanged)],
-    ['Pages added', String(summary.pagesAdded)],
-    ['Pages removed', String(summary.pagesRemoved)],
-    ['Objects added', String(summary.objectsAdded)],
-    ['Objects removed', String(summary.objectsRemoved)],
-    ['Objects moved', String(summary.objectsMoved)],
-    ['Objects modified', String(summary.objectsModified)],
+  const items: Array<[MessageKey, string]> = [
+    ['diff.summary.pages', `${result.old.pages} → ${result.new.pages}`],
+    ['diff.summary.changedPages', String(summary.pagesChanged)],
+    ['diff.summary.pagesAdded', String(summary.pagesAdded)],
+    ['diff.summary.pagesRemoved', String(summary.pagesRemoved)],
+    ['diff.summary.objectsAdded', String(summary.objectsAdded)],
+    ['diff.summary.objectsRemoved', String(summary.objectsRemoved)],
+    ['diff.summary.objectsMoved', String(summary.objectsMoved)],
+    ['diff.summary.objectsModified', String(summary.objectsModified)],
   ];
 
   return (
-    <dl className={styles.summaryGrid} aria-label="Diff summary" data-testid="diff-summary">
-      {items.map(([label, value]) => (
-        <div key={label} className={styles.summaryItem}>
-          <dt className={styles.summaryLabel}>{label}</dt>
+    <dl className={styles.summaryGrid} aria-label={t('diff.summary.label')} data-testid="diff-summary">
+      {items.map(([labelKey, value]) => (
+        <div key={labelKey} className={styles.summaryItem}>
+          <dt className={styles.summaryLabel}>{t(labelKey)}</dt>
           <dd className={styles.summaryValue}>{value}</dd>
         </div>
       ))}
@@ -112,9 +119,10 @@ const Summary: React.FC<{ result: DiffResult }> = ({ result }) => {
 };
 
 const ChangeDetails: React.FC<{ change: DiffChange }> = ({ change }) => {
-  const detailRows = describeDiffDetails(change);
+  const t = useT();
+  const detailRows = describeDiffDetails(change, t);
   const cellChanges = tableCellChanges(change);
-  const geometry = pageGeometrySummary(change);
+  const geometry = pageGeometrySummary(change, t);
   const hasText = Boolean(change.textOld) || Boolean(change.textNew);
 
   return (
@@ -128,15 +136,15 @@ const ChangeDetails: React.FC<{ change: DiffChange }> = ({ change }) => {
 
       <dl className={styles.detailList}>
         <div className={styles.detailRow}>
-          <dt>Page</dt>
-          <dd>{changePages(change)}</dd>
+          <dt>{t('diff.detail.page')}</dt>
+          <dd>{changePages(change, t)}</dd>
         </div>
         <div className={styles.detailRow}>
-          <dt>Old box</dt>
+          <dt>{t('diff.detail.oldBox')}</dt>
           <dd>{formatDiffBBox(change.oldBBox)}</dd>
         </div>
         <div className={styles.detailRow}>
-          <dt>New box</dt>
+          <dt>{t('diff.detail.newBox')}</dt>
           <dd>{formatDiffBBox(change.newBBox)}</dd>
         </div>
       </dl>
@@ -146,18 +154,18 @@ const ChangeDetails: React.FC<{ change: DiffChange }> = ({ change }) => {
           {geometry.map((line) => (
             <p key={line}>{line}</p>
           ))}
-          <p className={styles.geometryHint}>Page geometry is reported as a page, not an object box.</p>
+          <p className={styles.geometryHint}>{t('diff.detail.geometryHint')}</p>
         </div>
       )}
 
       {hasText && (
         <div className={styles.textBlock}>
           <div>
-            <span className={styles.textLabel}>Old</span>
+            <span className={styles.textLabel}>{t('diff.side.old')}</span>
             <pre className={styles.pre}>{change.textOld ?? '—'}</pre>
           </div>
           <div>
-            <span className={styles.textLabel}>New</span>
+            <span className={styles.textLabel}>{t('diff.side.new')}</span>
             <pre className={styles.pre}>{change.textNew ?? '—'}</pre>
           </div>
         </div>
@@ -167,9 +175,9 @@ const ChangeDetails: React.FC<{ change: DiffChange }> = ({ change }) => {
         <table className={styles.detailTable}>
           <thead>
             <tr>
-              <th scope="col">Detail</th>
-              <th scope="col">Old</th>
-              <th scope="col">New</th>
+              <th scope="col">{t('diff.detail.column')}</th>
+              <th scope="col">{t('diff.side.old')}</th>
+              <th scope="col">{t('diff.side.new')}</th>
             </tr>
           </thead>
           <tbody>
@@ -186,12 +194,12 @@ const ChangeDetails: React.FC<{ change: DiffChange }> = ({ change }) => {
 
       {cellChanges.length > 0 && (
         <table className={styles.detailTable} data-testid="diff-cell-changes">
-          <caption className={styles.tableCaption}>Table cells</caption>
+          <caption className={styles.tableCaption}>{t('diff.detail.tableCells')}</caption>
           <thead>
             <tr>
-              <th scope="col">Cell</th>
-              <th scope="col">Old</th>
-              <th scope="col">New</th>
+              <th scope="col">{t('diff.detail.cell')}</th>
+              <th scope="col">{t('diff.side.old')}</th>
+              <th scope="col">{t('diff.side.new')}</th>
             </tr>
           </thead>
           <tbody>
@@ -209,7 +217,7 @@ const ChangeDetails: React.FC<{ change: DiffChange }> = ({ change }) => {
       )}
 
       {!hasText && detailRows.length === 0 && cellChanges.length === 0 && geometry.length === 0 && (
-        <p className={styles.hint}>No further details for this change.</p>
+        <p className={styles.hint}>{t('diff.detail.none')}</p>
       )}
     </div>
   );
@@ -223,6 +231,8 @@ const ChangeDetails: React.FC<{ change: DiffChange }> = ({ change }) => {
  * switching pages, zoom or view mode never touches the Inspect document.
  */
 export const DiffWorkspace: React.FC = () => {
+  const t = useT();
+  const locale = useI18nStore((s) => s.locale);
   const result = useDiffStore((s) => s.result);
   const loading = useDiffStore((s) => s.loading);
   const error = useDiffStore((s) => s.error);
@@ -421,14 +431,16 @@ export const DiffWorkspace: React.FC = () => {
       });
       if (response.canceled) return;
       if (response.error) {
-        useDiffStore.getState().setError(`Export failed: ${response.error}`);
+        useDiffStore.getState().setError(t('export.failedDetail', { error: response.error }));
       }
     } catch (err) {
       useDiffStore.getState().setError(
-        err instanceof Error ? `Export failed: ${err.message}` : 'Export failed',
+        err instanceof Error
+          ? t('export.failedDetail', { error: err.message })
+          : t('export.failed'),
       );
     }
-  }, []);
+  }, [t]);
 
   /**
    * Re-run the comparison with the drawn regions.
@@ -441,7 +453,7 @@ export const DiffWorkspace: React.FC = () => {
     const state = useDiffStore.getState();
     if (state.loading) return;
     if (!state.oldSource || !state.newSource) {
-      state.setError('Choose both PDFs before applying ignore regions.');
+      state.setError(t('diff.region.chooseBoth'));
       return;
     }
 
@@ -455,9 +467,9 @@ export const DiffWorkspace: React.FC = () => {
     } catch (err) {
       const store = useDiffStore.getState();
       store.setLoading(false);
-      store.setError(err instanceof Error ? err.message : 'Diff failed');
+      store.setError(err instanceof Error ? err.message : t('diff.setup.diffFailed'));
     }
-  }, []);
+  }, [t]);
 
   const empty = result ? isDiffResultEmpty(pages) : false;
   // Overlay draws exactly one page, so it must be the side that owns it. An
@@ -478,13 +490,17 @@ export const DiffWorkspace: React.FC = () => {
     : null;
 
   return (
-    <section className={styles.workspace} aria-label="PDF diff workspace" data-testid="diff-workspace">
+    <section
+      className={styles.workspace}
+      aria-label={t('diff.workspace.aria')}
+      data-testid="diff-workspace"
+    >
       <header className={styles.toolbar}>
         <button className={styles.button} type="button" onClick={exitWorkspace}>
-          Back to Inspect
+          {t('workspace.backToInspect')}
         </button>
         <span className={styles.separator} />
-        <span className={styles.title}>Diff</span>
+        <span className={styles.title}>{t('diff.workspace.title')}</span>
         <span
           className={styles.names}
           title={`${oldName ?? '—'} → ${newName ?? '—'}`}
@@ -495,32 +511,32 @@ export const DiffWorkspace: React.FC = () => {
 
         <span className={styles.spacer} />
 
-        <div className={styles.group} role="group" aria-label="Diff view mode">
+        <div className={styles.group} role="group" aria-label={t('diff.workspace.viewModeGroup')}>
           <button
             className={`${styles.button} ${viewMode === 'side-by-side' ? styles.active : ''}`}
             type="button"
             aria-pressed={viewMode === 'side-by-side'}
             onClick={() => setViewMode('side-by-side')}
           >
-            Side by side
+            {t('diff.workspace.sideBySide')}
           </button>
           <button
             className={`${styles.button} ${viewMode === 'overlay' ? styles.active : ''}`}
             type="button"
             aria-pressed={viewMode === 'overlay'}
             onClick={() => setViewMode('overlay')}
-            title="Old and new boxes on one page"
+            title={t('diff.workspace.overlayTitle')}
           >
-            Overlay
+            {t('diff.workspace.overlay')}
           </button>
           <button
             className={`${styles.button} ${viewMode === 'visual' ? styles.active : ''}`}
             type="button"
             aria-pressed={viewMode === 'visual'}
             onClick={() => setViewMode('visual')}
-            title="Pixel comparison of both pages"
+            title={t('diff.workspace.visualTitle')}
           >
-            Visual
+            {t('diff.workspace.visual')}
           </button>
         </div>
 
@@ -528,7 +544,11 @@ export const DiffWorkspace: React.FC = () => {
           <>
             <span className={styles.separator} />
 
-            <div className={styles.group} role="group" aria-label="Visual diff style">
+            <div
+              className={styles.group}
+              role="group"
+              aria-label={t('diff.workspace.visualStyleGroup')}
+            >
               {VISUAL_DIFF_STYLES.map((style) => (
                 <button
                   key={style}
@@ -537,21 +557,21 @@ export const DiffWorkspace: React.FC = () => {
                   aria-pressed={visualStyle === style}
                   onClick={() => setVisualStyle(style)}
                 >
-                  {VISUAL_STYLE_LABELS[style]}
+                  {t(VISUAL_STYLE_KEYS[style])}
                 </button>
               ))}
             </div>
 
             <div className={styles.group}>
               <label className={styles.sliderLabel}>
-                Old page
+                {t('diff.workspace.oldPage')}
                 <input
                   className={styles.slider}
                   type="range"
                   min={0}
                   max={100}
                   step={5}
-                  aria-label="Old page opacity"
+                  aria-label={t('diff.workspace.oldPageOpacity')}
                   aria-valuetext={`${Math.round(visualOpacity * 100)}%`}
                   value={Math.round(visualOpacity * 100)}
                   onChange={(event) => setVisualOpacity(Number(event.target.value) / 100)}
@@ -571,21 +591,21 @@ export const DiffWorkspace: React.FC = () => {
             aria-pressed={regionMode}
             onClick={() => setRegionMode(!regionMode)}
             disabled={!page}
-            title="Draw a rectangle on a page to mask the changes inside it"
+            title={t('diff.workspace.ignoreRegionTitle')}
           >
-            Ignore region
+            {t('diff.workspace.ignoreRegion')}
           </button>
         </div>
 
         <span className={styles.separator} />
 
-        <div className={styles.group} role="group" aria-label="Diff zoom">
+        <div className={styles.group} role="group" aria-label={t('diff.workspace.zoomGroup')}>
           <button
             className={styles.button}
             type="button"
             onClick={() => setZoom(zoom - ZOOM_STEP)}
             disabled={zoom <= 0.25}
-            aria-label="Zoom out"
+            aria-label={t('diff.workspace.zoomOut')}
           >
             −
           </button>
@@ -595,7 +615,7 @@ export const DiffWorkspace: React.FC = () => {
             type="button"
             onClick={() => setZoom(zoom + ZOOM_STEP)}
             disabled={zoom >= 5}
-            aria-label="Zoom in"
+            aria-label={t('diff.workspace.zoomIn')}
           >
             +
           </button>
@@ -604,22 +624,26 @@ export const DiffWorkspace: React.FC = () => {
             type="button"
             onClick={fitToWidth}
             disabled={!page || centerWidth <= 0}
-            title="Fit page width"
+            title={t('diff.workspace.fitTitle')}
           >
-            Fit
+            {t('diff.workspace.fit')}
           </button>
         </div>
 
         <span className={styles.separator} />
 
-        <div className={styles.group} role="group" aria-label="Diff page navigation">
+        <div
+          className={styles.group}
+          role="group"
+          aria-label={t('diff.workspace.pageNavigation')}
+        >
           <button
             className={styles.button}
             type="button"
             onClick={() => stepPage(-1)}
             disabled={!result || pageIndex <= 0}
           >
-            Prev
+            {t('toolbar.prev')}
           </button>
           <span className={styles.value}>
             {totalPages > 0 ? `${pageIndex + 1} / ${totalPages}` : '—'}
@@ -630,7 +654,7 @@ export const DiffWorkspace: React.FC = () => {
             onClick={() => stepPage(1)}
             disabled={!result || pageIndex >= totalPages - 1}
           >
-            Next
+            {t('toolbar.next')}
           </button>
         </div>
 
@@ -638,36 +662,36 @@ export const DiffWorkspace: React.FC = () => {
 
         <div className={styles.group}>
           <button className={styles.button} type="button" onClick={openSetup}>
-            Change files…
+            {t('diff.workspace.changeFiles')}
           </button>
           <button
             className={styles.button}
             type="button"
             onClick={() => void handleExportJson()}
             disabled={!result}
-            title="Save the full DiffResult as JSON"
+            title={t('diff.workspace.exportJsonTitle')}
           >
-            Export JSON
+            {t('common.exportJson')}
           </button>
         </div>
       </header>
 
       <div className={styles.body}>
-        <aside className={styles.summaryPane} aria-label="Diff change list">
+        <aside className={styles.summaryPane} aria-label={t('diff.workspace.changeList')}>
           {result && <Summary result={result} />}
 
           <div className={styles.filters}>
             <label className={styles.filterLabel}>
-              Kind
+              {t('diff.filter.kind')}
               <select
                 className={styles.select}
-                aria-label="Filter by kind"
+                aria-label={t('diff.filter.kindTitle')}
                 value={filter.kind}
                 onChange={(event) =>
                   setFilter({ kind: event.target.value as typeof filter.kind })
                 }
               >
-                <option value="all">All kinds</option>
+                <option value="all">{t('diff.filter.allKinds')}</option>
                 {DIFF_CHANGE_KINDS.map((kind) => (
                   <option key={kind} value={kind}>
                     {kind}
@@ -676,16 +700,16 @@ export const DiffWorkspace: React.FC = () => {
               </select>
             </label>
             <label className={styles.filterLabel}>
-              Type
+              {t('diff.filter.type')}
               <select
                 className={styles.select}
-                aria-label="Filter by type"
+                aria-label={t('diff.filter.typeTitle')}
                 value={filter.type}
                 onChange={(event) =>
                   setFilter({ type: event.target.value as typeof filter.type })
                 }
               >
-                <option value="all">All types</option>
+                <option value="all">{t('diff.filter.allTypes')}</option>
                 {DIFF_OBJECT_TYPE_ORDER.map((type) => (
                   <option key={type} value={type}>
                     {type}
@@ -699,14 +723,18 @@ export const DiffWorkspace: React.FC = () => {
               onClick={resetFilter}
               disabled={filter.kind === 'all' && filter.type === 'all'}
             >
-              Reset
+              {t('common.reset')}
             </button>
           </div>
 
           {result && (
-            <section className={styles.regionPanel} aria-label="Ignore regions" data-testid="diff-region-panel">
+            <section
+              className={styles.regionPanel}
+              aria-label={t('diff.region.panelLabel')}
+              data-testid="diff-region-panel"
+            >
               <div className={styles.regionHeader}>
-                <span className={styles.regionTitle}>Ignore regions</span>
+                <span className={styles.regionTitle}>{t('diff.region.panelLabel')}</span>
                 <span className={styles.regionCount} data-testid="diff-region-count">
                   {ignoreRegions.length}
                 </span>
@@ -714,9 +742,7 @@ export const DiffWorkspace: React.FC = () => {
 
               {ignoreRegions.length === 0 ? (
                 <p className={styles.regionHint}>
-                  {regionMode
-                    ? 'Drag a rectangle on a page to ignore that area.'
-                    : 'Turn on “Ignore region”, then drag on a page to mask changes.'}
+                  {regionMode ? t('diff.region.hintDraw') : t('diff.region.hintEnable')}
                 </p>
               ) : (
                 <ul className={styles.regionList} data-testid="diff-region-list">
@@ -726,16 +752,18 @@ export const DiffWorkspace: React.FC = () => {
                       className={styles.regionItem}
                     >
                       <span className={styles.regionText}>
-                        <span className={styles.regionPages}>{describeIgnoreRegion(region)}</span>
+                        <span className={styles.regionPages}>
+                          {describeIgnoreRegion(region, t)}
+                        </span>
                         <span className={styles.regionBox}>{formatDiffBBox(region.bbox)}</span>
                       </span>
                       <button
                         className={styles.linkButton}
                         type="button"
                         onClick={() => removeIgnoreRegion(index)}
-                        aria-label={`Remove ignore region ${index + 1}`}
+                        aria-label={t('diff.region.removeAria', { index: index + 1 })}
                       >
-                        Remove
+                        {t('diff.region.remove')}
                       </button>
                     </li>
                   ))}
@@ -748,9 +776,9 @@ export const DiffWorkspace: React.FC = () => {
                   type="button"
                   onClick={() => void handleApplyRegions()}
                   disabled={loading || ignoreRegions.length === 0 || !oldSource || !newSource}
-                  title="Re-run the diff with the drawn regions"
+                  title={t('diff.region.applyTitle')}
                 >
-                  {loading ? 'Applying…' : 'Apply & re-run'}
+                  {loading ? t('diff.region.applying') : t('diff.region.apply')}
                 </button>
                 <button
                   className={styles.linkButton}
@@ -758,41 +786,39 @@ export const DiffWorkspace: React.FC = () => {
                   onClick={clearIgnoreRegions}
                   disabled={ignoreRegions.length === 0}
                 >
-                  Clear regions
+                  {t('diff.region.clear')}
                 </button>
               </div>
 
               {regionMode && viewMode === 'visual' && (
-                <p className={styles.regionHint}>
-                  Switch to Side by side or Overlay to draw a region.
-                </p>
+                <p className={styles.regionHint}>{t('diff.region.visualHint')}</p>
               )}
             </section>
           )}
 
           {!result && !loading && (
-            <p className={styles.hint}>No comparison yet. Choose two PDFs to start.</p>
+            <p className={styles.hint}>{t('diff.workspace.noComparison')}</p>
           )}
 
-          {loading && <p className={styles.hint}>Comparing documents…</p>}
+          {loading && <p className={styles.hint}>{t('diff.workspace.comparing')}</p>}
 
           {result && empty && (
             <p className={styles.emptyState} role="status">
-              No differences found — the two documents are identical.
+              {t('diff.workspace.identical')}
             </p>
           )}
 
           {result && !empty && filteredCount === 0 && (
             <p className={styles.emptyState} role="status">
               {isDiffFilterActive(filter)
-                ? 'No changes match this filter.'
-                : 'No object changes on the compared pages.'}
+                ? t('diff.workspace.noFilterMatch')
+                : t('diff.workspace.noObjectChanges')}
             </p>
           )}
 
           {result && filteredCount > 0 && (
             <p className={styles.listCount}>
-              {filteredCount} change{filteredCount === 1 ? '' : 's'}
+              {translatePlural(locale, 'diff.workspace.changeCount', filteredCount)}
             </p>
           )}
 
@@ -802,8 +828,7 @@ export const DiffWorkspace: React.FC = () => {
           */}
           {result?.summary.changesTruncated && (
             <p className={styles.truncatedNote} role="status" data-testid="diff-truncated">
-              Too many changes — the list stops at the safety limit, so this comparison is
-              incomplete.
+              {t('diff.workspace.truncated')}
             </p>
           )}
 
@@ -814,7 +839,7 @@ export const DiffWorkspace: React.FC = () => {
           */}
           <div className={styles.pageJump}>
             <label className={styles.visuallyHidden} htmlFor="diff-page-jump">
-              Go to page
+              {t('diff.workspace.goToPage')}
             </label>
             <input
               id="diff-page-jump"
@@ -823,7 +848,9 @@ export const DiffWorkspace: React.FC = () => {
               inputMode="numeric"
               min={1}
               max={totalPages > 0 ? totalPages : undefined}
-              placeholder={totalPages > 0 ? `1–${totalPages}` : '—'}
+              placeholder={
+                totalPages > 0 ? t('diff.workspace.pageJumpPlaceholder', { count: totalPages }) : '—'
+              }
               value={pageJump}
               onChange={(event) => setPageJump(event.target.value)}
               onKeyDown={(event) => {
@@ -832,20 +859,22 @@ export const DiffWorkspace: React.FC = () => {
                 goToPage();
               }}
               disabled={!result || totalPages === 0}
-              aria-label="Go to page"
-              title="Type a page number and press Enter"
+              aria-label={t('diff.workspace.goToPage')}
+              title={t('diff.workspace.pageJumpTitle')}
             />
             <button
               className={styles.button}
               type="button"
               onClick={goToPage}
               disabled={!result || totalPages === 0}
-              title="Jump to the typed page"
+              title={t('diff.workspace.pageJumpButtonTitle')}
             >
-              Go
+              {t('diff.workspace.go')}
             </button>
             <span className={styles.pageJumpStatus} data-testid="diff-page-jump-status">
-              {totalPages > 0 ? `${pageIndex + 1} of ${totalPages}` : '—'}
+              {totalPages > 0
+                ? t('diff.workspace.pageOf', { page: pageIndex + 1, count: totalPages })
+                : '—'}
             </span>
           </div>
 
@@ -856,7 +885,7 @@ export const DiffWorkspace: React.FC = () => {
               onClick={expandAllGroups}
               disabled={groups.length === 0}
             >
-              Expand all
+              {t('diff.workspace.expandAll')}
             </button>
             <button
               className={styles.linkButton}
@@ -864,7 +893,7 @@ export const DiffWorkspace: React.FC = () => {
               onClick={collapseAllGroups}
               disabled={groups.length === 0}
             >
-              Collapse all
+              {t('diff.workspace.collapseAll')}
             </button>
           </div>
 
@@ -891,9 +920,9 @@ export const DiffWorkspace: React.FC = () => {
                     aria-current={group.pageIndex === pageIndex ? 'true' : undefined}
                     aria-expanded={hasChanges ? expanded : undefined}
                     aria-controls={hasChanges ? changesId : undefined}
-                    aria-label={`${diffPageLabel(group.page)}, ${DIFF_PAGE_STATUS_LABELS[group.page.status]}${
+                    aria-label={`${diffPageLabel(group.page, t)}, ${diffPageStatusLabel(group.page.status, t)}${
                       hasChanges
-                        ? `, ${group.changes.length} change${group.changes.length === 1 ? '' : 's'}`
+                        ? `, ${translatePlural(locale, 'diff.workspace.changeCount', group.changes.length)}`
                         : ''
                     }`}
                   >
@@ -905,12 +934,12 @@ export const DiffWorkspace: React.FC = () => {
                     >
                       ▸
                     </span>
-                    <span className={styles.pageLabel}>{diffPageLabel(group.page)}</span>
+                    <span className={styles.pageLabel}>{diffPageLabel(group.page, t)}</span>
                     <span
                       className={styles.statusBadge}
                       data-status={group.page.status}
                     >
-                      {DIFF_PAGE_STATUS_LABELS[group.page.status]}
+                      {diffPageStatusLabel(group.page.status, t)}
                     </span>
                     {hasChanges && (
                       <span className={styles.pageCount}>{group.changes.length}</span>
@@ -929,15 +958,18 @@ export const DiffWorkspace: React.FC = () => {
                               className={`${styles.changeItem} ${isSelected ? styles.changeItemSelected : ''}`}
                               type="button"
                               aria-pressed={isSelected}
-                              aria-label={`${change.kind} ${change.type}: ${diffChangePreview(change)}`}
+                              aria-label={`${change.kind} ${change.type}: ${diffChangePreview(change, t)}`}
                               onClick={() => selectChangeAt(group.pageIndex, changeIndex)}
                             >
                               <span className={styles.kindBadge} data-kind={change.kind}>
                                 {change.kind}
                               </span>
                               <span className={styles.changeType}>{change.type}</span>
-                              <span className={styles.changePreview} title={diffChangePreview(change)}>
-                                {diffChangePreview(change)}
+                              <span
+                                className={styles.changePreview}
+                                title={diffChangePreview(change, t)}
+                              >
+                                {diffChangePreview(change, t)}
                               </span>
                             </button>
                           </li>
@@ -950,26 +982,23 @@ export const DiffWorkspace: React.FC = () => {
             })}
           </ul>
 
-          <p
-            className={styles.cliHint}
-            title="HTML report: pdf-inspector diff old.pdf new.pdf --format html"
-          >
-            CLI: <code>pdf-inspector diff --format html</code>
+          <p className={styles.cliHint} title={t('diff.workspace.cliTitle')}>
+            {t('diff.workspace.cliLabel')} <code>pdf-inspector diff --format html</code>
           </p>
         </aside>
 
         <div className={styles.center} ref={setCenterEl} data-testid="diff-center">
           {error && (
             <p className={styles.error} role="alert">
-              Diff failed: {error}
+              {t('diff.workspace.failed', { error })}
             </p>
           )}
 
           {!result && !loading && !error && (
             <div className={styles.centerEmpty}>
-              <p>Compare two versions of a PDF to see what changed.</p>
+              <p>{t('diff.workspace.emptyIntro')}</p>
               <button className={styles.button} type="button" onClick={openSetup}>
-                Choose PDFs…
+                {t('diff.workspace.choosePdfs')}
               </button>
             </div>
           )}
@@ -977,7 +1006,7 @@ export const DiffWorkspace: React.FC = () => {
           {loading && (
             <p className={styles.centerEmpty} role="status" aria-live="polite">
               <span>
-                Comparing documents…
+                {t('diff.workspace.comparing')}
                 {' '}
                 <span className={styles.elapsed} data-testid="diff-elapsed">
                   {elapsedSeconds}s
@@ -988,23 +1017,20 @@ export const DiffWorkspace: React.FC = () => {
                 page pairing is only known after the fingerprint pass, so any
                 number here would be invented.
               */}
-              <span className={styles.loadingNote}>
-                Large PDFs can take several minutes; the comparison continues while pages make
-                progress.
-              </span>
+              <span className={styles.loadingNote}>{t('diff.workspace.comparingHint')}</span>
             </p>
           )}
 
           {result && page && (
             <>
               <div className={styles.pageBar}>
-                <span className={styles.pageInfo}>{diffPageLabel(page)}</span>
+                <span className={styles.pageInfo}>{diffPageLabel(page, t)}</span>
                 <span className={styles.statusBadge} data-status={page.status}>
-                  {DIFF_PAGE_STATUS_LABELS[page.status]}
+                  {diffPageStatusLabel(page.status, t)}
                 </span>
                 {empty && (
                   <span className={styles.identicalNote} role="status">
-                    No differences — both documents render the same pages.
+                    {t('diff.workspace.identicalPage')}
                   </span>
                 )}
                 {viewMode === 'visual' && pixelStats && (
@@ -1014,7 +1040,9 @@ export const DiffWorkspace: React.FC = () => {
                     role="status"
                     aria-live="polite"
                   >
-                    Pixel diff: {formatPixelDiffStats(pixelStats)}
+                    {t('diff.workspace.pixelDiff', {
+                      stats: formatPixelDiffStats(pixelStats, t),
+                    })}
                   </span>
                 )}
               </div>
@@ -1040,14 +1068,14 @@ export const DiffWorkspace: React.FC = () => {
                 <div className={styles.panes}>
                   <DiffPdfPane
                     side="old"
-                    label="Old"
+                    label={t('diff.side.old')}
                     source={oldSource}
                     pageNumber={page.oldIndex}
                     pageSize={page.oldSize}
                     boxes={oldBoxes}
                     zoom={zoom}
-                    emptyMessage="Choose an old PDF to compare."
-                    missingMessage="This page does not exist in the old document."
+                    emptyMessage={t('diff.pane.emptyOld')}
+                    missingMessage={t('diff.pane.missingOld')}
                     regionMode={regionMode}
                     regions={ignoreRegions}
                     pagePair={{ oldPage: page.oldIndex, newPage: page.newIndex }}
@@ -1055,14 +1083,14 @@ export const DiffWorkspace: React.FC = () => {
                   />
                   <DiffPdfPane
                     side="new"
-                    label="New"
+                    label={t('diff.side.new')}
                     source={newSource}
                     pageNumber={page.newIndex}
                     pageSize={page.newSize}
                     boxes={newBoxes}
                     zoom={zoom}
-                    emptyMessage="Choose a new PDF to compare."
-                    missingMessage="This page does not exist in the new document."
+                    emptyMessage={t('diff.pane.emptyNew')}
+                    missingMessage={t('diff.pane.missingNew')}
                     regionMode={regionMode}
                     regions={ignoreRegions}
                     pagePair={{ oldPage: page.oldIndex, newPage: page.newIndex }}
@@ -1071,21 +1099,18 @@ export const DiffWorkspace: React.FC = () => {
                 </div>
               ) : (
                 <div className={styles.overlayArea}>
-                  <p className={styles.overlayHint}>
-                    Overlay: the page’s owning document with old and new boxes (removed red, added
-                    green, moved orange, modified blue).
-                  </p>
+                  <p className={styles.overlayHint}>{t('diff.workspace.overlayHint')}</p>
                   <div className={styles.panes}>
                     <DiffPdfPane
                       side="overlay"
-                      label="Overlay"
+                      label={t('diff.side.overlay')}
                       source={overlayBaseSource}
                       pageNumber={overlayPageNumber}
                       pageSize={overlayPageSize}
                       boxes={overlayBoxes}
                       zoom={zoom}
-                      emptyMessage="Choose two PDFs to compare."
-                      missingMessage="This page has no renderable side."
+                      emptyMessage={t('diff.pane.emptyBoth')}
+                      missingMessage={t('diff.pane.missingSide')}
                       regionMode={regionMode}
                       regions={ignoreRegions}
                       pagePair={{ oldPage: page.oldIndex, newPage: page.newIndex }}
@@ -1098,15 +1123,15 @@ export const DiffWorkspace: React.FC = () => {
           )}
 
           {result && !page && (
-            <p className={styles.centerEmpty}>This comparison has no pages to display.</p>
+            <p className={styles.centerEmpty}>{t('diff.workspace.noPages')}</p>
           )}
         </div>
 
-        <aside className={styles.details} aria-label="Change details">
+        <aside className={styles.details} aria-label={t('diff.workspace.changeDetails')}>
           {selectedChange ? (
             <ChangeDetails change={selectedChange} />
           ) : (
-            <p className={styles.hint}>Select a change to see its text, boxes and details.</p>
+            <p className={styles.hint}>{t('diff.workspace.selectChange')}</p>
           )}
           {selection && (
             <button
@@ -1114,7 +1139,7 @@ export const DiffWorkspace: React.FC = () => {
               type="button"
               onClick={() => selectChange(null)}
             >
-              Clear selection
+              {t('diff.workspace.clearSelection')}
             </button>
           )}
         </aside>

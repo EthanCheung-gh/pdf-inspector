@@ -1,3 +1,4 @@
+import { useT } from "../../i18n";
 import { objectsToCsv, objectsToJson, suggestFilename } from "../../services/export-data";
 import { ipc } from "../../services/ipc-client";
 import { filterByRegion } from "../../services/object-filter";
@@ -14,6 +15,7 @@ interface ResultsTabProps {
 }
 
 export const ResultsTab = ({ exportTypes, onExportTypesChange }: ResultsTabProps): JSX.Element => {
+  const t = useT();
   const subset = usePdfStore((state) => state.subset);
   const setSubset = usePdfStore((state) => state.setSubset);
   const clearSubset = usePdfStore((state) => state.clearSubset);
@@ -44,7 +46,9 @@ export const ResultsTab = ({ exportTypes, onExportTypesChange }: ResultsTabProps
         usePdfStore.getState().setError(result.error);
       }
     } catch (error) {
-      usePdfStore.getState().setError(error instanceof Error ? error.message : "Export failed");
+      usePdfStore
+        .getState()
+        .setError(error instanceof Error ? error.message : t("results.exportFailed"));
     }
   };
 
@@ -55,23 +59,24 @@ export const ResultsTab = ({ exportTypes, onExportTypesChange }: ResultsTabProps
 
   return (
     <div className={styles.content}>
-      {!subset && (
-        <div className={styles.emptyState}>
-          Draw a region or apply a filter to collect objects here.
-        </div>
-      )}
+      {!subset && <div className={styles.emptyState}>{t("results.empty")}</div>}
 
       {subset && (
         <section className={styles.section}>
           <h3 className={styles.sectionTitle}>
-            Results ({subset.objects.length} · {subset.source})
+            {t("results.heading", {
+              count: subset.objects.length,
+              source: t(
+                subset.source === "region" ? "results.source.region" : "results.source.filter",
+              ),
+            })}
             <button type="button" className={styles.titleButton} onClick={clearSubset}>
-              Clear
+              {t("results.clear")}
             </button>
           </h3>
           <div className={styles.sectionContent}>
             {subset.source === "region" && (
-              <div className={styles.row} role="radiogroup" aria-label="Region match mode">
+              <div className={styles.row} role="radiogroup" aria-label={t("results.regionMode")}>
                 <label className={styles.checkLabel}>
                   <input
                     type="radio"
@@ -80,7 +85,7 @@ export const ResultsTab = ({ exportTypes, onExportTypesChange }: ResultsTabProps
                     checked={subset.mode === "intersect"}
                     onChange={() => applyRegionMode("intersect")}
                   />
-                  Intersect
+                  {t("results.intersect")}
                 </label>
                 <label className={styles.checkLabel}>
                   <input
@@ -90,13 +95,13 @@ export const ResultsTab = ({ exportTypes, onExportTypesChange }: ResultsTabProps
                     checked={subset.mode === "contain"}
                     onChange={() => applyRegionMode("contain")}
                   />
-                  Contain
+                  {t("results.contain")}
                 </label>
               </div>
             )}
             <div className={styles.resultList}>
               {subset.objects.length === 0 && (
-                <div className={styles.resultsEmpty}>No objects in selection/filter.</div>
+                <div className={styles.resultsEmpty}>{t("results.noObjects")}</div>
               )}
               {subset.objects.map((item, index) => (
                 <button
@@ -114,7 +119,7 @@ export const ResultsTab = ({ exportTypes, onExportTypesChange }: ResultsTabProps
             </div>
             <div className={styles.exportTypes}>
               <ExportTypeSelector
-                label="Export types"
+                label={t("results.exportTypes")}
                 compact
                 selected={exportTypes}
                 onChange={onExportTypesChange}
@@ -127,7 +132,7 @@ export const ResultsTab = ({ exportTypes, onExportTypesChange }: ResultsTabProps
                 disabled={exportTypes.length === 0}
                 onClick={() => void handleExport("json")}
               >
-                Export JSON
+                {t("results.exportJson")}
               </button>
               <button
                 type="button"
@@ -135,7 +140,7 @@ export const ResultsTab = ({ exportTypes, onExportTypesChange }: ResultsTabProps
                 disabled={exportTypes.length === 0}
                 onClick={() => void handleExport("csv")}
               >
-                Export CSV
+                {t("results.exportCsv")}
               </button>
             </div>
           </div>

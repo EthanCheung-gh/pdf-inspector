@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { useI18nStore } from '../../i18n';
 import type { PageData } from '../../types/pdf-objects';
 import { usePdfStore } from '../../store/pdf-store';
 import { DEFAULT_WORKSPACE_LAYOUT, useWorkspaceStore } from '../../store/workspace-store';
@@ -32,6 +33,10 @@ const resetStores = (): void => {
   usePdfStore.setState({ pageData: null });
   useWorkspaceStore.setState({ ...DEFAULT_WORKSPACE_LAYOUT });
 };
+
+beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
+});
 
 describe('PageTab formatting', () => {
   it('converts points to millimetres and keeps undefined boxes as a dash', () => {
@@ -167,5 +172,44 @@ describe('PageTab', () => {
     const panel = screen.getByText('Page boxes').closest('section') as HTMLElement;
     expect(within(panel).getAllByText('—')).toHaveLength(5);
     expect(screen.getAllByText('—')).toHaveLength(7);
+  });
+});
+
+describe('PageTab localization', () => {
+  afterEach(cleanup);
+
+  beforeEach(() => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    resetStores();
+  });
+
+  it('translates sections, labels, the rotation warning and the box toggles', () => {
+    usePdfStore.setState({ pageData });
+    render(React.createElement(PageTab));
+
+    expect(screen.getByText('页面')).toBeTruthy();
+    expect(screen.getByText('页面框')).toBeTruthy();
+    expect(screen.getByText('显示')).toBeTruthy();
+    expect(screen.getByText('尺寸')).toBeTruthy();
+    expect(screen.getByText('旋转')).toBeTruthy();
+    expect(screen.getByText('单位')).toBeTruthy();
+    expect(screen.getByText('标尺')).toBeTruthy();
+    expect(
+      screen.getByText('旋转页面不提供对象叠加层；页面框与标尺仍可使用。'),
+    ).toBeTruthy();
+    expect(screen.getByRole('group', { name: '页面单位' })).toBeTruthy();
+    // pt/mm are symbols and stay untranslated.
+    expect(screen.getByRole('button', { name: 'pt' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'mm' })).toBeTruthy();
+    // MediaBox is a technical name; only the "Show" prefix is translated.
+    expect(screen.getByRole('checkbox', { name: '显示 MediaBox' })).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: '显示标尺' })).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByText('Page boxes')).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: 'Show MediaBox' })).toBeTruthy();
   });
 });

@@ -2,6 +2,7 @@
 import React from 'react';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useI18nStore } from '../../i18n';
 import type { FontStat } from '../../types/ipc-protocol';
 import type { FontInfo, PdfMetadata } from '../../types/pdf-objects';
 import { usePdfStore } from '../../store/pdf-store';
@@ -136,25 +137,27 @@ function statPerRange(charCount: number, fontname = 'Helvetica') {
   };
 }
 
-describe('FontsTab', () => {
-  afterEach(cleanup);
-
-  beforeEach(() => {
-    // reset (not just clear) so a mockImplementation from one test cannot leak
-    // into the next one's later batches.
-    vi.resetAllMocks();
-    usePdfStore.setState({
-      filePath: '/tmp/test.pdf',
-      metadata: null,
-      pageCount: 25,
-      fontStats: null,
-      fontProgress: null,
-      isLoading: false,
-      error: null,
-      filterCriteria: {},
-    });
-    useWorkspaceStore.setState({ inspectorTab: 'inspect' });
+beforeEach(() => {
+  // reset (not just clear) so a mockImplementation from one test cannot leak
+  // into the next one's later batches.
+  vi.resetAllMocks();
+  useI18nStore.setState({ locale: 'en' });
+  usePdfStore.setState({
+    filePath: '/tmp/test.pdf',
+    metadata: null,
+    pageCount: 25,
+    fontStats: null,
+    fontProgress: null,
+    isLoading: false,
+    error: null,
+    filterCriteria: {},
   });
+  useWorkspaceStore.setState({ inspectorTab: 'inspect' });
+});
+
+afterEach(cleanup);
+
+describe('FontsTab', () => {
 
   it('analyzes the document in 10-page batches and merges the results', async () => {
     vi.mocked(ipc.analyzeFonts).mockImplementation(statPerRange(7));
@@ -555,5 +558,128 @@ describe('FontsTab', () => {
     expect(navigate).toHaveBeenCalledWith(3);
     expect(usePdfStore.getState().filterCriteria).toEqual({ fontname: 'Helvetica', types: ['char'] });
     expect(useWorkspaceStore.getState().inspectorTab).toBe('filter');
+  });
+});
+
+describe('FontsTab localization', () => {
+  beforeEach(() => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+  });
+
+  it('translates the empty states and the progress line', async () => {
+    usePdfStore.setState({ filePath: null });
+    render(React.createElement(FontsTab));
+    expect(screen.getByText('打开 PDF 以分析字体。')).toBeTruthy();
+
+    cleanup();
+
+    usePdfStore.setState({ filePath: '/tmp/test.pdf', pageCount: 20 });
+    const pending = deferred<FontsResponse>();
+    vi.mocked(ipc.analyzeFonts).mockReturnValue(pending.promise);
+
+    render(React.createElement(FontsTab));
+
+    expect(screen.getByText('正在分析字体… 0/20 页')).toBeTruthy();
+    expect(screen.getByLabelText('字体分析进度')).toBeTruthy();
+  });
+
+  it('translates the no-fonts message', async () => {
+    usePdfStore.setState({ pageCount: 5 });
+    vi.mocked(ipc.analyzeFonts).mockResolvedValue({ fonts: [] });
+
+    render(React.createElement(FontsTab));
+    await flush();
+
+    expect(screen.getByText('此文档未检测到文本字体。')).toBeTruthy();
+  });
+
+  it('translates the analysis failure and the retry control', async () => {
+    vi.mocked(ipc.analyzeFonts)
+      .mockRejectedValueOnce(new Error('sidecar exploded'))
+      .mockImplementation(statPerRange(4));
+
+    render(React.createElement(FontsTab));
+    await flush();
+
+    expect(screen.getByText('sidecar exploded')).toBeTruthy();
+    expect(usePdfStore.getState().error).toBe('字体分析失败，请重试。');
+
+    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+
+    expect(screen.queryByText('sidecar exploded')).toBeNull();
+    await flush();
+
+    expect(screen.getByText('Helvetica')).toBeTruthy();
+  });
+
+  it('translates badges, row counts, the summary and the details headings', async () => {
+    usePdfStore.setState({
+      pageCount: 10,
+      metadata: metadataWithFontInfo([helveticaInfo, interInfo]),
+    });
+    vi.mocked(ipc.analyzeFonts).mockResolvedValue({
+      fonts: [font, embeddedStat, customStat],
+    });
+
+    render(React.createElement(FontsTab));
+    await flush();
+
+    expect(screen.getByText('标准 14')).toBeTruthy();
+    expect(screen.getByText('Type1')).toBeTruthy();
+    expect(screen.getByText('已嵌入')).toBeTruthy();
+    expect(screen.getByText('子集')).toBeTruthy();
+    // No resource info for this font: the badge falls back to Unknown.
+    expect(screen.getByText('未知')).toBeTruthy();
+
+    // Counts keep the same numbers, only the copy is localized.
+    expect(screen.getByText('3 个字体 · 0 个未嵌入 · 1 个标准 14')).toBeTruthy();
+    expect(screen.getByText('1 页 · 42 字符 · 10–14pt')).toBeTruthy();
+
+    const toggles = screen.getAllByRole('button', { name: '字体详情' });
+    expect(toggles).toHaveLength(3);
+    expect(toggles[1].getAttribute('title')).toBe('展开字体详情');
+
+    fireEvent.click(toggles[1]);
+    await flush(2);
+
+    expect(toggles[1].getAttribute('title')).toBe('收起字体详情');
+    expect(screen.getByText('嵌入')).toBeTruthy();
+    expect(screen.getByText('编码')).toBeTruthy();
+    expect(screen.getByText('字体文件')).toBeTruthy();
+    // Schema values stay as reported.
+    expect(screen.getByText('Identity-H')).toBeTruthy();
+    expect(screen.getByText('CFF')).toBeTruthy();
+    // Subset and ToUnicode are both affirmative for this font.
+    expect(screen.getAllByText('是')).toHaveLength(2);
+  });
+
+  it('translates the not-embedded summary and badge', async () => {
+    usePdfStore.setState({
+      pageCount: 10,
+      metadata: metadataWithFontInfo([interInfo, notEmbeddedInfo]),
+    });
+    vi.mocked(ipc.analyzeFonts).mockResolvedValue({ fonts: [embeddedStat, customStat] });
+
+    render(React.createElement(FontsTab));
+    await flush();
+
+    expect(screen.getByText('2 个字体 · 1 个未嵌入')).toBeTruthy();
+    expect(screen.getByText('未嵌入')).toBeTruthy();
+  });
+
+  it('returns to English without a reload', async () => {
+    usePdfStore.setState({ pageCount: 10, metadata: metadataWithFontInfo([helveticaInfo]) });
+    vi.mocked(ipc.analyzeFonts).mockResolvedValue({ fonts: [font] });
+
+    render(React.createElement(FontsTab));
+    await flush();
+    expect(screen.getByText('标准 14')).toBeTruthy();
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByText('Standard 14')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Font details' })).toBeTruthy();
   });
 });

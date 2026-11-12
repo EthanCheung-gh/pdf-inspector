@@ -1,3 +1,5 @@
+import { DEFAULT_LOCALE } from '../i18n/locales';
+import { translate, type TranslateFn } from '../i18n/translate';
 import type { FilterCriteria } from './object-filter';
 
 /**
@@ -13,6 +15,12 @@ export interface FilterSummary {
   /** `parts` joined with ` · `, or an empty string when no filter is active. */
   label: string;
 }
+
+/**
+ * English translator for plain callers (unit tests, non-React code). Components
+ * pass their `useT()` translator so a locale switch re-renders the summary.
+ */
+const defaultTranslate: TranslateFn = (key, params) => translate(DEFAULT_LOCALE, key, params);
 
 const isFiniteNumber = (value: number | undefined): value is number =>
   typeof value === 'number' && Number.isFinite(value);
@@ -33,7 +41,10 @@ const describeSize = (min: number | undefined, max: number | undefined): string 
   return '';
 };
 
-export const describeFilterCriteria = (criteria: FilterCriteria): FilterSummary => {
+export const describeFilterCriteria = (
+  criteria: FilterCriteria,
+  t: TranslateFn = defaultTranslate,
+): FilterSummary => {
   const parts: string[] = [];
   let count = 0;
 
@@ -54,7 +65,11 @@ export const describeFilterCriteria = (criteria: FilterCriteria): FilterSummary 
 
   const typeCount = criteria.types?.length ?? 0;
   if (typeCount > 0) {
-    parts.push(typeCount === 1 ? '1 type' : `${typeCount} types`);
+    parts.push(
+      t(typeCount === 1 ? 'filter.summary.types.one' : 'filter.summary.types.other', {
+        count: typeCount,
+      }),
+    );
     count += 1;
   }
 

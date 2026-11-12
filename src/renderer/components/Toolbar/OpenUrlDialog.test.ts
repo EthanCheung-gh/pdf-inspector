@@ -12,6 +12,7 @@ vi.mock('../../services/ipc-client', () => ({
 
 import { OpenUrlDialog } from './OpenUrlDialog';
 import type { OpenedFromUrl } from './OpenUrlDialog';
+import { useI18nStore } from '../../i18n/store';
 
 const metadata: PdfMetadata = {
   pages: 3,
@@ -60,6 +61,7 @@ function submit(): void {
 describe('OpenUrlDialog', () => {
   beforeEach(() => {
     openPdfUrl.mockReset();
+    useI18nStore.setState({ locale: 'en' });
   });
 
   afterEach(cleanup);
@@ -228,5 +230,23 @@ describe('OpenUrlDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('translates the title, label, buttons and validation errors', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    renderDialog();
+
+    expect(screen.getByRole('dialog', { name: '打开 URL' })).toBeTruthy();
+    expect(screen.getByText('PDF 地址')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '取消' })).toBeTruthy();
+    expect((screen.getByRole('button', { name: '打开' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+
+    typeUrl('ftp://example.com/a.pdf');
+    fireEvent.click(screen.getByRole('button', { name: '打开' }));
+
+    expect(screen.getByRole('alert').textContent).toBe('仅支持 http(s) URL');
+    expect(openPdfUrl).not.toHaveBeenCalled();
   });
 });

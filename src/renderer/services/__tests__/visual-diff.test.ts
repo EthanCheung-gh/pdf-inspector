@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { translate, type TranslateFn } from '../../i18n/translate';
 import {
   clampVisualOpacity,
   computePixelDiff,
@@ -302,6 +303,13 @@ describe('pixel stats formatting', () => {
     expect(formatPixelDiffStats({ changedPixels: 0, totalPixels: 0, ratio: 0 })).toBe(
       '0 / 0 px changed (0%)',
     );
+  });
+
+  it('formats the summary through a supplied translator', () => {
+    const tZh: TranslateFn = (key, params) => translate('zh-CN', key, params);
+    expect(
+      formatPixelDiffStats({ changedPixels: 1234, totalPixels: 484704, ratio: 0.002545 }, tZh),
+    ).toBe('1,234 / 484,704 px 像素变更（0.25%）');
   });
 
   it('clamps the blend opacity and exposes the defaults', () => {
