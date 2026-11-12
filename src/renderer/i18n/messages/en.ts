@@ -122,6 +122,9 @@ export const en = {
   'command.toggleRightPanel': 'Toggle right panel',
   'command.searchDocument': 'Search document…',
   'command.clearSelection': 'Clear selection',
+  'command.recentDocuments': 'Recent documents…',
+  'command.restoreLastSession': 'Restore last session',
+  'command.clearRecentDocuments': 'Clear recent documents',
 
   // --- Status bar ---------------------------------------------------------
   'status.application': 'Application status',
@@ -138,6 +141,10 @@ export const en = {
   'status.clearFilter': 'Clear',
   'status.exportProgress': 'Exporting {done}/{total}…',
   'status.fontProgress': 'Analyzing fonts {done}/{total}…',
+  'status.sessionRestore.progress': 'Restoring {done}/{total} documents…',
+  'status.sessionRestore.failed.one': '{count} document could not be restored',
+  'status.sessionRestore.failed.other': '{count} documents could not be restored',
+  'status.sessionRestore.error': 'Session restore failed: {error}',
   'status.sidecarConnected': 'Sidecar connected',
   'status.sidecarOffline': 'Sidecar offline',
 
@@ -256,6 +263,47 @@ export const en = {
   'tabs.openFailedFallback': 'Failed to open {name}',
   'tabs.closeFailed': 'Could not close {name}',
   'tabs.closeFailedFallback': 'Failed to close {name}',
+
+  // --- Recent documents and session restore ------------------------------
+  'recent.title': 'Recent documents',
+  'recent.group.local': 'Local files',
+  'recent.group.url': 'URL documents',
+  'recent.group.web': 'Web documents',
+  'recent.kind.local': 'Local',
+  'recent.kind.url': 'URL',
+  'recent.kind.web': 'Web',
+  'recent.kind.upload': 'Upload',
+  'recent.open': 'Open',
+  'recent.openTitle': 'Open {name}',
+  'recent.opening': 'Opening…',
+  'recent.remove': 'Remove',
+  'recent.removeTitle': 'Remove {name} from recent documents',
+  'recent.empty.title': 'No recent documents yet',
+  'recent.empty.body': 'Documents you open show up here for quick access.',
+  'recent.privacy':
+    'Recent files and the last session stay on this device. Web uploads keep no local path or content.',
+  'recent.clear': 'Clear recent',
+  'recent.clearConfirmQuestion': 'Remove all recent documents?',
+  'recent.clearConfirm': 'Clear all',
+  'recent.close': 'Close',
+  'recent.restoreLastSession': 'Restore last session',
+  'recent.restoreHint': 'Reopen the documents that were open when you last quit.',
+  'recent.openFailed': 'Could not open {name}',
+  'recent.uploadUnavailable':
+    'The upload {name} from the earlier session is no longer available. Upload the file again to inspect it.',
+
+  // --- Welcome (empty state) ---------------------------------------------
+  'welcome.title': 'No document open',
+  'welcome.openPdf': 'Open PDF…',
+  'welcome.openUrl': 'Open URL…',
+  'welcome.recent': 'Recent documents…',
+  'welcome.restoreLastSession': 'Restore last session',
+  'welcome.restoring': 'Restoring last session…',
+  'welcome.recentHeading': 'Recent',
+  'welcome.privacy':
+    'Recent files and the last session stay on this device; for Web uploads, no content or local path is stored.',
+  'welcome.openFailed': 'Could not open the document. Please try again.',
+  'welcome.openRecentFailed': 'Could not open {name}. It may have moved or expired.',
 
   // --- Workspace panes ----------------------------------------------------
   'panel.objects': 'Objects',

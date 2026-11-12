@@ -5,6 +5,7 @@ import { usePdfStore } from '../../store/pdf-store';
 import { usePdf } from '../../hooks/usePdf';
 import { computeFitWidthZoom } from '../../services/page-geometry';
 import { pathToFileUrl } from '../../../shared/path-utils';
+import { WelcomeView } from '../Workspace/WelcomeView';
 import { PdfPage } from './PdfPage';
 import styles from './PdfViewport.module.css';
 
@@ -21,6 +22,8 @@ export const PdfViewport: React.FC = () => {
   const zoom = usePdfStore((s) => s.zoom);
   const metadata = usePdfStore((s) => s.metadata);
   const setFitWidthZoom = usePdfStore((s) => s.setFitWidthZoom);
+  const setFitWidthHint = usePdfStore((s) => s.setFitWidthHint);
+  const consumeInitialFitSkip = usePdfStore((s) => s.consumeInitialFitSkip);
   const { pdfDoc, loadPdf, loading, error } = usePdf();
 
   // Measured width of the scroll container. Starts at 0 ("not measured yet")
@@ -97,6 +100,13 @@ export const PdfViewport: React.FC = () => {
   }, [currentPage, filePath, scrollEl]);
 
   // Apply fit-to-width once per loaded document, using the measured container.
+  //
+  // A document can arrive with a zoom already chosen: a tab switch or a session
+  // restore applies its view snapshot first and asks this pass to stand down
+  // (`skipInitialFit`), because fitting here would silently undo a saved 157%
+  // and snap the document back to the fit ratio. The hint is still refreshed so
+  // the Fit W control knows what fit would be, and the flag is consumed so the
+  // next normal open fits as usual.
   useEffect(() => {
     if (!pdfDoc || !metadata || containerWidth <= 0) return;
     if (fittedDocRef.current === pdfDoc) return;
@@ -104,8 +114,20 @@ export const PdfViewport: React.FC = () => {
     fittedDocRef.current = pdfDoc;
     const fit = computeFitWidthZoom(metadata.page_w, containerWidth);
     lastFitZoomRef.current = fit;
+
+    if (consumeInitialFitSkip()) {
+      setFitWidthHint(fit);
+      return;
+    }
     setFitWidthZoom(fit);
-  }, [pdfDoc, metadata, containerWidth, setFitWidthZoom]);
+  }, [
+    pdfDoc,
+    metadata,
+    containerWidth,
+    setFitWidthZoom,
+    setFitWidthHint,
+    consumeInitialFitSkip,
+  ]);
 
   // Re-fit on container resizes, but only while the user has not manually
   // zoomed away from the last fit zoom.
@@ -124,12 +146,10 @@ export const PdfViewport: React.FC = () => {
   }, [containerWidth, metadata, zoom, setFitWidthZoom]);
 
   if (!filePath) {
-    return (
-      <div className={styles.emptyState}>
-        <div className={styles.emptyIcon}>📄</div>
-        <p>{t('viewer.empty')}</p>
-      </div>
-    );
+    // No document: the canvas is the natural place to open one, list the recent
+    // documents and restore the last session. The view never renders while a
+    // document is open, so it cannot compete with the document itself.
+    return <WelcomeView />;
   }
 
   if (loading) {

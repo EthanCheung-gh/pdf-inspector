@@ -1,0 +1,226 @@
+/*
+ * Empty state (no document open).
+ *
+ * The canvas column is the only width constraint: `.welcome` scrolls inside it
+ * and `.inner` is capped at 640px, so at 1280 and 1440 there is no horizontal
+ * overflow even when the side panes are both expanded. Every row is a flex line
+ * with `min-width: 0` and ellipsized text, so a long path/URL shrinks instead of
+ * pushing the actions out of view.
+ */
+.welcome {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  padding: 32px 24px;
+  overflow: auto;
+  background: var(--pi-bg-canvas);
+}
+
+.inner {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 100%;
+  max-width: 640px;
+  min-width: 0;
+  padding: 24px;
+  color: var(--pi-text);
+  background: var(--pi-bg-panel);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-md);
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.icon {
+  font-size: 40px;
+  line-height: 1;
+  opacity: 0.45;
+}
+
+.title {
+  margin: 0;
+  color: var(--pi-text-heading);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.subtitle {
+  margin: 0;
+  color: var(--pi-text-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* Buttons wrap at narrow widths instead of forcing a horizontal scrollbar. */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.button {
+  flex: 0 1 auto;
+  max-width: 100%;
+  padding: 6px 12px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--pi-bg-control-hover);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
+.button:disabled {
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
+  cursor: not-allowed;
+}
+
+.primary {
+  color: var(--pi-text-inverse);
+  background: var(--pi-accent-strong);
+  border-color: var(--pi-accent-border);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--pi-accent-strong-hover);
+}
+
+.primary:disabled {
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
+}
+
+.error {
+  margin: 0;
+  color: var(--pi-danger);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.recentSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.recentHeading {
+  margin: 0;
+  color: var(--pi-text-subtle);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.recentList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
+.recentItem {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 8px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recentItem:hover:not(:disabled) {
+  background: var(--pi-bg-control-hover);
+}
+
+.recentItem:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
+.recentItem:disabled {
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
+  cursor: not-allowed;
+}
+
+.recentName {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pi-text-heading);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recentLocation {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pi-text-subtle);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recentOpening {
+  flex: 0 0 auto;
+  color: var(--pi-text-muted);
+}
+
+.privacy {
+  margin: 0;
+  color: var(--pi-text-subtle);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* Islands: the empty state is a floating card like every other panel. */
+:global(html[data-theme='islands']) .welcome {
+  background: transparent;
+}
+
+:global(html[data-theme='islands']) .inner {
+  background: var(--pi-island-panel-bg);
+  border: var(--pi-island-border-width) solid var(--pi-island-border-color);
+  border-radius: var(--pi-island-radius);
+  box-shadow: var(--pi-island-shadow);
+}

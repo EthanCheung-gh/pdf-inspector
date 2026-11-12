@@ -10,6 +10,7 @@ import { useCursorStore } from '../../store/cursor-store';
 import { useDiffStore } from '../../store/diff-store';
 import { usePdfStore } from '../../store/pdf-store';
 import { useRawStore } from '../../store/raw-store';
+import { useSessionRestoreStore } from '../../store/session-restore-store';
 import { makeSampleResult } from '../../services/__tests__/diff-fixtures';
 import type { RawDocument, RawPageContent } from '../../types/raw-pdf';
 
@@ -728,5 +729,102 @@ describe('StatusBar raw mode', () => {
         translateZh,
       ),
     ).toBe('原始数据：正在加载文档…');
+  });
+});
+
+describe('StatusBar session restore', () => {
+  afterEach(() => {
+    cleanup();
+    useSessionRestoreStore.getState().reset();
+  });
+
+  beforeEach(() => {
+    usePdfStore.setState({
+      isLoading: false,
+      currentPage: 3,
+      pageCount: 12,
+      allObjects: [],
+      sidecarRunning: true,
+      exportProgress: null,
+      error: null,
+      fontProgress: null,
+      filterCriteria: {},
+      selectedObject: null,
+      pageData: null,
+    });
+    useCursorStore.setState({ cursorPdfPoint: null });
+    useAuditStore.getState().reset();
+    useDiffStore.getState().reset();
+    useRawStore.getState().reset();
+    useSessionRestoreStore.getState().reset();
+  });
+
+  it('shows live progress while the last session is restoring', () => {
+    useSessionRestoreStore.getState().begin(5);
+    useSessionRestoreStore.getState().advance();
+    useSessionRestoreStore.getState().advance();
+
+    render(React.createElement(StatusBar));
+
+    const status = screen.getByRole('status');
+    expect(status.textContent).toBe('Restoring 2/5 documents…');
+    expect(status.getAttribute('aria-live')).toBe('polite');
+    // The regular document status is still there next to it.
+    expect(screen.getByText('Page 3/12 · 0 objects')).toBeTruthy();
+  });
+
+  it('reports skipped documents without paths and dismisses the warning', () => {
+    useSessionRestoreStore.getState().begin(2);
+    useSessionRestoreStore.getState().recordFailure({ name: 'a.pdf', kind: 'local' });
+    useSessionRestoreStore.getState().advance();
+    useSessionRestoreStore.getState().finish();
+
+    render(React.createElement(StatusBar));
+
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain('1 document could not be restored');
+    // Only a count is shown: names/paths never reach the notice.
+    expect(alert.textContent).not.toContain('a.pdf');
+    expect(alert.textContent).not.toContain('/docs');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(useSessionRestoreStore.getState().failed).toEqual([]);
+  });
+
+  it('pluralizes the failure count', () => {
+    useSessionRestoreStore.getState().begin(3);
+    useSessionRestoreStore.getState().recordFailure({ name: 'a.pdf', kind: 'local' });
+    useSessionRestoreStore.getState().recordFailure({ name: 'b.pdf', kind: 'url' });
+    useSessionRestoreStore.getState().finish();
+
+    render(React.createElement(StatusBar));
+
+    expect(screen.getByRole('alert').textContent).toContain('2 documents could not be restored');
+  });
+
+  it('shows a fatal restore error in the bar and lets the user dismiss it', () => {
+    useSessionRestoreStore.getState().fail('plan exploded');
+
+    render(React.createElement(StatusBar));
+
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain('Session restore failed: plan exploded');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(useSessionRestoreStore.getState().error).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('translates progress and failure in Chinese', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    useSessionRestoreStore.getState().begin(4);
+    useSessionRestoreStore.getState().advance();
+    useSessionRestoreStore.getState().recordFailure({ name: 'a.pdf', kind: 'local' });
+    useSessionRestoreStore.getState().finish();
+
+    render(React.createElement(StatusBar));
+
+    expect(screen.getByRole('alert').textContent).toContain('1 个文档无法恢复');
   });
 });

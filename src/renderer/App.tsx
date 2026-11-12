@@ -12,8 +12,12 @@ import { Toolbar } from './components/Toolbar/Toolbar';
 import { PanelRail } from './components/Workspace/PanelRail';
 import { PanelSplitter } from './components/Workspace/PanelSplitter';
 import { DocumentTabs } from './components/Workspace/DocumentTabs';
+import { RecentDocumentsDialog } from './components/Workspace/RecentDocumentsDialog';
+import { usePageNavigation } from './hooks/usePageNavigation';
 import { useRegisterCommands } from './hooks/useRegisterCommands';
+import { useSessionRestore } from './hooks/useSessionRestore';
 import { ipc } from './services/ipc-client';
+import { resetSessionRestoreGuard, restoreSession } from './services/session-restore';
 import type { CommandDefinition } from './services/command-registry';
 import { LOCALES, applyLocale, useI18nStore, useT } from './i18n';
 import { themeLabelKey } from './components/Toolbar/ThemePicker';
@@ -21,6 +25,8 @@ import { useAuditStore } from './store/audit-store';
 import { useDiffStore } from './store/diff-store';
 import { usePdfStore } from './store/pdf-store';
 import { useRawStore } from './store/raw-store';
+import { useSessionStore } from './store/session-store';
+import { useSessionUiStore } from './store/session-ui-store';
 import { applyTheme, useThemeStore } from './store/theme-store';
 import { THEMES } from './theme/themes';
 import {
@@ -33,7 +39,14 @@ import styles from './App.module.css';
 const SIDECAR_STATUS_POLL_INTERVAL_MS = 5_000;
 
 const App = (): JSX.Element => {
+  // Startup restore runs in an effect, so the empty shell paints first. It only
+  // fires when no document is open and only once per page load (see the hook).
+  useSessionRestore();
   const t = useT();
+  // Same navigation the tab bar and the restore hook use, needed by the
+  // "Restore last session" command.
+  const { navigate } = usePageNavigation();
+  const openRecentDialog = useSessionUiStore((state) => state.openRecentDialog);
   const theme = useThemeStore((state) => state.theme);
   const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const locale = useI18nStore((state) => state.locale);
@@ -99,6 +112,43 @@ const App = (): JSX.Element => {
     }));
 
     return [
+      // Recent/session entry points live in the shell: they are about documents
+      // in general, not about the file the toolbar happens to have open. The
+      // dialog is mounted once here, so the empty state and these commands share
+      // one instance (see `session-ui-store`).
+      {
+        id: 'file.recent-documents',
+        title: t('command.recentDocuments'),
+        group: 'File',
+        keywords: ['recent', 'history', 'files', 'reopen'],
+        run: () => openRecentDialog(),
+      },
+      {
+        id: 'file.restore-last-session',
+        title: t('command.restoreLastSession'),
+        group: 'File',
+        keywords: ['restore', 'session', 'last', 'tabs'],
+        // Only meaningful into an empty canvas: restoring over an open document
+        // is exactly what the engine refuses to do.
+        isEnabled: () =>
+          usePdfStore.getState().filePath === null &&
+          useSessionStore.getState().tabs.length > 0,
+        run: () => {
+          // A startup attempt already consumed the once-per-page-load guard (even
+          // when it refused to run), so an explicit request starts a new run.
+          resetSessionRestoreGuard();
+          // Explicit requests restore even when automatic restore is turned off.
+          void restoreSession({ navigate, force: true });
+        },
+      },
+      {
+        id: 'file.clear-recent-documents',
+        title: t('command.clearRecentDocuments'),
+        group: 'File',
+        keywords: ['clear', 'recent', 'history', 'forget'],
+        isEnabled: () => useSessionStore.getState().recent.length > 0,
+        run: () => useSessionStore.getState().clearRecent(),
+      },
       {
         id: 'view.toggle-theme',
         title: t('command.cycleTheme'),
@@ -164,7 +214,7 @@ const App = (): JSX.Element => {
         run: () => usePdfStore.getState().clearSelection(),
       },
     ];
-  }, [t]);
+  }, [navigate, openRecentDialog, t]);
   useRegisterCommands('app', appCommands);
 
   // The store also applies the theme on `setTheme`; this effect covers the
@@ -396,6 +446,9 @@ const App = (): JSX.Element => {
       </main>
       <StatusBar />
       <CommandPalette />
+      {/* One shared instance: the empty state and the File commands both open it
+          through `session-ui-store`. */}
+      <RecentDocumentsDialog />
       {/* Mounted once at app level: the toolbar entry and the workspace's
           "Change files…" both open this same dialog through the diff store. */}
       <DiffSetupDialog />

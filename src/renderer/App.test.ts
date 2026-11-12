@@ -8,6 +8,10 @@ import { useAuditStore } from './store/audit-store';
 import { useDiffStore } from './store/diff-store';
 import { usePdfStore } from './store/pdf-store';
 import { useRawStore } from './store/raw-store';
+import { useSessionRestoreStore } from './store/session-restore-store';
+import { useSessionStore } from './store/session-store';
+import type { SessionTabRecord } from './store/session-store';
+import { useSessionUiStore } from './store/session-ui-store';
 import { useThemeStore } from './store/theme-store';
 import { useWorkspaceStore } from './store/workspace-store';
 import { listCommands } from './services/command-registry';
@@ -31,6 +35,27 @@ vi.mock('./services/ipc-client', () => ({
     rawPageContent: vi.fn(),
   },
 }));
+
+/**
+ * Spy on the restore entry points while keeping the real module for everything
+ * else (`openRecentDocument` is used by the recent-documents dialog mounted by
+ * `App`). This lets the shell tests assert *how* the startup hook and the
+ * "Restore last session" command call the engine: startup must not force, the
+ * explicit command must.
+ */
+const { restoreSessionMock, resetSessionRestoreGuardMock } = vi.hoisted(() => ({
+  restoreSessionMock: vi.fn(async (_options: { navigate: unknown; force?: boolean }) => false),
+  resetSessionRestoreGuardMock: vi.fn(),
+}));
+
+vi.mock('./services/session-restore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./services/session-restore')>();
+  return {
+    ...actual,
+    restoreSession: restoreSessionMock,
+    resetSessionRestoreGuard: resetSessionRestoreGuardMock,
+  };
+});
 
 // The shell test only cares about which workspace is mounted, so the heavy
 // panes (and their PDF.js / CSS module graphs) are replaced by markers.
@@ -747,5 +772,146 @@ describe('App raw mode', () => {
     expect(pdf.regionMode).toBe(false);
     expect(pdf.searchOpen).toBe(false);
     expect(useWorkspaceStore.getState().focusMode).toBe(false);
+  });
+});
+
+describe('App recent documents and session commands', () => {
+  const sessionTab: SessionTabRecord = {
+    kind: 'local',
+    path: '/docs/previous.pdf',
+    sourceUrl: null,
+    documentId: null,
+    name: 'previous.pdf',
+    snapshot: {
+      currentPage: 2,
+      zoom: 1,
+      overlayVisibility: {},
+      leftTab: 'objects',
+      inspectorTab: 'inspect',
+      searchQuery: '',
+    },
+    lastActiveAt: 1,
+  };
+
+  const command = (id: string) => listCommands().find((entry) => entry.id === id);
+
+  beforeEach(() => {
+    useSessionStore.getState().reset();
+    useSessionUiStore.getState().reset();
+    useSessionRestoreStore.getState().reset();
+    restoreSessionMock.mockClear();
+    resetSessionRestoreGuardMock.mockClear();
+  });
+
+  afterEach(() => {
+    useSessionStore.getState().reset();
+    useSessionUiStore.getState().reset();
+    useSessionRestoreStore.getState().reset();
+  });
+
+  it('registers the File entries for recent documents and the last session', () => {
+    render(React.createElement(App));
+
+    expect(command('file.recent-documents')?.title).toBe('Recent documents…');
+    expect(command('file.restore-last-session')?.title).toBe('Restore last session');
+    expect(command('file.clear-recent-documents')?.title).toBe('Clear recent documents');
+    expect(command('file.recent-documents')?.group).toBe('File');
+  });
+
+  it('opens the shared recent-documents dialog from the command palette entry', () => {
+    render(React.createElement(App));
+    expect(screen.queryByRole('dialog', { name: 'Recent documents' })).toBeNull();
+
+    act(() => {
+      command('file.recent-documents')?.run();
+    });
+
+    expect(useSessionUiStore.getState().recentDialogOpen).toBe(true);
+    expect(screen.getByRole('dialog', { name: 'Recent documents' })).toBeTruthy();
+  });
+
+  it('enables restore only into an empty canvas with a saved session', () => {
+    useSessionStore.setState({ tabs: [sessionTab], activeIndex: 0, restoreLastSession: true });
+    render(React.createElement(App));
+
+    // A document is open (the shell default in this file): never restore over it.
+    expect(command('file.restore-last-session')?.isEnabled?.()).toBe(false);
+
+    act(() => {
+      usePdfStore.setState({ filePath: null });
+      useSessionStore.setState({ restoreLastSession: false });
+    });
+
+    expect(command('file.restore-last-session')?.isEnabled?.()).toBe(true);
+
+    act(() => {
+      useSessionStore.setState({ tabs: [] });
+    });
+    expect(command('file.restore-last-session')?.isEnabled?.()).toBe(false);
+  });
+
+  it('forces a restore only for the explicit command, never for startup', () => {
+    useSessionStore.setState({ tabs: [sessionTab], activeIndex: 0, restoreLastSession: false });
+    usePdfStore.setState({ filePath: null });
+
+    render(React.createElement(App));
+
+    // The startup hook asks the engine to restore, but never forces it: the
+    // automatic-restore preference decides whether anything happens.
+    expect(restoreSessionMock).toHaveBeenCalledTimes(1);
+    expect(restoreSessionMock.mock.calls[0][0]).not.toHaveProperty('force');
+
+    act(() => {
+      command('file.restore-last-session')?.run();
+    });
+
+    // The manual request resets the once-per-page-load guard and forces the
+    // restore, so it also works while automatic restore is turned off.
+    expect(resetSessionRestoreGuardMock).toHaveBeenCalledTimes(1);
+    expect(restoreSessionMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ force: true }),
+    );
+  });
+
+  it('clears the recent list from the command and disables itself afterwards', () => {    useSessionStore.setState({
+      recent: [
+        {
+          id: 'local-1',
+          kind: 'local',
+          name: 'note.pdf',
+          path: '/docs/note.pdf',
+          sourceUrl: null,
+          documentId: null,
+          openedAt: 1_700_000_000_000,
+        },
+      ],
+    });
+    render(React.createElement(App));
+
+    const clear = command('file.clear-recent-documents');
+    expect(clear?.isEnabled?.()).toBe(true);
+
+    act(() => {
+      clear?.run();
+    });
+
+    expect(useSessionStore.getState().recent).toEqual([]);
+    expect(clear?.isEnabled?.()).toBe(false);
+  });
+
+  it('re-registers the new command titles in the active language', () => {
+    render(React.createElement(App));
+
+    act(() => {
+      useI18nStore.setState({ locale: 'zh-CN' });
+    });
+
+    expect(command('file.recent-documents')?.title).toBe('最近文档…');
+    expect(command('file.restore-last-session')?.title).toBe('恢复上次会话');
+    expect(command('file.clear-recent-documents')?.title).toBe('清空最近文档');
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
   });
 });

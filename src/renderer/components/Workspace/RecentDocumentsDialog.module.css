@@ -1,0 +1,272 @@
+/*
+ * Recent-documents dialog.
+ *
+ * The dialog is a fixed-width card capped by the viewport, never the reverse:
+ * `width: min(760px, calc(100vw - 48px))` keeps it inside 1280 and 1440 with
+ * both side panes open, and every row is a flex line whose text columns carry
+ * `min-width: 0` + ellipsis. The list area is the only part that scrolls, so the
+ * title, footer and actions stay reachable at any height.
+ */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(10, 13, 16, 0.6);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(760px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  min-width: 0;
+  padding: 18px;
+  color: var(--pi-text);
+  background: var(--pi-bg-panel);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  font-size: 13px;
+  outline: none;
+}
+
+.title {
+  margin: 0;
+  color: var(--pi-text-heading);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.listArea {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.groupTitle {
+  margin: 0;
+  color: var(--pi-text-subtle);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
+/* One entry: name/location grow and ellipsize, metadata and actions keep width. */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 6px 8px;
+  background: var(--pi-bg-sunken);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm);
+}
+
+.rowMain {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.rowName {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pi-text-heading);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowLocation {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pi-text-subtle);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowError {
+  color: var(--pi-danger);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.rowKind {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  color: var(--pi-text-secondary);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.rowTime {
+  flex: 0 0 auto;
+  color: var(--pi-text-subtle);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rowActions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.button {
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--pi-bg-control-hover);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
+.button:disabled {
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
+  cursor: not-allowed;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 28px 12px;
+  text-align: center;
+}
+
+.emptyTitle {
+  margin: 0;
+  color: var(--pi-text-heading);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.emptyBody {
+  margin: 0;
+  color: var(--pi-text-muted);
+  font-size: 12px;
+}
+
+.privacy {
+  margin: 0;
+  color: var(--pi-text-subtle);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  min-width: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--pi-border-subtle);
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--pi-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.toggle input {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.footerActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.confirmText {
+  color: var(--pi-warning-text);
+  font-size: 12px;
+}
+
+.status {
+  color: var(--pi-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* Islands: floating card like the other dialogs. */
+:global(html[data-theme='islands']) .dialog {
+  background: var(--pi-island-panel-bg);
+  border: var(--pi-island-border-width) solid var(--pi-island-border-color);
+  border-radius: var(--pi-island-radius);
+  box-shadow: var(--pi-island-shadow);
+}

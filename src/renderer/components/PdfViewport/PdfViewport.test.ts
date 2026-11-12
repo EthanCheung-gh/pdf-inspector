@@ -92,6 +92,78 @@ describe('PdfViewport fit-width', () => {
     expect(state.zoom).toBeCloseTo(LETTER_FIT_WIDTH, 5);
     // The old guess used window.innerWidth (1024 in jsdom).
     expect(state.zoom).not.toBeCloseTo(computeFitWidthZoom(612, window.innerWidth), 3);
+    // A normal open consumes nothing: there was no snapshot asking to stand down.
+    expect(state.skipInitialFit).toBe(false);
+  });
+
+  it('keeps a restored zoom instead of fitting the loaded document', async () => {
+    // What the session restore does before the document finishes loading:
+    // apply the saved 157% and ask the fit pass to leave it alone.
+    act(() => {
+      usePdfStore.getState().setZoom(1.565);
+      usePdfStore.getState().skipNextInitialFit();
+    });
+
+    render(React.createElement(PdfViewport));
+
+    await waitFor(() => expect(usePdfStore.getState().fitWidthZoom).not.toBeNull());
+
+    const state = usePdfStore.getState();
+    // The saved zoom survives; the Fit W control still gets its hint.
+    expect(state.zoom).toBeCloseTo(1.565, 5);
+    expect(state.fitWidthZoom).toBeCloseTo(LETTER_FIT_WIDTH, 5);
+    expect(state.skipInitialFit).toBe(false);
+  });
+
+  it('does not override the zoom a tab switch restored', async () => {
+    const { rerender } = render(React.createElement(PdfViewport));
+    await waitFor(() => expect(usePdfStore.getState().fitWidthZoom).toBeCloseTo(LETTER_FIT_WIDTH, 5));
+
+    // Tab switch: new document, snapshot zoom applied, one-shot skip requested.
+    act(() => {
+      usePdfStore.getState().setFile('/tmp/other.pdf', metadata);
+      usePdfStore.getState().setZoom(1.565);
+      usePdfStore.getState().skipNextInitialFit();
+    });
+    usePdfMock.mockReturnValue({
+      pdfDoc: stubPdfDoc(),
+      loading: false,
+      error: null,
+      loadPdf: vi.fn(),
+    });
+    rerender(React.createElement(PdfViewport));
+
+    await waitFor(() =>
+      expect(usePdfStore.getState().fitWidthZoom).toBeCloseTo(LETTER_FIT_WIDTH, 5),
+    );
+    expect(usePdfStore.getState().zoom).toBeCloseTo(1.565, 5);
+  });
+
+  it('fits the next document normally after a restored one', async () => {
+    act(() => {
+      usePdfStore.getState().setZoom(1.565);
+      usePdfStore.getState().skipNextInitialFit();
+    });
+    const { rerender } = render(React.createElement(PdfViewport));
+    await waitFor(() => expect(usePdfStore.getState().fitWidthZoom).not.toBeNull());
+    expect(usePdfStore.getState().zoom).toBeCloseTo(1.565, 5);
+
+    // A normal open (no snapshot to restore) still fits to width.
+    act(() => {
+      usePdfStore.getState().setFile('/tmp/plain.pdf', metadata);
+    });
+    usePdfMock.mockReturnValue({
+      pdfDoc: stubPdfDoc(),
+      loading: false,
+      error: null,
+      loadPdf: vi.fn(),
+    });
+    rerender(React.createElement(PdfViewport));
+
+    await waitFor(() =>
+      expect(usePdfStore.getState().zoom).toBeCloseTo(LETTER_FIT_WIDTH, 5),
+    );
+    expect(usePdfStore.getState().fitWidthZoom).toBeCloseTo(LETTER_FIT_WIDTH, 5);
   });
 
   it('treats a 0 client width as unmeasured and applies no fit', async () => {

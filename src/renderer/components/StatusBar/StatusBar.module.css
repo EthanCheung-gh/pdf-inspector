@@ -125,6 +125,64 @@
   white-space: nowrap;
 }
 
+/*
+ * Session-restore notices (progress/failure/fatal error). They share the bar's
+ * one-line layout: the text shrinks with an ellipsis and the dismiss button keeps
+ * its intrinsic width, so a long message never pushes the sidecar indicator out
+ * of the bar at 1280.
+ */
+.notice {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 7px;
+  border-radius: var(--pi-radius-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.noticeText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.noticeWarning {
+  color: var(--pi-warning-text);
+  border: 1px solid var(--pi-warning-border-soft);
+}
+
+.noticeError {
+  color: var(--pi-danger-on-bg);
+  background: var(--pi-danger-bg);
+  border: 1px solid var(--pi-danger-border);
+}
+
+.noticeDismiss {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: var(--pi-radius-sm);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.noticeDismiss:hover {
+  opacity: 0.75;
+}
+
+.noticeDismiss:focus-visible {
+  outline: 2px solid var(--pi-focus);
+  outline-offset: 1px;
+}
+
 .connected,
 .offline {
   display: inline-flex;

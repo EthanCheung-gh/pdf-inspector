@@ -15,6 +15,7 @@ import { useCursorStore, type CursorPdfPoint } from '../../store/cursor-store';
 import { useDiffStore } from '../../store/diff-store';
 import { usePdfStore } from '../../store/pdf-store';
 import { useRawStore, type RawTab } from '../../store/raw-store';
+import { useSessionRestoreStore } from '../../store/session-restore-store';
 import type { PageData } from '../../types/pdf-objects';
 import type { RawDocument, RawObject, RawPageContent, RawRef } from '../../types/raw-pdf';
 import styles from './StatusBar.module.css';
@@ -75,6 +76,55 @@ const StatusTail: React.FC<{ sidecarRunning: boolean }> = ({ sidecarRunning }) =
         {t(sidecarRunning ? 'status.sidecarConnected' : 'status.sidecarOffline')}
       </span>
     </>
+  );
+};
+
+/**
+ * Startup session restore progress and outcome (Q3).
+ *
+ * The restore runs unattended after the shell paints, so the only place it can
+ * report is the status bar: a live `Restoring n/m documents…` line while it
+ * works, then a dismissible warning when some saved documents were skipped. The
+ * failure copy deliberately carries a count only — the store keeps names and
+ * kinds but no paths, and the notice must never leak a location either.
+ *
+ * A fatal run error (a broken plan, not a per-document skip) reuses the same
+ * dismissible shape with the danger styling already used for other errors.
+ */
+const SessionRestoreNotice: React.FC = () => {
+  const t = useT();
+  const locale = useI18nStore((state) => state.locale);
+  const restoring = useSessionRestoreStore((state) => state.restoring);
+  const done = useSessionRestoreStore((state) => state.done);
+  const total = useSessionRestoreStore((state) => state.total);
+  const failed = useSessionRestoreStore((state) => state.failed);
+  const error = useSessionRestoreStore((state) => state.error);
+  const dismiss = useSessionRestoreStore((state) => state.dismiss);
+
+  if (restoring) {
+    return (
+      <span className={styles.documentStatus} role="status" aria-live="polite">
+        {t('status.sessionRestore.progress', { done, total })}
+      </span>
+    );
+  }
+
+  if (!error && failed.length === 0) return null;
+
+  const message = error
+    ? t('status.sessionRestore.error', { error })
+    : translatePlural(locale, 'status.sessionRestore.failed', failed.length);
+
+  return (
+    <span
+      className={`${styles.notice} ${error ? styles.noticeError : styles.noticeWarning}`}
+      role="alert"
+    >
+      <span className={styles.noticeText}>{message}</span>
+      <button className={styles.noticeDismiss} type="button" onClick={dismiss}>
+        {t('common.dismiss')}
+      </button>
+    </span>
   );
 };
 
@@ -197,6 +247,7 @@ export const StatusBar = (): JSX.Element => {
             {t('status.diff.pages', { old: diffResult.old.pages, new: diffResult.new.pages })}
           </span>
         )}
+        <SessionRestoreNotice />
         <StatusTail sidecarRunning={sidecarRunning} />
       </footer>
     );
@@ -231,6 +282,7 @@ export const StatusBar = (): JSX.Element => {
             {t('status.audit.failed', { error: auditError })}
           </span>
         )}
+        <SessionRestoreNotice />
         <StatusTail sidecarRunning={sidecarRunning} />
       </footer>
     );
@@ -258,6 +310,7 @@ export const StatusBar = (): JSX.Element => {
             {t('status.raw.failed', { error: rawError })}
           </span>
         )}
+        <SessionRestoreNotice />
         <StatusTail sidecarRunning={sidecarRunning} />
       </footer>
     );
@@ -345,6 +398,7 @@ export const StatusBar = (): JSX.Element => {
           {t('common.errorDetail', { error })}
         </span>
       )}
+      <SessionRestoreNotice />
       <StatusTail sidecarRunning={sidecarRunning} />
     </footer>
   );
