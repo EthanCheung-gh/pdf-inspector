@@ -41,6 +41,7 @@ describe('pdf-store', () => {
       outline: null,
       fitWidthZoom: null,
       initialFitWidthZoom: false,
+      skipInitialFit: false,
       textSelectionMode: false,
       fontStats: null,
       fontProgress: null,
@@ -84,6 +85,35 @@ describe('pdf-store', () => {
     const state = usePdfStore.getState();
     expect(state.fitWidthZoom).toBeNull();
     expect(state.zoom).toBe(2);
+  });
+
+  it('setFitWidthHint publishes the fit zoom without changing the current zoom', () => {
+    const { setFitWidthHint, setZoom } = usePdfStore.getState();
+    // A restored tab keeps 157% while the Fit W button still knows the ratio.
+    setZoom(1.565);
+    setFitWidthHint(1.32);
+
+    const state = usePdfStore.getState();
+    expect(state.fitWidthZoom).toBeCloseTo(1.32, 5);
+    expect(state.zoom).toBeCloseTo(1.565, 5);
+  });
+
+  it('setFitWidthHint clamps like the Fit W action', () => {
+    usePdfStore.getState().setFitWidthHint(10);
+    expect(usePdfStore.getState().fitWidthZoom).toBe(5);
+    expect(usePdfStore.getState().zoom).toBe(1);
+  });
+
+  it('skipInitialFit is a one-shot flag that the fit pass consumes', () => {
+    expect(usePdfStore.getState().skipInitialFit).toBe(false);
+
+    usePdfStore.getState().skipNextInitialFit();
+    expect(usePdfStore.getState().skipInitialFit).toBe(true);
+
+    // Read-and-clear: the first pass skips, every later one fits again.
+    expect(usePdfStore.getState().consumeInitialFitSkip()).toBe(true);
+    expect(usePdfStore.getState().skipInitialFit).toBe(false);
+    expect(usePdfStore.getState().consumeInitialFitSkip()).toBe(false);
   });
 
   it('setTextSelectionMode toggles the mode', () => {
@@ -163,6 +193,7 @@ describe('pdf-store', () => {
       outline: [{ title: 'Old', bold: false, italic: false, dest: null, items: [] }],
       fitWidthZoom: 1.5,
       initialFitWidthZoom: true,
+      skipInitialFit: true,
     });
 
     usePdfStore.getState().setFile('/tmp/new.pdf', metadata);
@@ -172,6 +203,9 @@ describe('pdf-store', () => {
     expect(state.outline).toBeNull();
     expect(state.fitWidthZoom).toBeNull();
     expect(state.initialFitWidthZoom).toBe(false);
+    // A pending snapshot skip belongs to the document that just closed; the new
+    // one must fit normally.
+    expect(state.skipInitialFit).toBe(false);
   });
 });
 
@@ -679,6 +713,7 @@ describe('resetDocument', () => {
       outline: [{ title: 'Old', bold: false, italic: false, dest: null, items: [] }],
       fitWidthZoom: 1.5,
       initialFitWidthZoom: true,
+      skipInitialFit: true,
       searchQuery: 'needle',
       searchMatches: [{ page: 2, begin: 0, length: 6 }],
       currentMatchIndex: 0,
@@ -718,6 +753,7 @@ describe('resetDocument', () => {
     expect(state.outline).toBeNull();
     expect(state.fitWidthZoom).toBeNull();
     expect(state.initialFitWidthZoom).toBe(false);
+    expect(state.skipInitialFit).toBe(false);
     expect(state.searchQuery).toBe('');
     expect(state.searchMatches).toEqual([]);
     expect(state.currentMatchIndex).toBe(-1);
