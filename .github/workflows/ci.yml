@@ -613,6 +613,229 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  accessibility-cli:
+    name: PDF accessibility CLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: sidecar/requirements.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r sidecar/requirements.txt
+
+      - name: Generate the deterministic accessibility samples
+        run: python scripts/generate-accessibility-samples.py
+
+      - name: Assert the generated samples match the committed fixtures
+        # The fixtures must be tracked (git ls-files fails otherwise) and the
+        # generator must reproduce them byte for byte.
+        run: |
+          set -euo pipefail
+          git ls-files --error-unmatch \
+            web-samples/accessibility-valid.pdf \
+            web-samples/accessibility-broken.pdf
+          git diff --exit-code -- \
+            web-samples/accessibility-valid.pdf \
+            web-samples/accessibility-broken.pdf
+
+      - name: Render the accessibility summary (expect exit 0)
+        run: |
+          set -euo pipefail
+          mkdir -p accessibility-artifacts
+
+          set +e
+          python sidecar/cli.py accessibility web-samples/accessibility-broken.pdf \
+            --format summary \
+            --output accessibility-artifacts/summary.txt \
+            --fail-on none
+          code=$?
+          set -e
+
+          echo "pdf-inspector exited with $code"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::expected exit 0 for the accessibility summary, got $code"
+            exit 1
+          fi
+
+          test -s accessibility-artifacts/summary.txt
+          grep -q 'PDF accessibility' accessibility-artifacts/summary.txt
+          grep -q 'summary: 0 errors, 5 warnings, 0 info (5 total)' \
+            accessibility-artifacts/summary.txt
+          grep -q 'Structure tree has no ParentTree' \
+            accessibility-artifacts/summary.txt
+          echo "summary: $(wc -c < accessibility-artifacts/summary.txt) bytes"
+
+      - name: Accessibility JSON report for the broken sample (expect exit 0)
+        run: |
+          set -euo pipefail
+
+          set +e
+          python sidecar/cli.py accessibility web-samples/accessibility-broken.pdf \
+            --format json \
+            --output accessibility-artifacts/broken.json \
+            --fail-on none
+          code=$?
+          set -e
+
+          echo "pdf-inspector exited with $code"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::expected exit 0 with --fail-on none, got $code"
+            exit 1
+          fi
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(
+              Path('accessibility-artifacts/broken.json').read_text(encoding='utf-8')
+          )
+          assert data['schemaVersion'] == 1, data['schemaVersion']
+          assert set(data) == {
+              'schemaVersion', 'tool', 'document', 'structure', 'findings', 'summary'
+          }, set(data)
+
+          document = data['document']
+          assert document['pages'] == 1, document
+          assert document['tagged'] is True, document
+          assert document['hasStructTreeRoot'] is True, document
+          assert document['hasParentTree'] is False, document
+
+          summary = data['summary']
+          findings = data['findings']
+          assert summary['total'] == len(findings), (summary, len(findings))
+          assert summary['errors'] == 0, summary
+          assert summary['warnings'] == 5, summary
+          assert summary['total'] == (
+              summary['errors'] + summary['warnings'] + summary['info']
+          ), summary
+
+          titles = {finding['title'] for finding in findings}
+          for expected in (
+              'Structure tree has no ParentTree',
+              'Figure has no alternative text',
+              'Heading levels are skipped',
+              'List has no list items',
+              'Table has no rows',
+          ):
+              assert expected in titles, titles
+          for finding in findings:
+              assert finding['category'] == 'structure', finding
+              assert finding['severity'] == 'warning', finding
+
+          assert data['structure'], 'missing structure tree'
+          print('accessibility JSON OK:', summary)
+          PY
+
+      - name: Accessibility JSON report for the valid sample (expect no findings)
+        run: |
+          set -euo pipefail
+
+          set +e
+          python sidecar/cli.py accessibility web-samples/accessibility-valid.pdf \
+            --format json \
+            --output accessibility-artifacts/valid.json \
+            --fail-on none
+          code=$?
+          set -e
+
+          echo "pdf-inspector exited with $code"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::expected exit 0 for the valid sample, got $code"
+            exit 1
+          fi
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(
+              Path('accessibility-artifacts/valid.json').read_text(encoding='utf-8')
+          )
+          assert data['document']['hasParentTree'] is True, data['document']
+          assert data['findings'] == [], data['findings']
+          assert data['summary'] == {
+              'total': 0, 'errors': 0, 'warnings': 0, 'info': 0
+          }, data['summary']
+          print('accessibility valid JSON OK:', data['summary'])
+          PY
+
+      - name: Accessibility threshold (expect exit 1)
+        run: |
+          set -euo pipefail
+
+          set +e
+          python sidecar/cli.py accessibility web-samples/accessibility-broken.pdf \
+            --format json \
+            --output accessibility-artifacts/broken-failing.json \
+            --fail-on warning
+          code=$?
+          set -e
+
+          echo "pdf-inspector exited with $code"
+          if [ "$code" -ne 1 ]; then
+            echo "::error::expected exit 1 with --fail-on warning, got $code"
+            exit 1
+          fi
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(
+              Path('accessibility-artifacts/broken-failing.json').read_text(encoding='utf-8')
+          )
+          assert data['summary']['warnings'] == 5, data['summary']
+          print('accessibility threshold OK:', data['summary'])
+          PY
+
+      - name: Render the accessibility HTML report (expect exit 0)
+        run: |
+          set -euo pipefail
+
+          set +e
+          python sidecar/cli.py accessibility web-samples/accessibility-broken.pdf \
+            --format html \
+            --output accessibility-artifacts/report.html \
+            --fail-on none
+          code=$?
+          set -e
+
+          echo "pdf-inspector exited with $code"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::expected exit 0 with --fail-on none, got $code"
+            exit 1
+          fi
+
+          test -s accessibility-artifacts/report.html
+          grep -q '<!DOCTYPE html>' accessibility-artifacts/report.html
+          grep -q 'PDF accessibility report' accessibility-artifacts/report.html
+          if grep -q '<script' accessibility-artifacts/report.html; then
+            echo "::error::accessibility HTML report must not contain scripts"
+            exit 1
+          fi
+          echo "HTML report: $(wc -c < accessibility-artifacts/report.html) bytes"
+
+      - name: Upload accessibility artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdf-accessibility-artifacts
+          path: accessibility-artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
+
   audit-action:
     name: PDF audit action
     runs-on: ubuntu-latest
