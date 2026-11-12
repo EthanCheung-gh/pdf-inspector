@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AUDIT_CATEGORIES,
   AUDIT_SEVERITIES,
@@ -18,6 +18,8 @@ import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { ipc } from '../../services/ipc-client';
 import { exportStemFromName } from '../../services/export-data';
 import { useAuditStore, type AuditFilter } from '../../store/audit-store';
+import { useSecurityStore } from '../../store/security-store';
+import { SecurityResources } from './SecurityResources';
 import styles from './AuditWorkspace.module.css';
 
 /** `Page 7` for a page finding, `Document` for a document-level one. */
@@ -61,6 +63,19 @@ export const auditSeverityLabel = (severity: AuditSeverity, t: TranslateFn): str
 export function suggestAuditJsonFilename(fileName: string | null): string {
   return `${exportStemFromName(fileName) || 'document'}.audit.json`;
 }
+
+/**
+ * `report.pdf` -> `report.security.json` for the `SecurityReport` export.
+ *
+ * Same stem rules as `suggestAuditJsonFilename`: the two exports describe the
+ * same document from different sides, so their names differ only in the label.
+ */
+export function suggestSecurityJsonFilename(fileName: string | null): string {
+  return `${exportStemFromName(fileName) || 'document'}.security.json`;
+}
+
+/** The two views the Audit workspace switches between. */
+export type AuditMode = 'findings' | 'resources';
 
 export function isAuditFilterActive(filter: AuditFilter): boolean {
   return filter.severity !== 'all' || filter.category !== 'all';
@@ -204,10 +219,16 @@ const FindingDetail: React.FC<{ finding: AuditFinding; onOpenPage: () => void }>
  * All state lives in `audit-store`; the component only reads it, so entering
  * and leaving Audit never touches the Inspect document. The run itself starts
  * in `open()` — this view only reports loading, progress and errors.
+ *
+ * The header switches between two views of the same document: `Findings` (the
+ * audit report) and `Resources` (the document security inventory). Only the
+ * mode is local component state; the security report lives in `security-store`
+ * so it survives a mode switch without repeating the scan.
  */
 export const AuditWorkspace: React.FC = () => {
   const t = useT();
   const locale = useI18nStore((s) => s.locale);
+  const filePath = useAuditStore((s) => s.filePath);
   const fileName = useAuditStore((s) => s.fileName);
   const report = useAuditStore((s) => s.report);
   const loading = useAuditStore((s) => s.loading);
@@ -220,12 +241,36 @@ export const AuditWorkspace: React.FC = () => {
   const setFilter = useAuditStore((s) => s.setFilter);
   const selectFinding = useAuditStore((s) => s.selectFinding);
 
+  const securityReport = useSecurityStore((s) => s.report);
+  const securityLoading = useSecurityStore((s) => s.loading);
+  const securityLoad = useSecurityStore((s) => s.load);
+
   const { navigate } = usePageNavigation();
+
+  const [mode, setMode] = useState<AuditMode>('findings');
 
   // An export failure is a local, dismissible concern: the audit store models
   // the run, not the save dialog, and its error would wrongly look like a
   // failed audit.
   const [exportError, setExportError] = useState<string | null>(null);
+
+  /**
+   * Point the resources view at the audited document.
+   *
+   * Entering Resources reads the document lazily; leaving it drops resources
+   * that belong to another file (a file change while Findings was shown) but
+   * keeps the cache, so toggling the mode is free.
+   */
+  useEffect(() => {
+    const security = useSecurityStore.getState();
+    if (mode === 'resources') {
+      security.open(filePath);
+      return;
+    }
+    if (security.filePath !== null && security.filePath !== filePath) {
+      security.reset();
+    }
+  }, [mode, filePath]);
 
   const findingCount = report?.findings.length ?? 0;
   const filtered = useMemo(
@@ -234,31 +279,84 @@ export const AuditWorkspace: React.FC = () => {
   );
   const filterActive = isAuditFilterActive(filter);
 
+  const saveJson = useCallback(
+    async (defaultPath: string, content: string) => {
+      setExportError(null);
+      try {
+        const response = await ipc.saveFile({
+          defaultPath,
+          content,
+          filterName: 'JSON',
+          extensions: ['json'],
+        });
+        // A dismissed dialog is not an error; the user simply changed their mind.
+        if (response.canceled) return;
+        if (response.error) {
+          setExportError(t('export.failedDetail', { error: response.error }));
+        }
+      } catch (err) {
+        setExportError(
+          err instanceof Error
+            ? t('export.failedDetail', { error: err.message })
+            : t('export.failed'),
+        );
+      }
+    },
+    [t],
+  );
+
   const handleExportJson = useCallback(async () => {
     const state = useAuditStore.getState();
     if (!state.report) return;
+    await saveJson(
+      suggestAuditJsonFilename(state.fileName),
+      JSON.stringify(state.report, null, 2),
+    );
+  }, [saveJson]);
 
-    setExportError(null);
-    try {
-      const response = await ipc.saveFile({
-        defaultPath: suggestAuditJsonFilename(state.fileName),
-        content: JSON.stringify(state.report, null, 2),
-        filterName: 'JSON',
-        extensions: ['json'],
-      });
-      // A dismissed dialog is not an error; the user simply changed their mind.
-      if (response.canceled) return;
-      if (response.error) {
-        setExportError(t('export.failedDetail', { error: response.error }));
-      }
-    } catch (err) {
-      setExportError(
-        err instanceof Error
-          ? t('export.failedDetail', { error: err.message })
-          : t('export.failed'),
-      );
+  // The security export is independent of the audit run: its failures show as
+  // a local alert and never touch the audit store's error.
+  const handleExportSecurityJson = useCallback(async () => {
+    const state = useSecurityStore.getState();
+    if (!state.report) return;
+    await saveJson(
+      suggestSecurityJsonFilename(useAuditStore.getState().fileName),
+      JSON.stringify(state.report, null, 2),
+    );
+  }, [saveJson]);
+
+  /**
+   * Audit `Re-run` also drops the cached security scan: a re-run is the user
+   * asking for a fresh look at the file, so the next Resources visit re-reads
+   * it instead of showing the old inventory.
+   */
+  const handleRunAudit = useCallback(() => {
+    const security = useSecurityStore.getState();
+    security.invalidate();
+    if (mode === 'resources') {
+      // The resources view is on screen, so read the file again right away
+      // instead of waiting for a report that nothing would request.
+      security.open(useAuditStore.getState().filePath);
     }
-  }, [t]);
+    void runAudit();
+  }, [mode, runAudit]);
+
+  const handleRefreshResources = useCallback(() => {
+    void securityLoad(true);
+  }, [securityLoad]);
+
+  /**
+   * Jump from a security finding back into the report list.
+   *
+   * The category filter is forced to `security` (that is what the user asked
+   * for) and the severity filter is reset to `all`, because a severity left
+   * over from an earlier session would hide some of those findings and make
+   * the jump look broken.
+   */
+  const handleViewInFindings = useCallback(() => {
+    setMode('findings');
+    setFilter({ category: 'security', severity: 'all' });
+  }, [setFilter]);
 
   const handleOpenPage = useCallback(() => {
     const state = useAuditStore.getState();
@@ -287,6 +385,28 @@ export const AuditWorkspace: React.FC = () => {
         </button>
         <span className={styles.separator} />
         <span className={styles.title}>{t('audit.title')}</span>
+
+        {/* Segmented mode switch: native buttons, so Tab/Enter/Space and the
+            usual pointer input both work; `aria-pressed` states the mode. */}
+        <div className={styles.modeSwitch} role="group" aria-label={t('audit.mode.label')}>
+          <button
+            className={`${styles.button} ${mode === 'findings' ? styles.active : ''}`}
+            type="button"
+            aria-pressed={mode === 'findings'}
+            onClick={() => setMode('findings')}
+          >
+            {t('audit.mode.findings')}
+          </button>
+          <button
+            className={`${styles.button} ${mode === 'resources' ? styles.active : ''}`}
+            type="button"
+            aria-pressed={mode === 'resources'}
+            onClick={() => setMode('resources')}
+          >
+            {t('audit.mode.resources')}
+          </button>
+        </div>
+
         <span
           className={styles.fileName}
           title={fileName ?? '—'}
@@ -301,161 +421,212 @@ export const AuditWorkspace: React.FC = () => {
           <button
             className={styles.button}
             type="button"
-            onClick={() => void runAudit()}
+            onClick={handleRunAudit}
             disabled={loading}
             title={report ? t('audit.reRunTitle') : t('audit.runTitle')}
           >
             {loading ? t('audit.running') : report ? t('audit.reRun') : t('audit.run')}
           </button>
-          <button
-            className={styles.button}
-            type="button"
-            onClick={() => void handleExportJson()}
-            disabled={!report}
-            title={t('audit.exportTitle')}
-          >
-            {t('common.exportJson')}
-          </button>
+
+          {mode === 'findings' ? (
+            <button
+              className={styles.button}
+              type="button"
+              onClick={() => void handleExportJson()}
+              disabled={!report}
+              title={t('audit.exportTitle')}
+            >
+              {t('common.exportJson')}
+            </button>
+          ) : (
+            <>
+              <button
+                className={styles.button}
+                type="button"
+                onClick={handleRefreshResources}
+                disabled={securityLoading || filePath === null}
+                title={t('audit.resources.refreshTitle')}
+              >
+                {t('audit.resources.refresh')}
+              </button>
+              <button
+                className={styles.button}
+                type="button"
+                onClick={() => void handleExportSecurityJson()}
+                disabled={!securityReport}
+                title={t('audit.resources.exportTitle')}
+              >
+                {t('audit.resources.export')}
+              </button>
+            </>
+          )}
         </div>
       </header>
 
       {exportError && (
-        <p className={styles.error} role="alert">
-          {exportError}
-        </p>
+        <div className={styles.errorBar}>
+          <p className={styles.error} role="alert">
+            {exportError}
+          </p>
+          <button
+            className={styles.linkButton}
+            type="button"
+            onClick={() => setExportError(null)}
+          >
+            {t('common.dismiss')}
+          </button>
+        </div>
       )}
 
-      <div className={styles.body}>
-        <aside className={styles.summaryPane} aria-label={t('audit.summaryPaneLabel')}>
-          {report ? (
-            <Summary report={report} />
-          ) : (
-            <p className={styles.hint}>
-              {loading ? t('audit.reading') : t('audit.noAudit')}
-            </p>
-          )}
+      {/* `Findings` keeps the three-pane layout (summary | list | detail);
+          `Resources` replaces the whole body with the security inventory. The
+          panes are unmounted rather than hidden so no stale finding list is
+          reachable from the Resources view. */}
+      <div className={styles.body} data-mode={mode}>
+        {mode === 'resources' && (
+          <SecurityResources filePath={filePath} onViewInFindings={handleViewInFindings} />
+        )}
 
-          <div className={styles.filters}>
-            <label className={styles.filterLabel}>
-              {t('audit.filter.severity')}
-              <select
-                className={styles.select}
-                aria-label={t('audit.filter.severityTitle')}
-                value={filter.severity}
-                onChange={(event) =>
-                  setFilter({ severity: event.target.value as AuditFilter['severity'] })
-                }
+        {mode === 'findings' && (
+          <aside className={styles.summaryPane} aria-label={t('audit.summaryPaneLabel')}>
+            {report ? (
+              <Summary report={report} />
+            ) : (
+              <p className={styles.hint}>
+                {loading ? t('audit.reading') : t('audit.noAudit')}
+              </p>
+            )}
+
+            <div className={styles.filters}>
+              <label className={styles.filterLabel}>
+                {t('audit.filter.severity')}
+                <select
+                  className={styles.select}
+                  aria-label={t('audit.filter.severityTitle')}
+                  value={filter.severity}
+                  onChange={(event) =>
+                    setFilter({ severity: event.target.value as AuditFilter['severity'] })
+                  }
+                >
+                  <option value="all">{t('audit.filter.allSeverities')}</option>
+                  {AUDIT_SEVERITIES.map((severity) => (
+                    <option key={severity} value={severity}>
+                      {auditSeverityLabel(severity, t)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={styles.filterLabel}>
+                {t('audit.filter.category')}
+                <select
+                  className={styles.select}
+                  aria-label={t('audit.filter.categoryTitle')}
+                  value={filter.category}
+                  onChange={(event) =>
+                    setFilter({ category: event.target.value as AuditFilter['category'] })
+                  }
+                >
+                  <option value="all">{t('audit.filter.allCategories')}</option>
+                  {AUDIT_CATEGORIES.map((category) => (
+                    <option key={category} value={category}>
+                      {auditCategoryLabel(category, t)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className={styles.linkButton}
+                type="button"
+                onClick={() => setFilter({ severity: 'all', category: 'all' })}
+                disabled={!filterActive}
               >
-                <option value="all">{t('audit.filter.allSeverities')}</option>
-                {AUDIT_SEVERITIES.map((severity) => (
-                  <option key={severity} value={severity}>
-                    {auditSeverityLabel(severity, t)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className={styles.filterLabel}>
-              {t('audit.filter.category')}
-              <select
-                className={styles.select}
-                aria-label={t('audit.filter.categoryTitle')}
-                value={filter.category}
-                onChange={(event) =>
-                  setFilter({ category: event.target.value as AuditFilter['category'] })
-                }
-              >
-                <option value="all">{t('audit.filter.allCategories')}</option>
-                {AUDIT_CATEGORIES.map((category) => (
-                  <option key={category} value={category}>
-                    {auditCategoryLabel(category, t)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button
-              className={styles.linkButton}
-              type="button"
-              onClick={() => setFilter({ severity: 'all', category: 'all' })}
-              disabled={!filterActive}
-            >
-              {t('common.reset')}
-            </button>
-          </div>
-        </aside>
+                {t('common.reset')}
+              </button>
+            </div>
+          </aside>
+        )}
 
-        <div className={styles.center}>
-          {error && (
-            <p className={styles.error} role="alert">
-              {t('audit.failed', { error })}
-            </p>
-          )}
+        {mode === 'findings' && (
+          <div className={styles.center}>
+            {error && (
+              <p className={styles.error} role="alert">
+                {t('audit.failed', { error })}
+              </p>
+            )}
 
-          {loading && (
-            <p className={styles.progress} role="status" aria-live="polite">
-              {progressText}
-            </p>
-          )}
+            {loading && (
+              <p className={styles.progress} role="status" aria-live="polite">
+                {progressText}
+              </p>
+            )}
 
-          {!report && !loading && !error && (
-            <p className={styles.emptyState} data-testid="audit-empty">
-              {t('audit.emptyWorkspace')}
-            </p>
-          )}
+            {!report && !loading && !error && (
+              <p className={styles.emptyState} data-testid="audit-empty">
+                {t('audit.emptyWorkspace')}
+              </p>
+            )}
 
-          {report && findingCount === 0 && !loading && (
-            <p className={styles.emptyState} role="status">
-              {t('audit.noFindings')}
-            </p>
-          )}
+            {report && findingCount === 0 && !loading && (
+              <p className={styles.emptyState} role="status">
+                {t('audit.noFindings')}
+              </p>
+            )}
 
-          {report && findingCount > 0 && (
-            <p className={styles.listCount} data-testid="audit-filtered-count">
-              {filterActive
-                ? t('audit.filteredCount', { filtered: filtered.length, total: findingCount })
-                : translatePlural(locale, 'audit.count', findingCount)}
-            </p>
-          )}
+            {report && findingCount > 0 && (
+              <p className={styles.listCount} data-testid="audit-filtered-count">
+                {filterActive
+                  ? t('audit.filteredCount', { filtered: filtered.length, total: findingCount })
+                  : translatePlural(locale, 'audit.count', findingCount)}
+              </p>
+            )}
 
-          {report && findingCount > 0 && filtered.length === 0 && !loading && (
-            <p className={styles.emptyState} role="status">
-              {t('audit.noFilterMatch')}
-            </p>
-          )}
+            {report && findingCount > 0 && filtered.length === 0 && !loading && (
+              <p className={styles.emptyState} role="status">
+                {t('audit.noFilterMatch')}
+              </p>
+            )}
 
-          <ul className={styles.findingList} data-testid="audit-finding-list">
-            {filtered.map((finding, index) => {
-              const isSelected = selected === finding;
-              return (
-                <li key={`${finding.category}:${finding.page ?? 'document'}:${finding.title}:${index}`}>
-                  <button
-                    className={`${styles.findingItem} ${isSelected ? styles.findingItemSelected : ''}`}
-                    type="button"
-                    aria-pressed={isSelected}
-                    aria-label={`${finding.severity} ${finding.category} ${auditPageLabel(finding.page, t)}: ${finding.title}`}
-                    onClick={() => selectFinding(finding)}
+            <ul className={styles.findingList} data-testid="audit-finding-list">
+              {filtered.map((finding, index) => {
+                const isSelected = selected === finding;
+                return (
+                  <li
+                    key={`${finding.category}:${finding.page ?? 'document'}:${finding.title}:${index}`}
                   >
-                    <span className={styles.severityBadge} data-severity={finding.severity}>
-                      {finding.severity}
-                    </span>
-                    <span className={styles.findingCategory}>{finding.category}</span>
-                    <span className={styles.findingPage}>{auditPageLabel(finding.page, t)}</span>
-                    <span className={styles.findingTitle} title={finding.title}>
-                      {finding.title}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+                    <button
+                      className={`${styles.findingItem} ${isSelected ? styles.findingItemSelected : ''}`}
+                      type="button"
+                      aria-pressed={isSelected}
+                      aria-label={`${finding.severity} ${finding.category} ${auditPageLabel(finding.page, t)}: ${finding.title}`}
+                      onClick={() => selectFinding(finding)}
+                    >
+                      <span className={styles.severityBadge} data-severity={finding.severity}>
+                        {finding.severity}
+                      </span>
+                      <span className={styles.findingCategory}>{finding.category}</span>
+                      <span className={styles.findingPage}>
+                        {auditPageLabel(finding.page, t)}
+                      </span>
+                      <span className={styles.findingTitle} title={finding.title}>
+                        {finding.title}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
 
-        <aside className={styles.details} aria-label={t('audit.detailsLabel')}>
-          {selected ? (
-            <FindingDetail finding={selected} onOpenPage={handleOpenPage} />
-          ) : (
-            <p className={styles.hint}>{t('audit.detail.selectFinding')}</p>
-          )}
-        </aside>
+        {mode === 'findings' && (
+          <aside className={styles.details} aria-label={t('audit.detailsLabel')}>
+            {selected ? (
+              <FindingDetail finding={selected} onOpenPage={handleOpenPage} />
+            ) : (
+              <p className={styles.hint}>{t('audit.detail.selectFinding')}</p>
+            )}
+          </aside>
+        )}
       </div>
     </section>
   );
