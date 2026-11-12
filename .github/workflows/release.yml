@@ -1,0 +1,133 @@
+name: Release
+
+# Publishing is tag-driven: pushing a tag like `v0.3.0` builds every platform
+# natively and then creates a single GitHub release from the collected
+# installers. `workflow_dispatch` is only a packaging smoke test; it builds and
+# uploads workflow artifacts but never creates a release (see the `publish`
+# job's tag guard).
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    # PyInstaller cannot cross-compile and electron-builder needs a native host
+    # for each target (macOS packages require a macOS runner), so every platform
+    # must be built on its own runner rather than on a single Linux job.
+    #
+    # macOS builds are intentionally unsigned: there is no Developer ID
+    # certificate in CI, so auto-discovery must stay off or electron-builder
+    # fails looking for an identity.
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: sidecar/requirements.txt
+
+      - name: Install npm dependencies
+        # Packaging needs the real Electron binary; do not set
+        # ELECTRON_SKIP_BINARY_DOWNLOAD here.
+        run: npm ci
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r sidecar/requirements.txt pyinstaller
+
+      - name: Build renderer, main, and preload
+        run: npm run build
+
+      - name: Freeze the Python sidecar
+        # `shell: bash` lets Windows use Git Bash so the POSIX `sh` script runs.
+        # PYTHON pins the interpreter installed by actions/setup-python instead
+        # of relying on the `py -3` launcher on Windows runners.
+        shell: bash
+        env:
+          PYTHON: python
+        run: npm run freeze:sidecar
+
+      - name: Package the current platform
+        # electron-builder's default target for the host OS, output in release/.
+        # It does not publish here; only the `publish` job creates the release.
+        run: npm run dist
+
+      - name: Upload platform installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdf-inspector-${{ matrix.os }}
+          # Each runner only produces its own platform's files.
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/*.exe
+            release/*.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Only this single job creates the release, so the matrix jobs never race
+    # each other to create or update the same tag's release.
+    permissions:
+      contents: write
+
+    # A manual dispatch from a branch has no release tag; only tag refs publish.
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: PDF Inspector ${{ github.ref_name }}
+          generate_release_notes: true
+          make_latest: true
+          # Not every pattern exists for every platform; the matrix supplies
+          # the full set across the merged artifacts.
+          fail_on_unmatched_files: false
+          files: |
+            release-assets/*.AppImage
+            release-assets/*.deb
+            release-assets/*.exe
+            release-assets/*.dmg

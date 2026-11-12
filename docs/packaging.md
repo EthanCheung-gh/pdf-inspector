@@ -12,6 +12,14 @@ cross-compile; macOS packages require a macOS host).
 - Python 3.10+ available as `python3` (Linux/macOS) or `py -3` / `python` (Windows, Git Bash)
 - Python packages: `pip install -r sidecar/requirements.txt pyinstaller`
 
+To use a specific interpreter (for example `.venv/bin/python` with PyInstaller
+installed in that virtualenv), set `PYTHON`. The freeze script uses it when it
+works and otherwise keeps the `python3` / `py -3` / `python` fallback:
+
+```sh
+PYTHON=.venv/bin/python npm run freeze:sidecar
+```
+
 Platform extras:
 
 - **Windows**: run the commands in Git Bash (bundled with Git for Windows).
@@ -36,6 +44,61 @@ Per-platform shortcuts: `npm run dist:win` / `npm run dist:mac` / `npm run dist:
 | Windows  | NSIS installer `.exe`, portable `.exe` |
 | Linux    | `.AppImage`, `.deb` |
 | macOS    | `.dmg` |
+
+## Release workflow (GitHub Actions)
+
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) builds the
+packages on native runners and publishes them as a GitHub release. Publishing is
+tag-driven:
+
+```sh
+# 1. Bump "version" in package.json and package-lock.json, then commit.
+# 2. Tag the commit and push the tag:
+git tag v0.3.0
+git push origin v0.3.0
+```
+
+Pushing a `v*` tag starts the workflow. The tag name becomes the release tag, so
+keep it in sync with `version` in `package.json` (currently `0.3.0`).
+
+The build job matrix is `ubuntu-latest`, `windows-latest`, and
+`macos-latest` with `fail-fast: false` and a 45-minute timeout. Each runner
+checks out the repo, installs Node from `.nvmrc` and Python 3.12, runs
+`npm ci` (with the Electron binary), installs `sidecar/requirements.txt` plus
+`pyinstaller`, then runs `npm run build`, `npm run freeze:sidecar`, and
+`npm run dist`. On Windows the freeze step runs under Git Bash (`shell: bash`)
+so the POSIX script can execute. The sidecar step also sets `PYTHON: python` to
+pin the interpreter that `actions/setup-python` installed.
+
+Platform constraints still apply:
+
+- Each target is built on its own native host; PyInstaller cannot cross-compile
+  and macOS packages require a macOS runner.
+- macOS packages are **unsigned** (and not notarized) because CI has no
+  Developer ID certificate. `CSC_IDENTITY_AUTO_DISCOVERY: false` stops
+  electron-builder from searching for a signing identity. Users must bypass
+  Gatekeeper (right-click → Open) until signing is added.
+
+Each matrix job uploads only its own platform's files as a workflow artifact:
+
+| Runner | Uploaded artifacts |
+|--------|--------------------|
+| `ubuntu-latest` | `release/*.AppImage`, `release/*.deb` |
+| `windows-latest` | `release/*.exe` |
+| `macos-latest` | `release/*.dmg` |
+
+A single `publish` job (`needs: build`, Ubuntu, `contents: write`) downloads all
+artifacts with `merge-multiple: true` into `release-assets/` and calls
+`softprops/action-gh-release@v2` once. Only this job creates the release, so the
+matrix jobs cannot race to create it; the release is named
+`PDF Inspector <tag>`, uses generated release notes, is marked latest, and
+attaches the merged `.AppImage` / `.deb` / `.exe` / `.dmg` files.
+`fail_on_unmatched_files: false` is expected because each build only produces
+its own platform's assets.
+
+`workflow_dispatch` is available for packaging smoke tests: it runs the build
+matrix and uploads artifacts, but the `publish` job is skipped unless the ref is
+a tag, so no release is created from a branch.
 
 ## Verify on a clean machine
 
