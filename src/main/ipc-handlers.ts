@@ -377,7 +377,13 @@ export function registerIpcHandlers(sidecar: SidecarTransport): void {
     }
 
     try {
-      await writeFile(result.filePath, req.content, 'utf8');
+      // Image exports arrive as base64 so the text IPC channel can carry binary
+      // bytes; decode before writing or the PNG would be saved as base64 text.
+      if (req.encoding === 'base64') {
+        await writeFile(result.filePath, Buffer.from(req.content, 'base64'));
+      } else {
+        await writeFile(result.filePath, req.content, 'utf8');
+      }
       return { canceled: false, filePath: result.filePath };
     } catch (err) {
       return { canceled: false, error: err instanceof Error ? err.message : 'Unknown error' };

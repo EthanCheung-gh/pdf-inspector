@@ -10,6 +10,10 @@ export interface SaveFileRequest {
   content: string;
   filterName: string;
   extensions: string[];
+  /** 'base64' decodes content to binary; default utf8. */
+  encoding?: 'utf8' | 'base64';
+  /** Optional MIME type for browser downloads. */
+  mimeType?: string;
 }
 
 /**

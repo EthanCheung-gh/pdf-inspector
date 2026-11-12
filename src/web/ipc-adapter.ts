@@ -358,8 +358,11 @@ function pickPdfFile(): Promise<File | null> {
   });
 }
 
-/** Pick a MIME type for a download from the requested extensions. */
+/** Pick a MIME type for a download from the request or the requested extensions. */
 function downloadMimeType(req: SaveFileRequest): string {
+  const explicit = req.mimeType?.trim();
+  if (explicit) return explicit;
+
   const extension = (req.extensions[0] ?? '').toLowerCase();
   switch (extension) {
     case 'json':
@@ -368,9 +371,29 @@ function downloadMimeType(req: SaveFileRequest): string {
       return 'text/csv';
     case 'pdf':
       return 'application/pdf';
+    case 'png':
+      return 'image/png';
+    case 'svg':
+      return 'image/svg+xml';
     default:
       return 'text/plain';
   }
+}
+
+/**
+ * Decode base64 to bytes without Node globals.
+ *
+ * `atob` yields one character per byte, so the char codes are the binary
+ * payload. It throws on malformed input, which surfaces as a failed save instead
+ * of a corrupt file.
+ */
+function base64ToBytes(content: string) {
+  const binary = atob(content);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }
 
 /**
@@ -384,7 +407,10 @@ function downloadMimeType(req: SaveFileRequest): string {
  */
 function saveFile(req: SaveFileRequest): SaveFileResult {
   const fileName = basename(req.defaultPath) || 'export.txt';
-  const blob = new Blob([req.content], { type: downloadMimeType(req) });
+  // Binary exports carry a base64 string; decoding first keeps the downloaded
+  // PNG/SVG from being the base64 text itself.
+  const content = req.encoding === 'base64' ? base64ToBytes(req.content) : req.content;
+  const blob = new Blob([content], { type: downloadMimeType(req) });
   const objectUrl = URL.createObjectURL(blob);
 
   const anchor = document.createElement('a');

@@ -15,11 +15,14 @@ import { DocumentTabs } from './components/Workspace/DocumentTabs';
 import { useRegisterCommands } from './hooks/useRegisterCommands';
 import { ipc } from './services/ipc-client';
 import type { CommandDefinition } from './services/command-registry';
+import { LOCALES, applyLocale, useI18nStore, useT } from './i18n';
+import { themeLabelKey } from './components/Toolbar/ThemePicker';
 import { useAuditStore } from './store/audit-store';
 import { useDiffStore } from './store/diff-store';
 import { usePdfStore } from './store/pdf-store';
 import { useRawStore } from './store/raw-store';
 import { applyTheme, useThemeStore } from './store/theme-store';
+import { THEMES } from './theme/themes';
 import {
   LEFT_PANEL_LIMITS,
   RIGHT_PANEL_LIMITS,
@@ -30,7 +33,10 @@ import styles from './App.module.css';
 const SIDECAR_STATUS_POLL_INTERVAL_MS = 5_000;
 
 const App = (): JSX.Element => {
+  const t = useT();
   const theme = useThemeStore((state) => state.theme);
+  const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
+  const locale = useI18nStore((state) => state.locale);
   const setSidecarRunning = usePdfStore((state) => state.setSidecarRunning);
   const clearSelection = usePdfStore((state) => state.clearSelection);
   const textSelectionMode = usePdfStore((state) => state.textSelectionMode);
@@ -61,28 +67,57 @@ const App = (): JSX.Element => {
   const leftPaneVisible = !leftCollapsed && !focusMode;
   const rightPaneVisible = !rightCollapsed && !focusMode;
 
-  // Shell-level commands. They read the stores through `getState` so the list
-  // identity stays stable for the palette; enabled state is evaluated when the
-  // palette renders/opens, not frozen here.
-  const appCommands = useMemo<CommandDefinition[]>(
-    () => [
+  // Shell-level commands. They read the stores through `getState` so enabled
+  // state is evaluated when the palette renders/opens, not frozen here. The
+  // list is rebuilt when the translator changes so every title follows the
+  // active locale (`useRegisterCommands` re-registers on array identity).
+  const appCommands = useMemo<CommandDefinition[]>(() => {
+    // One palette command per registered theme. Built from the registry so a
+    // new theme shows up without touching this file's command wiring; the run
+    // callback reads the store lazily like every other command.
+    const themeCommands: CommandDefinition[] = THEMES.map((definition) => ({
+      id: `view.theme.${definition.id}`,
+      title: t('theme.current', { theme: t(themeLabelKey(definition.id)) }),
+      group: 'View',
+      keywords: ['theme', 'appearance', 'color', definition.id],
+      run: () => useThemeStore.getState().setTheme(definition.id),
+    }));
+
+    // One palette command per locale. Titles use the language's autonym so both
+    // entries stay recognisable in either locale.
+    const languageCommands: CommandDefinition[] = LOCALES.map((target) => ({
+      id: `language.${target}`,
+      title: t(target === 'en' ? 'language.command.en' : 'language.command.zh-CN'),
+      group: 'View',
+      keywords: [
+        'language',
+        'locale',
+        target === 'en' ? 'english' : 'chinese',
+        target === 'en' ? 'en' : '简体中文',
+      ],
+      run: () => useI18nStore.getState().setLocale(target),
+    }));
+
+    return [
       {
         id: 'view.toggle-theme',
-        title: 'Toggle theme (Dark / Islands)',
+        title: t('command.cycleTheme'),
         group: 'View',
-        keywords: ['theme', 'dark', 'islands', 'appearance'],
+        keywords: ['theme', 'cycle', 'appearance', 'dark', 'islands', 'light', 'system'],
         run: () => useThemeStore.getState().toggleTheme(),
       },
+      ...themeCommands,
+      ...languageCommands,
       {
         id: 'view.toggle-focus',
-        title: 'Toggle focus mode',
+        title: t('command.toggleFocus'),
         group: 'View',
         keywords: ['focus', 'panels', 'zen'],
         run: () => useWorkspaceStore.getState().toggleFocusMode(),
       },
       {
         id: 'view.toggle-left-panel',
-        title: 'Toggle left panel',
+        title: t('command.toggleLeftPanel'),
         group: 'View',
         keywords: ['left', 'objects', 'panel', 'collapse'],
         run: () => {
@@ -98,7 +133,7 @@ const App = (): JSX.Element => {
       },
       {
         id: 'view.toggle-right-panel',
-        title: 'Toggle right panel',
+        title: t('command.toggleRightPanel'),
         group: 'View',
         keywords: ['right', 'inspector', 'panel', 'collapse'],
         run: () => {
@@ -114,7 +149,7 @@ const App = (): JSX.Element => {
       },
       {
         id: 'navigate.open-search',
-        title: 'Search document…',
+        title: t('command.searchDocument'),
         group: 'Navigate',
         keywords: ['find', 'search', 'text'],
         shortcut: 'Ctrl+F',
@@ -123,22 +158,30 @@ const App = (): JSX.Element => {
       },
       {
         id: 'view.clear-selection',
-        title: 'Clear selection',
+        title: t('command.clearSelection'),
         group: 'View',
         keywords: ['clear', 'selection', 'deselect', 'escape'],
         run: () => usePdfStore.getState().clearSelection(),
       },
-    ],
-    [],
-  );
+    ];
+  }, [t]);
   useRegisterCommands('app', appCommands);
 
   // The store also applies the theme on `setTheme`; this effect covers the
   // first mount (including tests and embeds that skip the entry point) and
-  // keeps the document attribute in sync with any state written directly.
+  // keeps both the resolved palette and the selected mode in sync with any
+  // state written directly.
   useEffect(() => {
-    applyTheme(theme);
-  }, [theme]);
+    applyTheme(resolvedTheme, theme);
+  }, [resolvedTheme, theme]);
+
+  // The store applies the locale on `setLocale`; this effect covers the first
+  // mount (tests/embeds that skip the entry point) and keeps `<html lang>` in
+  // sync with any state written directly. It does not read storage, so it can
+  // never override a locale a caller just set.
+  useEffect(() => {
+    applyLocale(locale);
+  }, [locale]);
 
   // Diff and Audit are mutually exclusive: each one replaces the Inspect panes,
   // so two at once would fight over the same area. Diff wins because a completed
@@ -297,7 +340,11 @@ const App = (): JSX.Element => {
             />
           )}
           {leftCollapsed && !focusMode && (
-            <PanelRail side="left" label="Objects" onShow={() => setLeftCollapsed(false)} />
+            <PanelRail
+              side="left"
+              label={t('panel.objects')}
+              onShow={() => setLeftCollapsed(false)}
+            />
           )}
           <div className={styles.canvas}>
             <PdfViewport />
@@ -310,15 +357,19 @@ const App = (): JSX.Element => {
                   setLeftCollapsed(false);
                   setRightCollapsed(false);
                 }}
-                aria-label="Show panels"
-                title="Show panels (F)"
+                aria-label={t('common.showPanels')}
+                title={t('common.showPanelsShortcut')}
               >
-                Show panels
+                {t('common.showPanels')}
               </button>
             )}
           </div>
           {rightCollapsed && !focusMode && (
-            <PanelRail side="right" label="Inspector" onShow={() => setRightCollapsed(false)} />
+            <PanelRail
+              side="right"
+              label={t('panel.inspector')}
+              onShow={() => setRightCollapsed(false)}
+            />
           )}
           {rightPaneVisible && (
             <PanelSplitter

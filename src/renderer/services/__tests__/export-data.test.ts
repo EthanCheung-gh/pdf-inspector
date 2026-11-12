@@ -8,7 +8,11 @@ import {
   pagesToCsv,
   pagesToJson,
   sanitizeExportFileName,
+  sanitizeReportFileName,
+  sanitizeViewFileName,
   suggestFilename,
+  suggestReportFilename,
+  suggestViewFilename,
   swapExportFormatExtension,
 } from '../export-data';
 
@@ -400,6 +404,126 @@ describe('sanitizeExportFileName', () => {
   });
 });
 
+describe('suggestViewFilename', () => {
+  it('builds page and region names with PNG/SVG extensions', () => {
+    expect(suggestViewFilename('/docs/report.pdf', 3, 'png')).toBe('report-p3.png');
+    expect(suggestViewFilename('/docs/report.pdf', 3, 'svg', null, null, true)).toBe(
+      'report-p3-region.svg',
+    );
+    expect(suggestViewFilename(null, 1, 'png')).toBe('document-p1.png');
+  });
+
+  it('prefers the source URL, then the document display name, then the local path', () => {
+    expect(
+      suggestViewFilename(
+        '/tmp/report-1a2b3c4d.pdf',
+        2,
+        'png',
+        'https://example.com/docs/%E6%B5%8B%E8%AF%95%20report.pdf',
+        'upload.pdf',
+      ),
+    ).toBe('测试 report-p2.png');
+
+    expect(
+      suggestViewFilename('/tmp/report-1a2b3c4d.pdf', 2, 'svg', 'https://example.com/', '测试 报告.pdf'),
+    ).toBe('测试 报告-p2.svg');
+  });
+
+  it('preserves Unicode and falls back for unusable stems', () => {
+    expect(suggestViewFilename('/tmp/q3%20draft.pdf', 1, 'png', null, '报告.pdf')).toBe(
+      '报告-p1.png',
+    );
+    expect(suggestViewFilename('/tmp/_____.pdf', 1, 'png', null, '_____.pdf')).toBe(
+      'document-p1.png',
+    );
+    expect(suggestViewFilename('/tmp/---...pdf', 3, 'svg')).toBe('document-p3.svg');
+  });
+});
+
+describe('sanitizeViewFileName', () => {
+  it('normalises a custom name and preserves Unicode', () => {
+    expect(sanitizeViewFileName('my export', 'png')).toBe('my export.png');
+    expect(sanitizeViewFileName('测试 报告', 'svg')).toBe('测试 报告.svg');
+    expect(sanitizeViewFileName('re:port<1>?.png', 'png')).toBe('re_port_1__.png');
+  });
+
+  it('drops directories and rejects unusable names', () => {
+    expect(sanitizeViewFileName('/etc/passwd', 'svg')).toBe('passwd.svg');
+    expect(sanitizeViewFileName('..\\..\\secret.pdf', 'png')).toBe('secret.png');
+    expect(sanitizeViewFileName('', 'png')).toBe('');
+    expect(sanitizeViewFileName('   ', 'svg')).toBe('');
+    expect(sanitizeViewFileName('...', 'png')).toBe('');
+    expect(sanitizeViewFileName('/tmp/', 'svg')).toBe('');
+    expect(sanitizeViewFileName('.png', 'png')).toBe('');
+  });
+
+  it('enforces exactly one extension and swaps png/svg/pdf suffixes', () => {
+    expect(sanitizeViewFileName('capture', 'png')).toBe('capture.png');
+    expect(sanitizeViewFileName('capture.png', 'png')).toBe('capture.png');
+    expect(sanitizeViewFileName('capture.png', 'svg')).toBe('capture.svg');
+    expect(sanitizeViewFileName('capture.SVG', 'png')).toBe('capture.png');
+    expect(sanitizeViewFileName('capture.pdf', 'png')).toBe('capture.png');
+  });
+});
+
+describe('suggestReportFilename', () => {
+  it('appends -report.html to the document stem', () => {
+    expect(suggestReportFilename('/docs/report.pdf')).toBe('report-report.html');
+    expect(suggestReportFilename(null)).toBe('document-report.html');
+  });
+
+  it('prefers the source URL, then the display name, then the local path', () => {
+    expect(
+      suggestReportFilename(
+        '/tmp/report-1a2b3c4d.pdf',
+        'https://example.com/docs/%E6%B5%8B%E8%AF%95%20report.pdf',
+        'upload.pdf',
+      ),
+    ).toBe('测试 report-report.html');
+
+    expect(
+      suggestReportFilename('/tmp/report-1a2b3c4d.pdf', 'https://example.com/', '测试 报告.pdf'),
+    ).toBe('测试 报告-report.html');
+  });
+
+  it('preserves Unicode and falls back for unusable stems', () => {
+    expect(suggestReportFilename('/tmp/q3%20draft.pdf', null, '报告.pdf')).toBe(
+      '报告-report.html',
+    );
+    expect(suggestReportFilename('/tmp/_____.pdf', null, '_____.pdf')).toBe(
+      'document-report.html',
+    );
+    expect(suggestReportFilename('/tmp/---...pdf')).toBe('document-report.html');
+  });
+});
+
+describe('sanitizeReportFileName', () => {
+  it('normalises a custom name and preserves Unicode', () => {
+    expect(sanitizeReportFileName('my report')).toBe('my report.html');
+    expect(sanitizeReportFileName('测试 报告')).toBe('测试 报告.html');
+    expect(sanitizeReportFileName('re:port<1>?')).toBe('re_port_1__.html');
+  });
+
+  it('drops directories and rejects unusable names', () => {
+    expect(sanitizeReportFileName('/etc/passwd')).toBe('passwd.html');
+    expect(sanitizeReportFileName('..\\..\\secret.pdf')).toBe('secret.html');
+    expect(sanitizeReportFileName('')).toBe('');
+    expect(sanitizeReportFileName('   ')).toBe('');
+    expect(sanitizeReportFileName('...')).toBe('');
+    expect(sanitizeReportFileName('/tmp/')).toBe('');
+    expect(sanitizeReportFileName('.html')).toBe('');
+  });
+
+  it('enforces exactly one .html extension and replaces previous exports', () => {
+    expect(sanitizeReportFileName('report')).toBe('report.html');
+    expect(sanitizeReportFileName('report.html')).toBe('report.html');
+    expect(sanitizeReportFileName('report.HTML')).toBe('report.html');
+    expect(sanitizeReportFileName('report.pdf')).toBe('report.html');
+    expect(sanitizeReportFileName('report.json')).toBe('report.html');
+    expect(sanitizeReportFileName('capture.png')).toBe('capture.html');
+  });
+});
+
 describe('exportStemFromName', () => {
   it('keeps Unicode names and strips .pdf case-insensitively', () => {
     expect(exportStemFromName('测试 报告.pdf')).toBe('测试 报告');
@@ -434,6 +558,8 @@ describe('swapExportFormatExtension', () => {
     expect(swapExportFormatExtension('报告.CSV', 'json')).toBe('报告.json');
     expect(swapExportFormatExtension('my report', 'csv')).toBe('my report');
     expect(swapExportFormatExtension('report.pdf', 'csv')).toBe('report.pdf');
+    expect(swapExportFormatExtension('capture.png', 'svg')).toBe('capture.svg');
+    expect(swapExportFormatExtension('capture.svg', 'png')).toBe('capture.png');
   });
 });
 

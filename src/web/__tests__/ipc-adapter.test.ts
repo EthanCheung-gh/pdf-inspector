@@ -523,7 +523,7 @@ describe('web ipc adapter', () => {
   });
 
   it('downloads the export under the basename of defaultPath', async () => {
-    const objectUrlSpy = vi.fn(() => 'blob:mock-url');
+    const objectUrlSpy = vi.fn((_blob: Blob) => 'blob:mock-url');
     const revokeSpy = vi.fn();
     Object.defineProperty(URL, 'createObjectURL', {
       value: objectUrlSpy,
@@ -567,5 +567,93 @@ describe('web ipc adapter', () => {
     expect(revokeSpy).toHaveBeenCalledWith('blob:mock-url');
     // No fetch call: saving is a pure browser download.
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('decodes a base64 image save into binary bytes with the requested MIME type', async () => {
+    const objectUrlSpy = vi.fn((_blob: Blob) => 'blob:mock-url');
+    Object.defineProperty(URL, 'createObjectURL', {
+      value: objectUrlSpy,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      value: vi.fn(),
+      configurable: true,
+      writable: true,
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const content = btoa(String.fromCharCode(...pngBytes));
+
+    vi.useFakeTimers();
+    const result = await api().saveFile({
+      defaultPath: '/tmp/page-1.png',
+      content,
+      filterName: 'PNG',
+      extensions: ['png'],
+      encoding: 'base64',
+      mimeType: 'image/png',
+    });
+
+    expect(result).toEqual({ canceled: false, filePath: '/tmp/page-1.png' });
+    const blob = objectUrlSpy.mock.calls[0][0] as Blob;
+    expect(blob.type).toBe('image/png');
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(pngBytes);
+  });
+
+  it('keeps a utf8 save as text and derives the MIME type from the extension', async () => {
+    const objectUrlSpy = vi.fn((_blob: Blob) => 'blob:mock-url');
+    Object.defineProperty(URL, 'createObjectURL', {
+      value: objectUrlSpy,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      value: vi.fn(),
+      configurable: true,
+      writable: true,
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+
+    vi.useFakeTimers();
+    await api().saveFile({
+      defaultPath: '/tmp/page-1.svg',
+      content: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+      filterName: 'SVG',
+      extensions: ['svg'],
+      encoding: 'utf8',
+    });
+
+    const blob = objectUrlSpy.mock.calls[0][0] as Blob;
+    expect(blob.type).toBe('image/svg+xml');
+    expect(await blob.text()).toBe('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+  });
+
+  it('prefers an explicit MIME type over the extension mapping', async () => {
+    const objectUrlSpy = vi.fn((_blob: Blob) => 'blob:mock-url');
+    Object.defineProperty(URL, 'createObjectURL', {
+      value: objectUrlSpy,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      value: vi.fn(),
+      configurable: true,
+      writable: true,
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+
+    vi.useFakeTimers();
+    await api().saveFile({
+      defaultPath: '/tmp/page-1.png',
+      content: 'x',
+      filterName: 'PNG',
+      extensions: ['png'],
+      mimeType: 'application/octet-stream',
+    });
+
+    const blob = objectUrlSpy.mock.calls[0][0] as Blob;
+    expect(blob.type).toBe('application/octet-stream');
   });
 });

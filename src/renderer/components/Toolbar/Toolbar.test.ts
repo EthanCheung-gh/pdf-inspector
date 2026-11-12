@@ -10,8 +10,9 @@ import { useDiffStore } from '../../store/diff-store';
 import { useDocumentTabsStore } from '../../store/document-tabs-store';
 import { useRawStore } from '../../store/raw-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
+import { useI18nStore } from '../../i18n/store';
 import { listCommands } from '../../services/command-registry';
-import type { PdfMetadata } from '../../types/pdf-objects';
+import type { PageData, PdfMetadata } from '../../types/pdf-objects';
 
 const { navigate, openPdf, openPdfUrl, auditDocument, auditPages, rawDocument, rawObject, rawPageContent } =
   vi.hoisted(() => ({
@@ -58,6 +59,12 @@ const metadata: PdfMetadata = {
 };
 
 const url = 'https://example.com/a.pdf';
+
+// Every suite starts in the default language so a Chinese smoke test cannot
+// leak into the English assertions below it.
+beforeEach(() => {
+  useI18nStore.setState({ locale: 'en' });
+});
 
 function openUrlDialog(): void {
   fireEvent.click(screen.getByRole('button', { name: 'Open URL' }));
@@ -270,6 +277,35 @@ describe('Toolbar workspace controls', () => {
     fireEvent.click(rightButton());
     expect(useWorkspaceStore.getState().rightCollapsed).toBe(true);
     expect(rightButton().getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('translates toolbar copy and restores English when the locale switches back', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    usePdfStore.setState({ filePath: '/docs/report.pdf', pageCount: 5, isLoading: false });
+    useWorkspaceStore.setState({ leftCollapsed: false, rightCollapsed: false, focusMode: false });
+
+    render(React.createElement(Toolbar));
+
+    expect(screen.getByRole('button', { name: '打开' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '打开 URL' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '搜索' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: '页面导航' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: '主题' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '左侧面板' }).getAttribute('title')).toBe(
+      '隐藏左侧面板',
+    );
+    expect(screen.getByRole('button', { name: '对比' }).getAttribute('title')).toBe(
+      '比较两份 PDF，不改变当前打开的文档',
+    );
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(screen.getByRole('button', { name: 'Open' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Search' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Theme' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Left panel' })).toBeTruthy();
   });
 });
 
@@ -942,15 +978,15 @@ describe('Toolbar layout with search open', () => {
     expect(header(container).className).not.toMatch(/searchOpen/);
   });
 
-  it('reserves the search controls by hiding the filename at 1280px or less', () => {
+  it('reserves toolbar width by hiding the filename below 1440px', () => {
     // jsdom cannot measure the row, so the fix is asserted on the CSS contract:
-    // a <=1280px rule that drops the filename exactly when the header is
-    // search-open, with the existing <=1180px rule kept.
+    // the full-width toolbar needs the filename's space below 1440px, and the
+    // <=1280px search-open rule still drops it while search is active.
     const css = toolbarCss();
     const query = css.match(/@media \(max-width: 1280px\) \{[\s\S]*?\n\}/)?.[0] ?? '';
     expect(query).toContain('.toolbar.searchOpen .filename');
     expect(query).toContain('display: none');
-    expect(css).toContain('@media (max-width: 1180px)');
+    expect(css).toContain('@media (max-width: 1439px)');
 
     // No control is ever hidden by the media queries: only the filename.
     const mediaBlocks = css.match(/@media[^{]*\{[\s\S]*?\n\}/g) ?? [];
@@ -959,6 +995,210 @@ describe('Toolbar layout with search open', () => {
       expect(block).not.toMatch(/\.button\s*\{[\s\S]*display:\s*none/);
       expect(block).not.toMatch(/\.searchBox[\s\S]*display:\s*none/);
     }
+  });
+
+  it('keeps the fixed toolbar controls inside 1280px with a compact gap', () => {
+    // The file name is already shrinkable to zero at 1280px, so hiding it does
+    // not reclaim width. These two fixed budgets are what make the English
+    // Export / View / Report toolbar fit without clipping the theme select.
+    const css = toolbarCss();
+    expect(css).toMatch(/\.toolbar\s*\{[^}]*gap:\s*3px/);
+    expect(css).toMatch(/\.themeSelect\s*\{[^}]*width:\s*84px/);
+  });
+});
+
+describe('Toolbar export view entry', () => {
+  const pageData: PageData = {
+    width: 612,
+    height: 792,
+    chars: [],
+    words: [],
+    rects: [],
+    lines: [],
+    curves: [],
+    images: [],
+    tables: [],
+  };
+
+  const exportViewCommand = () => listCommands().find((command) => command.id === 'export.view');
+
+  beforeEach(() => {
+    usePdfStore.setState({
+      filePath: '/docs/report.pdf',
+      sourceUrl: null,
+      documentName: null,
+      metadata,
+      pageCount: 5,
+      currentPage: 1,
+      pageData,
+      pdfDocRef: {} as never,
+      isLoading: false,
+      subset: null,
+    });
+    useDiffStore.getState().reset();
+    useAuditStore.getState().reset();
+    useRawStore.getState().reset();
+    useWorkspaceStore.setState({ leftCollapsed: false, rightCollapsed: false, focusMode: false });
+  });
+
+  afterEach(cleanup);
+
+  it('renders the trigger and registers an enabled export view command', () => {
+    render(React.createElement(Toolbar));
+
+    const trigger = screen.getByRole('button', { name: 'Export view…' }) as HTMLButtonElement;
+    expect(trigger.disabled).toBe(false);
+
+    const command = exportViewCommand();
+    expect(command).toBeTruthy();
+    expect(command?.title).toBe('Export view…');
+    expect(command?.isEnabled?.()).toBe(true);
+
+    act(() => {
+      command?.run();
+    });
+    expect(screen.getByRole('heading', { name: 'Export view' })).toBeTruthy();
+  });
+
+  it('shows the short visible label while the full name stays accessible', () => {
+    render(React.createElement(Toolbar));
+
+    // The toolbar row only has room for the compact label; the accessible name
+    // (and the command palette entry) keep the full wording.
+    const trigger = screen.getByRole('button', { name: 'Export view…' }) as HTMLButtonElement;
+    expect(trigger.textContent).toBe('View…');
+    expect(trigger.getAttribute('aria-label')).toBe('Export view…');
+    expect(trigger.getAttribute('title')).toBe(
+      'Export the current page or selected region as PNG or SVG',
+    );
+    expect(exportViewCommand()?.title).toBe('Export view…');
+
+    act(() => {
+      useI18nStore.setState({ locale: 'zh-CN' });
+    });
+
+    const zhTrigger = screen.getByRole('button', { name: '导出视图…' }) as HTMLButtonElement;
+    expect(zhTrigger.textContent).toBe('视图…');
+    expect(zhTrigger.getAttribute('aria-label')).toBe('导出视图…');
+    expect(zhTrigger.getAttribute('title')).toBe('将当前页或所选区域导出为 PNG 或 SVG');
+    expect(exportViewCommand()?.title).toBe('导出视图…');
+  });
+
+  it('does not render the old full trigger text', () => {
+    render(React.createElement(Toolbar));
+
+    expect(screen.queryByText('Export view…')).toBeNull();
+    expect(screen.getByText('View…')).toBeTruthy();
+  });
+
+  it('disables the trigger and command without a page or PDF document', () => {
+    usePdfStore.setState({ pageData: null });
+    render(React.createElement(Toolbar));
+
+    expect((screen.getByRole('button', { name: 'Export view…' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(exportViewCommand()?.isEnabled?.()).toBe(false);
+
+    act(() => {
+      usePdfStore.setState({ pageData, pdfDocRef: null });
+    });
+    expect((screen.getByRole('button', { name: 'Export view…' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(exportViewCommand()?.isEnabled?.()).toBe(false);
+  });
+
+  it('hides the export view entry while a feature workspace owns the header', () => {
+    useDiffStore.setState({ active: true, oldName: 'a.pdf', newName: 'b.pdf' });
+    render(React.createElement(Toolbar));
+
+    expect(screen.queryByRole('button', { name: 'Export view…' })).toBeNull();
+    expect(exportViewCommand()).toBeUndefined();
+  });
+});
+
+describe('Toolbar share report entry', () => {
+  const pageData: PageData = {
+    width: 612,
+    height: 792,
+    chars: [],
+    words: [],
+    rects: [],
+    lines: [],
+    curves: [],
+    images: [],
+    tables: [],
+  };
+
+  const reportCommand = () => listCommands().find((command) => command.id === 'export.report');
+
+  beforeEach(() => {
+    usePdfStore.setState({
+      filePath: '/docs/report.pdf',
+      sourceUrl: null,
+      documentName: null,
+      metadata,
+      pageCount: 5,
+      currentPage: 1,
+      pageData,
+      pdfDocRef: {} as never,
+      isLoading: false,
+      fontStats: null,
+    });
+    useDiffStore.getState().reset();
+    useAuditStore.getState().reset();
+    useRawStore.getState().reset();
+    useWorkspaceStore.setState({ leftCollapsed: false, rightCollapsed: false, focusMode: false });
+  });
+
+  afterEach(cleanup);
+
+  it('renders the trigger and registers the report command', () => {
+    render(React.createElement(Toolbar));
+
+    const trigger = screen.getByRole('button', { name: 'Share report…' }) as HTMLButtonElement;
+    expect(trigger.disabled).toBe(false);
+    expect(trigger.getAttribute('title')).toBe('Share an HTML inspection report');
+
+    const command = reportCommand();
+    expect(command).toBeTruthy();
+    expect(command?.title).toBe('Share report…');
+    expect(command?.isEnabled?.()).toBe(true);
+
+    act(() => {
+      command?.run();
+    });
+    expect(screen.getByRole('heading', { name: 'Share report' })).toBeTruthy();
+  });
+
+  it('shows the short visible label while the full name stays accessible', () => {
+    render(React.createElement(Toolbar));
+
+    const trigger = screen.getByRole('button', { name: 'Share report…' }) as HTMLButtonElement;
+    expect(trigger.textContent).toBe('Report…');
+    expect(trigger.getAttribute('aria-label')).toBe('Share report…');
+    expect(trigger.getAttribute('title')).toBe('Share an HTML inspection report');
+    // The command palette keeps the full wording.
+    expect(reportCommand()?.title).toBe('Share report…');
+
+    act(() => {
+      useI18nStore.setState({ locale: 'zh-CN' });
+    });
+
+    const zhTrigger = screen.getByRole('button', { name: '分享报告…' }) as HTMLButtonElement;
+    expect(zhTrigger.textContent).toBe('报告…');
+    expect(zhTrigger.getAttribute('aria-label')).toBe('分享报告…');
+    expect(zhTrigger.getAttribute('title')).toBe('分享 HTML 检查报告');
+    expect(reportCommand()?.title).toBe('分享报告…');
+  });
+
+  it('hides the report entry while a feature workspace owns the header', () => {
+    useDiffStore.setState({ active: true, oldName: 'a.pdf', newName: 'b.pdf' });
+    render(React.createElement(Toolbar));
+
+    expect(screen.queryByRole('button', { name: 'Share report…' })).toBeNull();
+    expect(reportCommand()).toBeUndefined();
   });
 });
 

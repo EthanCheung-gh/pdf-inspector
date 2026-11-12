@@ -3,6 +3,7 @@ import React from 'react';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildAuditReport, type AuditFinding } from '../shared/audit-types';
+import { useI18nStore } from './i18n/store';
 import { useAuditStore } from './store/audit-store';
 import { useDiffStore } from './store/diff-store';
 import { usePdfStore } from './store/pdf-store';
@@ -75,7 +76,9 @@ beforeEach(() => {
   useDiffStore.getState().reset();
   useAuditStore.getState().reset();
   useRawStore.getState().reset();
-  useThemeStore.setState({ theme: 'dark' });
+  useThemeStore.setState({ theme: 'dark', resolvedTheme: 'dark' });
+  // The default language stays English so the existing English assertions hold.
+  useI18nStore.setState({ locale: 'en' });
   useWorkspaceStore.setState({
     leftCollapsed: false,
     rightCollapsed: false,
@@ -117,23 +120,30 @@ describe('App workspace mode', () => {
     render(React.createElement(App));
 
     expect(document.documentElement.dataset.theme).toBe('islands');
+    expect(document.documentElement.dataset.themeMode).toBe('islands');
 
     act(() => {
-      useThemeStore.getState().toggleTheme();
+      useThemeStore.getState().setTheme('light');
     });
 
-    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(document.documentElement.dataset.themeMode).toBe('light');
   });
 
   it('registers shell commands and opens the palette with Ctrl+K', () => {
     render(React.createElement(App));
 
-    const appCommandIds = listCommands()
+    const commands = listCommands();
+    const appCommandIds = commands
       .map((command) => command.id)
       .filter((id) => id.startsWith('view.') || id === 'navigate.open-search');
     expect(appCommandIds).toEqual(
       expect.arrayContaining([
         'view.toggle-theme',
+        'view.theme.dark',
+        'view.theme.islands',
+        'view.theme.light',
+        'view.theme.system',
         'view.toggle-focus',
         'view.toggle-left-panel',
         'view.toggle-right-panel',
@@ -142,9 +152,71 @@ describe('App workspace mode', () => {
       ]),
     );
 
+    const lightCommand = commands.find((command) => command.id === 'view.theme.light');
+    expect(lightCommand?.title).toBe('Theme: Light');
+    act(() => {
+      lightCommand?.run();
+    });
+    expect(useThemeStore.getState().theme).toBe('light');
+    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(document.documentElement.dataset.themeMode).toBe('light');
+
     expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull();
     fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
     expect(screen.getByRole('dialog', { name: 'Command palette' })).toBeTruthy();
+  });
+
+  it('registers language commands that switch the locale', () => {
+    render(React.createElement(App));
+
+    const commands = listCommands();
+    const english = commands.find((command) => command.id === 'language.en');
+    const chinese = commands.find((command) => command.id === 'language.zh-CN');
+    expect(english?.title).toBe('Language: English');
+    expect(chinese?.title).toBe('Language: 简体中文');
+    // English remains the default even though the commands exist.
+    expect(useI18nStore.getState().locale).toBe('en');
+    expect(document.documentElement.lang).toBe('en');
+
+    act(() => {
+      chinese?.run();
+    });
+    expect(useI18nStore.getState().locale).toBe('zh-CN');
+    expect(document.documentElement.lang).toBe('zh-CN');
+    expect(document.documentElement.dataset.locale).toBe('zh-CN');
+
+    act(() => {
+      english?.run();
+    });
+    expect(useI18nStore.getState().locale).toBe('en');
+    expect(document.documentElement.lang).toBe('en');
+  });
+
+  it('re-registers shell and toolbar command titles in the active language', () => {
+    render(React.createElement(App));
+
+    const findCommand = (id: string) => listCommands().find((command) => command.id === id);
+    expect(findCommand('view.theme.light')?.title).toBe('Theme: Light');
+    expect(findCommand('view.toggle-theme')?.title).toBe('Cycle theme');
+    expect(findCommand('file.open')?.title).toBe('Open PDF…');
+
+    act(() => {
+      useI18nStore.setState({ locale: 'zh-CN' });
+    });
+
+    expect(findCommand('view.theme.light')?.title).toBe('主题：浅色');
+    expect(findCommand('view.toggle-theme')?.title).toBe('循环切换主题');
+    expect(findCommand('navigate.open-search')?.title).toBe('搜索文档…');
+    expect(findCommand('language.en')?.title).toBe('语言：English');
+    expect(findCommand('file.open')?.title).toBe('打开 PDF…');
+    expect(findCommand('analyze.audit')?.title).toBe('审计文档…');
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+
+    expect(findCommand('view.theme.light')?.title).toBe('Theme: Light');
+    expect(findCommand('file.open')?.title).toBe('Open PDF…');
   });
 
   it('replaces the Inspect panes with the Diff workspace and keeps the shell usable', () => {

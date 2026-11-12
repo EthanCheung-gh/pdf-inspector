@@ -384,28 +384,87 @@ export function suggestFilename(
   sourceUrl?: string | null,
   documentName?: string | null,
 ): string {
-  // URL documents are downloaded to a temp file with a hash in its name, so
-  // prefer the name the user recognises from the URL they opened.
-  const base = urlStem(sourceUrl) ?? documentNameStem(documentName) ?? localStem(pdfPath);
+  const base = exportBaseStem(pdfPath, sourceUrl, documentName);
   return scope === 'page' ? `${base}-p${page}.${ext}` : `${base}-all.${ext}`;
 }
 
-/** Export extensions the dialog recognises when the format radio changes. */
-const EXPORT_NAME_EXTENSION = /\.(json|csv)$/i;
+/**
+ * Filename stem shared by every export flavour.
+ *
+ * URL documents are downloaded to a temp file with a hash in its name, so the
+ * source URL wins, then the display name the opening bridge reported, then the
+ * local path's last segment.
+ */
+function exportBaseStem(
+  pdfPath: string | null,
+  sourceUrl?: string | null,
+  documentName?: string | null,
+): string {
+  return urlStem(sourceUrl) ?? documentNameStem(documentName) ?? localStem(pdfPath);
+}
 
-/** Extension of a PDF or a previous export, replaced when appending the new one. */
-const REPLACEABLE_EXTENSION = /\.(json|csv|pdf)$/i;
+/** Image formats the view exporter writes. */
+export type ViewExportFormat = 'png' | 'svg';
 
 /**
- * Validate/normalise a filename typed into the export dialog.
+ * Suggested filename for a page/region image export.
+ *
+ * Uses the same stem precedence as `suggestFilename` (source URL, display name,
+ * local path) and marks a cropped capture with `-region`. The default is the
+ * current page, e.g. `report-p3.png` or `report-p3-region.svg`.
+ */
+export function suggestViewFilename(
+  pdfPath: string | null,
+  page: number,
+  ext: ViewExportFormat,
+  sourceUrl?: string | null,
+  documentName?: string | null,
+  region = false,
+): string {
+  const base = exportBaseStem(pdfPath, sourceUrl, documentName);
+  return `${base}-p${page}${region ? '-region' : ''}.${ext}`;
+}
+
+/**
+ * Suggested filename for the self-contained HTML inspection report.
+ *
+ * Uses the same stem precedence as the other exporters: `report-report.html`
+ * for `/docs/report.pdf`, `测试 报告-report.html` for a Unicode display name.
+ */
+export function suggestReportFilename(
+  pdfPath: string | null,
+  sourceUrl?: string | null,
+  documentName?: string | null,
+): string {
+  return `${exportBaseStem(pdfPath, sourceUrl, documentName)}-report.html`;
+}
+
+/** Export extensions the dialog recognises when the format radio changes. */
+const EXPORT_NAME_EXTENSION = /\.(json|csv|png|svg)$/i;
+
+/** Extension of a PDF or a previous export, replaced when appending the new one. */
+const REPLACEABLE_EXTENSION = /\.(json|csv|png|svg|pdf)$/i;
+
+/**
+ * Extensions a report name replaces. The report is its own export flavour, so
+ * its `.html` suffix must not stack on a previous report name.
+ */
+const REPORT_REPLACEABLE_EXTENSION = /\.(json|csv|png|svg|html|pdf)$/i;
+
+/**
+ * Validate/normalise a filename typed into an export dialog.
  *
  * Trims, drops directory components, replaces invalid/control characters with
  * `_`, strips leading/trailing dots and spaces and guarantees exactly one
- * trailing `.<ext>` (an existing `.json`/`.csv`/`.pdf` is replaced). Unicode is
+ * trailing `.<ext>` (an existing export/PDF extension is replaced). Unicode is
  * preserved. Returns `''` when nothing usable remains (`___`, `...`, `/`), so
  * the caller can fall back to the generated suggestion.
  */
-export function sanitizeExportFileName(name: string, ext: 'json' | 'csv'): string {
+function normalizeExportFileName(
+  name: string,
+  ext: string,
+  replaceable: RegExp = REPLACEABLE_EXTENSION,
+): string {
   if (typeof name !== 'string') return '';
 
   const trimmed = name.trim();
@@ -419,27 +478,42 @@ export function sanitizeExportFileName(name: string, ext: 'json' | 'csv'): strin
     .trim()
     .replace(/[.\s]+$/, '');
 
-  const stem = stripExtension(cleaned)
+  const stem = stripExtension(cleaned, replaceable)
     .replace(/^[.\s]+/, '')
     .replace(/[.\s]+$/, '');
   if (!isUsableStem(stem)) return '';
   return `${stem}.${ext}`;
 }
 
+/** Normalise a JSON/CSV export name; see `normalizeExportFileName`. */
+export function sanitizeExportFileName(name: string, ext: 'json' | 'csv'): string {
+  return normalizeExportFileName(name, ext);
+}
+
+/** Normalise a PNG/SVG export name; see `normalizeExportFileName`. */
+export function sanitizeViewFileName(name: string, ext: ViewExportFormat): string {
+  return normalizeExportFileName(name, ext);
+}
+
+/** Normalise an HTML inspection-report name; see `normalizeExportFileName`. */
+export function sanitizeReportFileName(name: string): string {
+  return normalizeExportFileName(name, 'html', REPORT_REPLACEABLE_EXTENSION);
+}
+
 /** Strip a recognised trailing extension, if the name has one. */
-function stripExtension(name: string): string {
-  return REPLACEABLE_EXTENSION.test(name) ? name.replace(REPLACEABLE_EXTENSION, '') : name;
+function stripExtension(name: string, pattern: RegExp = REPLACEABLE_EXTENSION): string {
+  return pattern.test(name) ? name.replace(pattern, '') : name;
 }
 
 /**
  * Swap the extension of a user-edited draft name when the format changes.
  *
- * Only a recognised `.json`/`.csv` suffix is rewritten; a draft without an
- * extension (or with an unrelated one) is left alone and normalised on export.
+ * Only a recognised export suffix is rewritten; a draft without an extension
+ * (or with an unrelated one) is left alone and normalised on export.
  */
 export function swapExportFormatExtension(
   name: string,
-  ext: 'json' | 'csv',
+  ext: 'json' | 'csv' | ViewExportFormat,
 ): string {
   return EXPORT_NAME_EXTENSION.test(name) ? name.replace(EXPORT_NAME_EXTENSION, `.${ext}`) : name;
 }

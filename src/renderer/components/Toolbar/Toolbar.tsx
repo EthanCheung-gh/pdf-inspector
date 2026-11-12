@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { useT } from '../../i18n';
 import { ipc } from '../../services/ipc-client';
 import { OVERLAY_LAYER_TOTAL, overlayVisibleCount } from '../../services/overlay-style';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
@@ -12,12 +13,16 @@ import { useRawStore } from '../../store/raw-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
 import { SearchBox } from './SearchBox';
 import { ExportDialog } from './ExportDialog';
+import { ExportViewDialog } from './ExportViewDialog';
+import { ShareReportButton } from './ShareReportButton';
 import { OpenUrlDialog } from './OpenUrlDialog';
-import { ThemeToggle } from './ThemeToggle';
+import { LanguagePicker } from './LanguagePicker';
+import { ThemePicker } from './ThemePicker';
 import type { OpenedFromUrl } from './OpenUrlDialog';
 import styles from './Toolbar.module.css';
 
 export const Toolbar: React.FC = () => {
+  const t = useT();
   const openRequestIdRef = useRef(0);
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
   const currentPage = usePdfStore((state) => state.currentPage);
@@ -94,10 +99,10 @@ export const Toolbar: React.FC = () => {
     } catch (error) {
       if (openRequestId !== openRequestIdRef.current) return;
       console.error('Failed to open PDF:', error);
-      setError(error instanceof Error ? error.message : 'Failed to open PDF');
+      setError(error instanceof Error ? error.message : t('toolbar.openFailed'));
       setLoading(false);
     }
-  }, [navigate, setError, setFile, setLoading]);
+  }, [navigate, setError, setFile, setLoading, t]);
 
   const handleUrlOpened = useCallback(
     async (result: OpenedFromUrl) => {
@@ -177,7 +182,7 @@ export const Toolbar: React.FC = () => {
   const displayTitle = diffActive
     ? diffTitle
     : sourceUrl ?? filePath ?? storedDocumentName ?? undefined;
-  const filename = diffActive ? diffTitle : documentName ?? 'No file open';
+  const filename = diffActive ? diffTitle : documentName ?? t('common.noFileOpen');
   // The open search box is the widest optional control group. The toolbar
   // advertises it (`.searchOpen`) so CSS can give search the room it needs at
   // narrow widths instead of letting the right-hand controls get clipped. It is
@@ -210,7 +215,7 @@ export const Toolbar: React.FC = () => {
     () => [
       {
         id: 'file.open',
-        title: 'Open PDF…',
+        title: t('command.openPdf'),
         group: 'File',
         keywords: ['open', 'file', 'pdf', 'local'],
         isEnabled: () => !usePdfStore.getState().isLoading,
@@ -220,7 +225,7 @@ export const Toolbar: React.FC = () => {
       },
       {
         id: 'file.open-url',
-        title: 'Open URL…',
+        title: t('command.openUrl'),
         group: 'File',
         keywords: ['open', 'url', 'http', 'remote'],
         isEnabled: () => !usePdfStore.getState().isLoading,
@@ -228,7 +233,7 @@ export const Toolbar: React.FC = () => {
       },
       {
         id: 'analyze.compare',
-        title: 'Compare PDFs…',
+        title: t('command.compare'),
         group: 'Analyze',
         keywords: ['diff', 'compare', 'old', 'new'],
         isEnabled: () => true,
@@ -236,7 +241,7 @@ export const Toolbar: React.FC = () => {
       },
       {
         id: 'analyze.audit',
-        title: 'Audit document…',
+        title: t('command.audit'),
         group: 'Analyze',
         keywords: ['audit', 'inspect', 'check', 'fonts', 'security'],
         isEnabled: () => {
@@ -247,7 +252,7 @@ export const Toolbar: React.FC = () => {
       },
       {
         id: 'analyze.raw',
-        title: 'Browse raw objects…',
+        title: t('command.raw'),
         group: 'Analyze',
         keywords: ['raw', 'objects', 'stream', 'content', 'debug'],
         isEnabled: () => {
@@ -262,7 +267,7 @@ export const Toolbar: React.FC = () => {
       },
       {
         id: 'view.layers',
-        title: 'Show layers panel',
+        title: t('command.showLayers'),
         group: 'View',
         keywords: ['layers', 'overlay', 'objects', 'visibility'],
         isEnabled: () =>
@@ -272,36 +277,32 @@ export const Toolbar: React.FC = () => {
         run: () => handleLayers(),
       },
     ],
-    [handleAudit, handleLayers, handleOpen, handleRaw, openDiffSetup],
+    [handleAudit, handleLayers, handleOpen, handleRaw, openDiffSetup, t],
   );
   useRegisterCommands('toolbar', commands);
 
   return (
     <header className={`${styles.toolbar} ${searchActive ? styles.searchOpen : ''}`}>
       <button className={styles.button} type="button" onClick={handleOpen} disabled={isLoading}>
-        Open
+        {t('toolbar.open')}
       </button>
       <button
         className={styles.button}
         type="button"
         onClick={() => setUrlDialogOpen(true)}
         disabled={isLoading}
-        title="Open a PDF from an http(s) URL"
+        title={t('toolbar.openUrlTitle')}
       >
-        Open URL
+        {t('toolbar.openUrl')}
       </button>
       <button
         className={`${styles.button} ${diffActive ? styles.active : ''}`}
         type="button"
         onClick={openDiffSetup}
         aria-pressed={diffActive}
-        title={
-          diffActive
-            ? 'Diff is open: choose other files to compare'
-            : 'Compare two PDFs without changing the open document'
-        }
+        title={diffActive ? t('toolbar.diffTitleOpen') : t('toolbar.diffTitleClosed')}
       >
-        Diff
+        {t('toolbar.diff')}
       </button>
       <button
         className={`${styles.button} ${auditActive ? styles.active : ''}`}
@@ -311,13 +312,13 @@ export const Toolbar: React.FC = () => {
         aria-pressed={auditActive}
         title={
           diffActive
-            ? 'Close Diff before auditing the open document'
+            ? t('toolbar.auditTitleDiff')
             : filePath
-              ? 'Audit the open document for fonts, pages, images, metadata, structure and security'
-              : 'Open a PDF to audit it'
+              ? t('toolbar.auditTitleReady')
+              : t('toolbar.auditTitleNoDocument')
         }
       >
-        Audit
+        {t('toolbar.audit')}
       </button>
       <button
         className={`${styles.button} ${rawActive ? styles.active : ''}`}
@@ -327,13 +328,13 @@ export const Toolbar: React.FC = () => {
         aria-pressed={rawActive}
         title={
           diffActive || auditActive
-            ? 'Close the comparison/audit before reading raw objects'
+            ? t('toolbar.rawTitleBlocked')
             : filePath
-              ? 'Browse the raw object graph and content streams of the open document'
-              : 'Open a PDF to inspect its raw objects'
+              ? t('toolbar.rawTitleReady')
+              : t('toolbar.rawTitleNoDocument')
         }
       >
-        Raw
+        {t('toolbar.raw')}
       </button>
 
       {/* Everything below drives the Inspect document; while Diff, Audit or Raw
@@ -344,14 +345,14 @@ export const Toolbar: React.FC = () => {
         <>
           <span className={styles.separator} />
 
-          <div className={styles.group} role="group" aria-label="Page navigation">
+          <div className={styles.group} role="group" aria-label={t('toolbar.pageNavigation')}>
             <button
               className={styles.button}
               type="button"
               onClick={() => void navigate(currentPage - 1)}
               disabled={isLoading || currentPage <= 1}
             >
-              Prev
+              {t('toolbar.prev')}
             </button>
             <span className={styles.value}>{currentPage} / {pageCount}</span>
             <button
@@ -360,13 +361,13 @@ export const Toolbar: React.FC = () => {
               onClick={() => void navigate(currentPage + 1)}
               disabled={isLoading || currentPage >= pageCount}
             >
-              Next
+              {t('toolbar.next')}
             </button>
           </div>
 
           <span className={styles.separator} />
 
-          <div className={styles.group} role="group" aria-label="Zoom controls">
+          <div className={styles.group} role="group" aria-label={t('toolbar.zoomControls')}>
             <button
               className={styles.button}
               type="button"
@@ -389,74 +390,74 @@ export const Toolbar: React.FC = () => {
               type="button"
               onClick={handleFitWidth}
               disabled={fitWidthZoom === null}
-              title="Fit page width"
+              title={t('toolbar.fitWidthTitle')}
             >
-              Fit W
+              {t('toolbar.fitWidth')}
             </button>
           </div>
 
           <span className={styles.separator} />
 
-          <div className={styles.group} role="group" aria-label="Text selection">
+          <div className={styles.group} role="group" aria-label={t('toolbar.textSelection')}>
             <button
               className={`${styles.button} ${textSelectionMode ? styles.active : ''}`}
               type="button"
               onClick={handleTextSelectionToggle}
               aria-pressed={textSelectionMode}
-              title="Toggle text selection mode (T)"
+              title={t('toolbar.selectTextTitle')}
             >
-              Select Text
+              {t('toolbar.selectText')}
             </button>
             <button
               className={`${styles.button} ${regionMode ? styles.active : ''}`}
               type="button"
               onClick={handleRegionToggle}
               aria-pressed={regionMode}
-              title="Toggle region selection mode (R)"
+              title={t('toolbar.regionTitle')}
             >
-              Region
+              {t('toolbar.region')}
             </button>
           </div>
 
           <span className={styles.separator} />
 
-          <div className={styles.group} role="group" aria-label="Workspace layout">
+          <div className={styles.group} role="group" aria-label={t('toolbar.workspaceLayout')}>
             <button
               className={`${styles.button} ${focusMode ? styles.active : ''}`}
               type="button"
               onClick={toggleFocusMode}
               aria-pressed={focusMode}
-              title="Toggle focus mode (F)"
+              title={t('toolbar.focusTitle')}
             >
-              Focus
+              {t('toolbar.focus')}
             </button>
             <button
               className={`${styles.button} ${layersActive ? styles.paneVisible : ''}`}
               type="button"
               onClick={handleLayers}
-              title="Open the Layers panel"
+              title={t('toolbar.layersTitle')}
             >
-              Layers {visibleLayerCount}/{OVERLAY_LAYER_TOTAL}
+              {t('toolbar.layers', { visible: visibleLayerCount, total: OVERLAY_LAYER_TOTAL })}
             </button>
             <button
               className={`${styles.button} ${leftVisible ? styles.paneVisible : ''}`}
               type="button"
               onClick={handleLeftPanelToggle}
               aria-pressed={leftVisible}
-              aria-label="Left panel"
-              title={leftVisible ? 'Hide left panel' : 'Show left panel'}
+              aria-label={t('toolbar.leftAria')}
+              title={leftVisible ? t('toolbar.leftHide') : t('toolbar.leftShow')}
             >
-              Left
+              {t('toolbar.left')}
             </button>
             <button
               className={`${styles.button} ${rightVisible ? styles.paneVisible : ''}`}
               type="button"
               onClick={handleRightPanelToggle}
               aria-pressed={rightVisible}
-              aria-label="Right panel"
-              title={rightVisible ? 'Hide right panel' : 'Show right panel'}
+              aria-label={t('toolbar.rightAria')}
+              title={rightVisible ? t('toolbar.rightHide') : t('toolbar.rightShow')}
             >
-              Right
+              {t('toolbar.right')}
             </button>
           </div>
         </>
@@ -464,8 +465,11 @@ export const Toolbar: React.FC = () => {
 
       <div className={styles.spacer} />
       {!workspaceActive && <ExportDialog />}
+      {!workspaceActive && <ExportViewDialog />}
+      {!workspaceActive && <ShareReportButton />}
       {!workspaceActive && <SearchBox />}
-      <ThemeToggle />
+      <LanguagePicker />
+      <ThemePicker />
       <span className={styles.filename} title={displayTitle}>{filename}</span>
 
       <OpenUrlDialog

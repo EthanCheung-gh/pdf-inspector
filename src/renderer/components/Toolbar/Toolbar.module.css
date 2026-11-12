@@ -1,7 +1,7 @@
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
   min-width: 0;
   min-height: 40px;
   padding: 0 8px;
@@ -94,11 +94,13 @@
 }
 
 /*
- * At 1280px the compact toolbar fits with the filename visible. Below that the
- * filename is the first thing to go; the document title remains available from
- * the Open dialog and the status bar, so no toolbar control is lost.
+ * The full-width toolbar (including the Export / View / Report actions, search,
+ * language and theme controls) only fits with the filename visible at 1440px
+ * and above. Below that the filename is the first thing to go; the document
+ * title remains available from the Open dialog, document tabs and status bar,
+ * so no toolbar control is lost.
  */
-@media (max-width: 1180px) {
+@media (max-width: 1439px) {
   .filename {
     display: none;
   }
@@ -120,17 +122,66 @@
   }
 }
 
-/* Theme toggle: same footprint as the other toolbar buttons, with the active
- * theme called out in the accent colour. */
-.themeToggle {
-  min-width: 88px;
-  text-align: left;
+/*
+ * Theme picker. The native select shows the current theme. 84px still fits
+ * every label and leaves the 1280px toolbar room for the Export / View /
+ * Report actions, search, and language switch without clipping the control.
+ */
+.themePicker {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  min-width: 0;
 }
 
-.button.themeToggleActive {
-  color: var(--pi-accent-text);
-  background: var(--pi-accent-soft);
-  border-color: var(--pi-accent-soft-border);
+.themeSelect {
+  flex-shrink: 0;
+  width: 84px;
+  padding: 3px 4px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
+  cursor: pointer;
+  font: inherit;
+}
+
+.themeSelect:hover {
+  background: var(--pi-bg-control-hover);
+}
+
+.themeSelect:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
+/*
+ * Language switch. Deliberately narrow (~34px): the toolbar is designed to fit
+ * at 1280px, so the new control may only take the space of a short button. It
+ * repeats the button styling instead of composing to keep CSS-module class
+ * composition out of the toolbar's critical path.
+ */
+.languageButton {
+  flex-shrink: 0;
+  min-width: 34px;
+  padding: 4px 6px;
+  color: var(--pi-text);
+  background: var(--pi-bg-control);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
+  cursor: pointer;
+  font: inherit;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.languageButton:hover {
+  background: var(--pi-bg-control-hover);
+}
+
+.languageButton:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
 }
 
 /* --- Islands theme ------------------------------------------------------- */
@@ -144,5 +195,13 @@
 
 /* Slightly raised controls read as separate chips inside the toolbar card. */
 :global(html[data-theme='islands']) .button {
+  box-shadow: var(--pi-shadow-sm);
+}
+
+:global(html[data-theme='islands']) .themeSelect {
+  box-shadow: var(--pi-shadow-sm);
+}
+
+:global(html[data-theme='islands']) .languageButton {
   box-shadow: var(--pi-shadow-sm);
 }
