@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld('pdfInspector', {
   auditDocument: () => ipcRenderer.invoke(IPC_CHANNELS.AUDIT_DOCUMENT),
   auditPages: (startPage: number, endPage: number) =>
     ipcRenderer.invoke(IPC_CHANNELS.AUDIT_PAGES, startPage, endPage),
+  // Document security resources: read-only, and it inspects the document the
+  // sidecar already has open instead of opening or replacing it.
+  securityDocument: () => ipcRenderer.invoke(IPC_CHANNELS.SECURITY_DOCUMENT),
   diffPdfs: (oldSource: DiffSource, newSource: DiffSource, options?: DiffOptionsInput) => {
     // Electron's structured clone cannot carry a `File`, and the rejection the
     // clone would throw is opaque. Reject with an actionable message instead;

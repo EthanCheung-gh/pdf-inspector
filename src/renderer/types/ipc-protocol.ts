@@ -3,6 +3,7 @@ import type { RawDocument, RawObject, RawPageContent, RawRef } from './raw-pdf';
 import type { SaveFileRequest } from '../../shared/constants';
 import type { OpenExternalResult } from '../../shared/external-url';
 import type { AuditDocumentResult, AuditPagesResult } from '../../shared/audit-types';
+import type { SecurityReport } from '../../shared/security-types';
 import type {
   DiffOptionsInput,
   DiffResult,
@@ -35,6 +36,16 @@ export type {
   AuditSummary,
   AuditTool,
 } from '../../shared/audit-types';
+export type {
+  SecurityAction,
+  SecurityAttachment,
+  SecurityDocumentInfo,
+  SecurityEncryption,
+  SecurityJavaScript,
+  SecurityPermissions,
+  SecurityReport,
+  SecuritySignature,
+} from '../../shared/security-types';
 export type {
   DiffChange,
   DiffChangeKind,
@@ -157,6 +168,16 @@ export interface IpcApi {
   auditDocument(): Promise<AuditDocumentResult>;
   /** Audit pages `startPage`..`endPage` (1-based, inclusive). */
   auditPages(startPage: number, endPage: number): Promise<AuditPagesResult>;
+  /**
+   * Read the document's security resources (attachments, JavaScript, actions,
+   * signatures, encryption, permissions).
+   *
+   * Read-only and document-scoped like `auditDocument`: it inspects the document
+   * the sidecar already has open and never executes a script, opens an
+   * attachment or verifies a signature. Independent of the audit so a failed
+   * resource scan cannot affect an existing audit report.
+   */
+  securityDocument(): Promise<SecurityReport>;
   /**
    * Diff two PDFs without touching the currently open document.
    *

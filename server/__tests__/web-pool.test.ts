@@ -17,6 +17,7 @@ import {
   EXTRACT_PAGE_TIMEOUT_MS,
   OPEN_PDF_TIMEOUT_MS,
   RAW_TIMEOUT_MS,
+  SECURITY_TIMEOUT_MS,
 } from '../../src/shared/constants';
 import { BACKGROUND_METHODS, INTERACTIVE_METHODS, laneForMethod } from '../../src/main/sidecar-pool';
 import { SidecarPool, type SidecarManager } from '../web-server';
@@ -106,6 +107,22 @@ describe('web sidecar lane routing', () => {
     await pool.send('audit_pages', { start_page: 1, end_page: 10 }, AUDIT_TIMEOUT_MS);
     expect(backgrounds).toHaveLength(1);
     expect(pool.isBackgroundStarted()).toBe(true);
+  });
+
+  it('routes security_document to the background lane', async () => {
+    // The browser backend must route exactly like the desktop (one shared table).
+    expect(laneForMethod('security_document')).toBe('background');
+
+    const { pool, interactive, backgrounds } = createPool();
+    await pool.send('security_document', {}, SECURITY_TIMEOUT_MS);
+
+    expect(interactive.send).not.toHaveBeenCalled();
+    expect(backgrounds).toHaveLength(1);
+    expect(backgrounds[0].send).toHaveBeenCalledWith(
+      'security_document',
+      {},
+      SECURITY_TIMEOUT_MS,
+    );
   });
 
   it('starts and opens the current document once on the first background request', async () => {

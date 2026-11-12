@@ -34,6 +34,7 @@ import { PdfDocumentNotFoundError } from '../shared/document-errors';
 import { UNSAFE_EXTERNAL_URL_ERROR, toSafeExternalUrl } from '../shared/external-url';
 import type { OpenExternalResult } from '../shared/external-url';
 import type { AuditDocumentResult, AuditPagesResult } from '../shared/audit-types';
+import type { SecurityReport } from '../shared/security-types';
 import { isFileSource } from '../shared/diff-types';
 import type {
   DiffOptionsInput,
@@ -535,6 +536,10 @@ export function createWebIpc(): IpcApi {
 
     auditPages: (startPage: number, endPage: number) =>
       rpc<AuditPagesResult>('audit_pages', { start_page: startPage, end_page: endPage }),
+
+    // Document security resources: a plain allowlisted RPC on the document the
+    // backend already has open. Read-only, and independent of the audit.
+    securityDocument: () => rpc<SecurityReport>('security_document'),
 
     diffPdfs,
 

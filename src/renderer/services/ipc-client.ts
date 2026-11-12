@@ -9,6 +9,7 @@ import {
   OPEN_PDF_RENDERER_TIMEOUT_MS,
   OPEN_PDF_URL_TIMEOUT_MS,
   RAW_RENDERER_TIMEOUT_MS,
+  SECURITY_RENDERER_TIMEOUT_MS,
 } from '../../shared/constants';
 
 declare global {
@@ -236,6 +237,17 @@ export const ipc = {
       () => window.pdfInspector.auditPages(startPage, endPage),
       'auditPages',
       AUDIT_RENDERER_TIMEOUT_MS,
+    ),
+  // The document security scan walks name trees and stream metadata, so it gets
+  // the same kind of dedicated budget as the audit: the renderer must stay
+  // patient longer than main so main's clear timeout message wins the race. A
+  // timeout restarts and retries once, and the retry is safe because the scan is
+  // read-only and takes no arguments.
+  securityDocument: () =>
+    callWithTimeout(
+      () => window.pdfInspector.securityDocument(),
+      'securityDocument',
+      SECURITY_RENDERER_TIMEOUT_MS,
     ),
   // No renderer timer: a diff's budget is an INACTIVITY budget in the backend
   // (main process / web server), rearmed by every progress report the sidecar

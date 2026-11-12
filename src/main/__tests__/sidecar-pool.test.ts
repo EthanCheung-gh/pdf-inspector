@@ -7,6 +7,7 @@ import {
   EXTRACT_PAGE_TIMEOUT_MS,
   OPEN_PDF_TIMEOUT_MS,
   RAW_TIMEOUT_MS,
+  SECURITY_TIMEOUT_MS,
 } from '../../shared/constants';
 import type { SidecarManager } from '../sidecar';
 import {
@@ -117,6 +118,21 @@ describe('sidecar lane routing', () => {
       expect(backgrounds).toHaveLength(1);
       expect(backgrounds[0].send).toHaveBeenCalledWith(method, {}, undefined);
     }
+  });
+
+  it('routes security_document to the background lane', async () => {
+    // A document-wide resource scan must never queue in front of page navigation.
+    expect(laneForMethod('security_document')).toBe('background');
+
+    const { pool, interactive, backgrounds } = createPool({ backgroundRunning: true });
+    await pool.send('security_document', {}, SECURITY_TIMEOUT_MS);
+
+    expect(interactive.send).not.toHaveBeenCalled();
+    expect(backgrounds[0].send).toHaveBeenCalledWith(
+      'security_document',
+      {},
+      SECURITY_TIMEOUT_MS,
+    );
   });
 });
 

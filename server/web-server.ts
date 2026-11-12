@@ -50,6 +50,7 @@ import {
   EXTRACT_PAGE_TIMEOUT_MS,
   OPEN_PDF_TIMEOUT_MS,
   RAW_TIMEOUT_MS,
+  SECURITY_TIMEOUT_MS,
   SIDECAR_SCRIPT,
 } from '../src/shared/constants';
 import { diffOptionsToRpc } from '../src/shared/diff-types';
@@ -99,6 +100,10 @@ const RPC_ALLOWLIST = new Set([
   'analyze_fonts',
   'audit_document',
   'audit_pages',
+  // Document security resources (read-only): attachments, JavaScript, actions,
+  // signatures and encryption of the document already open here. Separate from
+  // the audit, so a failed scan cannot affect an audit report.
+  'security_document',
   'get_image_data',
   // Raw PDF reading (read-only): the trailer roots, one indirect object and one
   // page's decoded content streams of the document already open here.
@@ -124,6 +129,7 @@ const RPC_TIMEOUTS: Record<string, number> = {
   analyze_fonts: ANALYZE_FONTS_TIMEOUT_MS,
   audit_document: AUDIT_TIMEOUT_MS,
   audit_pages: AUDIT_TIMEOUT_MS,
+  security_document: SECURITY_TIMEOUT_MS,
   raw_document: RAW_TIMEOUT_MS,
   raw_object: RAW_TIMEOUT_MS,
   raw_page_content: RAW_TIMEOUT_MS,
@@ -315,9 +321,10 @@ interface PendingRequest {
  * - stdout is line-buffered; the first `{"ready":true}` line resolves start;
  * - `stdin` writes are serialized, but responses may arrive out of order;
  * - every request has an INACTIVITY budget (30s default; 120s for `open`,
- *   `extract_page`, analyze_fonts, both audit methods and the raw readers; the
- *   diff endpoint passes 300s). A progress line from the sidecar rearms the
- *   timer, so a long diff is bounded by silence rather than total time;
+ *   `extract_page`, analyze_fonts, both audit methods, `security_document` and
+ *   the raw readers; the diff endpoint passes 300s). A progress line from the
+ *   sidecar rearms the timer, so a long diff is bounded by silence rather than
+ *   total time;
  * - an exit rejects all pending requests and clears the running state;
  * - `send()` lazily starts the sidecar once, unless stop() was requested;
  * - `restart()` shuts the old process down, spawns a new one and re-opens the
@@ -2402,9 +2409,9 @@ async function handleRpc(
   const params = body.params ?? {};
   if (!isRecord(params)) throw new HttpError(400, '"params" must be an object');
 
-  // Page extraction, raw reads, font analysis and both audit passes walk or
-  // decode large parts of the document; every other allowlisted method keeps
-  // the default budget.
+  // Page extraction, raw reads, font analysis, both audit passes and the
+  // document security scan walk or decode large parts of the document; every
+  // other allowlisted method keeps the default budget.
   const timeoutMs = RPC_TIMEOUTS[method] ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
   // The sidecar holds one document. Once the last one is closed (or a restore

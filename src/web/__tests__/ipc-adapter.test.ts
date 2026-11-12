@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DiffResult, IpcApi } from '../../renderer/types/ipc-protocol';
+import type { DiffResult, IpcApi, SecurityReport } from '../../renderer/types/ipc-protocol';
 import type { PageData, PdfMetadata } from '../../renderer/types/pdf-objects';
 import { PdfDocumentNotFoundError } from '../../shared/document-errors';
 import { buildDiffUploadRequest, buildOpenPdfRequest, installWebIpc } from '../ipc-adapter';
@@ -61,6 +61,46 @@ const DIFF_RESULT: DiffResult = {
   },
   truncated: false,
   pages: [],
+};
+
+const SECURITY_REPORT: SecurityReport = {
+  schemaVersion: 1,
+  tool: { name: 'pdf-inspector', version: '0.2.0' },
+  document: {
+    pages: 2,
+    version: '1.7',
+    encrypted: false,
+    xfa: false,
+    hasMetadata: true,
+    outputIntents: 0,
+  },
+  attachments: [
+    {
+      name: 'notes.txt',
+      description: null,
+      size: 12,
+      mimeType: 'text/plain',
+      modified: null,
+      sha256: 'c'.repeat(64),
+      risky: false,
+    },
+  ],
+  javascript: [],
+  actions: [],
+  signatures: [],
+  encryption: null,
+  findings: [
+    {
+      category: 'security',
+      severity: 'info',
+      page: null,
+      title: 'Embedded files',
+      detail: 'The document embeds 1 file.',
+      evidence: 'attachments=1',
+      recommendation: null,
+    },
+  ],
+  summary: { total: 1, errors: 0, warnings: 0, info: 1 },
 };
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -145,6 +185,7 @@ describe('web ipc adapter', () => {
         'rawPageContent',
         'restartSidecar',
         'saveFile',
+        'securityDocument',
       ].sort(),
     );
   });
@@ -194,6 +235,21 @@ describe('web ipc adapter', () => {
     fetchMock.mockClear();
     await api().analyzeFonts();
     expect(sentJson(0)).toEqual({ method: 'analyze_fonts', params: {} });
+  });
+
+  it('requests security_document over POST /api/rpc and returns the SecurityReport', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(SECURITY_REPORT));
+
+    const result = await api().securityDocument();
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/rpc', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // No params: the scan always targets the document already open.
+      body: JSON.stringify({ method: 'security_document' }),
+    });
+    expect(result).toEqual(SECURITY_REPORT);
+    expect(result.attachments[0].name).toBe('notes.txt');
   });
 
   it('throws the server error message on a failed RPC', async () => {

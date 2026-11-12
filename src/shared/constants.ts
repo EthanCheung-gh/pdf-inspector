@@ -144,6 +144,31 @@ export const RAW_TIMEOUT_MS = 120_000;
 export const RAW_RENDERER_TIMEOUT_MS = RAW_TIMEOUT_MS + 5_000;
 
 /**
+ * Timeout for one `security_document` request.
+ *
+ * The security scan is a document-level inventory (name trees, embedded-file
+ * streams, actions, form fields and the trailer's /Encrypt dictionary) with no
+ * per-page layout work, so it is bounded like the audit instead of the 30s
+ * default. It is a per-request budget: a resource scan can never extend or
+ * shorten the budget of an extract/audit call.
+ */
+export const SECURITY_TIMEOUT_MS = 120_000;
+
+/**
+ * Renderer-side budget for `securityDocument`.
+ *
+ * Larger than the main-process budget for the same reason as
+ * `ANALYZE_FONTS_RENDERER_TIMEOUT_MS`: the renderer's timer starts one IPC hop
+ * earlier, so with an equal budget it would always fire first and turn a
+ * legitimately slow scan into a restart-triggering "Sidecar timeout", hiding
+ * main's clear `Request "security_document" timed out after 120s` error. The
+ * extra headroom means main's timeout surfaces first and no restart is
+ * attempted; the renderer timer is only a backstop for a main process that
+ * never answers.
+ */
+export const SECURITY_RENDERER_TIMEOUT_MS = SECURITY_TIMEOUT_MS + 5_000;
+
+/**
  * Timeout for one `extract_page` request.
  *
  * Extraction is normally sub-0.1s, but a single complex page (many tables,
@@ -184,6 +209,14 @@ export const IPC_CHANNELS = {
   ANALYZE_FONTS: 'pdf:analyze-fonts',
   AUDIT_DOCUMENT: 'pdf:audit-document',
   AUDIT_PAGES: 'pdf:audit-pages',
+  /**
+   * Document security resources (see src/shared/security-types.ts).
+   *
+   * Read-only and document-scoped: it inspects the PDF the sidecar already has
+   * open and never opens, closes or replaces it. Separate from the audit
+   * channels so a failed resource scan cannot affect an audit report.
+   */
+  SECURITY_DOCUMENT: 'pdf:security-document',
   DIFF_PDFS: 'pdf:diff',
   PICK_DIFF_PDF: 'pdf:pick-diff',
   /**
