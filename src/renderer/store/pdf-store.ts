@@ -40,6 +40,15 @@ export interface PdfState {
   pageCount: number;
   currentPage: number;
   zoom: number;
+  /**
+   * Identity of the document that owns the current page state.
+   *
+   * Incremented by `setFile` and `resetDocument` (never by a page change), so a
+   * page request can remember which document issued it. A response whose epoch
+   * no longer matches belongs to a document the user already left and must be
+   * dropped instead of being published (or reported as an error) for the new one.
+   */
+  documentEpoch: number;
 
   // Data
   pageData: PageData | null;
@@ -68,6 +77,17 @@ export interface PdfState {
   // Fit-width zoom
   fitWidthZoom: number | null;
   initialFitWidthZoom: boolean;
+  /**
+   * One-shot request to leave the next fit-to-width pass alone.
+   *
+   * `PdfViewport` fits a freshly loaded document once, which would overwrite a
+   * zoom that came from a tab/session snapshot (a user at 157% would snap back
+   * to the fit ratio on every reload). `restoreViewSnapshot` sets this right
+   * after applying the snapshot zoom; the fit pass then only publishes the
+   * Fit W hint and consumes the flag. It is reset by `setFile`/`resetDocument`,
+   * so a normal first open still fits.
+   */
+  skipInitialFit: boolean;
 
   // Text selection mode
   textSelectionMode: boolean;
@@ -126,7 +146,22 @@ export interface PdfState {
   clearSelection: () => void;
   setPdfDocRef: (doc: PDFDocumentProxy | null) => void;
   setOutline: (outline: PdfOutlineItem[] | null) => void;
+  /**
+   * Set both the Fit W zoom and the current zoom (the Fit W button's action).
+   * `null` only clears the hint and leaves the current zoom alone.
+   */
   setFitWidthZoom: (zoom: number | null) => void;
+  /**
+   * Publish the Fit W zoom *without* changing the current zoom.
+   *
+   * Used by the initial fit pass when a restored snapshot must keep its zoom:
+   * the button still knows what fit would be, but the document stays as saved.
+   */
+  setFitWidthHint: (zoom: number) => void;
+  /** Ask the next fit-to-width pass to keep the current zoom (one shot). */
+  skipNextInitialFit: () => void;
+  /** Read and clear the one-shot skip (the fit pass owns the consumption). */
+  consumeInitialFitSkip: () => boolean;
   setTextSelectionMode: (mode: boolean) => void;
   setSearchQuery: (query: string) => void;
   setSearchMatches: (matches: SearchMatch[]) => void;
@@ -166,6 +201,7 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   pageCount: 0,
   currentPage: 1,
   zoom: 1.0,
+  documentEpoch: 0,
 
   pageData: null,
 
@@ -191,6 +227,7 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   outline: null,
   fitWidthZoom: null,
   initialFitWidthZoom: false,
+  skipInitialFit: false,
   textSelectionMode: false,
   searchQuery: '',
   searchMatches: [],
@@ -209,7 +246,7 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   subset: null,
 
   setFile: (path, meta, sourceUrl = null, documentName = null) =>
-    set({
+    set((state) => ({
       filePath: path,
       // Reset with the rest of the document state: opening a local file after a
       // URL drops the URL, opening a URL keeps it for the filename label.
@@ -219,6 +256,12 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       metadata: meta,
       pageCount: meta.pages,
       currentPage: 1,
+      // New document: every page request issued for the previous one is stale
+      // from here on, even when it is still in flight.
+      documentEpoch: state.documentEpoch + 1,
+      // Nothing is loading for the new document yet, and the stale request that
+      // the epoch bump just invalidated is no longer allowed to clear this flag.
+      isLoading: false,
       pageData: null,
       allObjects: [],
       hoveredObject: null,
@@ -230,6 +273,8 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       outline: null,
       fitWidthZoom: null,
       initialFitWidthZoom: false,
+      // A new document fits normally unless its snapshot asks otherwise later.
+      skipInitialFit: false,
       searchQuery: '',
       searchMatches: [],
       currentMatchIndex: -1,
@@ -243,7 +288,7 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       fontStats: null,
       fontProgress: null,
       subset: null,
-    }),
+    })),
 
   // Objects are page-scoped: dropping them with the page data prevents the
   // previous page's boxes from being drawn/hit-tested while the new page is
@@ -326,6 +371,20 @@ export const usePdfStore = create<PdfState>((set, get) => ({
     const clamped = Math.max(MIN_FIT_WIDTH_ZOOM, Math.min(MAX_FIT_WIDTH_ZOOM, zoom));
     set({ fitWidthZoom: clamped, zoom: clamped });
   },
+  // Hint only: the Fit W button keeps a target to return to while the current
+  // zoom stays whatever the restored snapshot asked for.
+  setFitWidthHint: (zoom) => {
+    const clamped = Math.max(MIN_FIT_WIDTH_ZOOM, Math.min(MAX_FIT_WIDTH_ZOOM, zoom));
+    set({ fitWidthZoom: clamped });
+  },
+  skipNextInitialFit: () => set({ skipInitialFit: true }),
+  consumeInitialFitSkip: () => {
+    const skip = get().skipInitialFit;
+    // One shot: only clear when it was actually set, so a plain fit pass does
+    // not write to the store on every document.
+    if (skip) set({ skipInitialFit: false });
+    return skip;
+  },
   setTextSelectionMode: (mode) => set({ textSelectionMode: mode }),
   setSearchQuery: (query) => set({ searchQuery: query }),
   setSearchMatches: (matches) => set({ searchMatches: matches }),
@@ -382,7 +441,7 @@ export const usePdfStore = create<PdfState>((set, get) => ({
   // view settings that outlive a document, so closing the last document leaves
   // them as the user set them.
   resetDocument: () =>
-    set({
+    set((state) => ({
       filePath: null,
       sourceUrl: null,
       documentName: null,
@@ -390,6 +449,9 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       pageCount: 0,
       currentPage: 1,
       zoom: 1.0,
+      // Nothing is open: an in-flight page request for the document that just
+      // closed must not be published into the empty state either.
+      documentEpoch: state.documentEpoch + 1,
       pageData: null,
       allObjects: [],
       hoveredObject: null,
@@ -402,6 +464,8 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       outline: null,
       fitWidthZoom: null,
       initialFitWidthZoom: false,
+      // Nothing is open, so no pending snapshot may suppress the next fit.
+      skipInitialFit: false,
       searchQuery: '',
       searchMatches: [],
       currentMatchIndex: -1,
@@ -415,5 +479,5 @@ export const usePdfStore = create<PdfState>((set, get) => ({
       fontProgress: null,
       filterCriteria: {},
       subset: null,
-    }),
+    })),
 }));

@@ -13,9 +13,39 @@ interface BookmarkTreeProps {
 const MAX_DEPTH = 5;
 const MAX_ITEMS = 2000;
 
+/**
+ * Whether a bookmark's resolved PDF.js page index may be navigated to.
+ *
+ * `getPageIndex` returns a 0-based index, and a malformed outline (or one that
+ * belongs to the previous document still being displayed for a moment) can
+ * resolve to something that is not a page of what is open now. Navigating there
+ * would ask the sidecar for a page that does not exist, which is exactly the
+ * `list index out of range` failure, so the destination is checked against both
+ * the store's page count and the loaded PDF.js document instead of trusting it.
+ */
+export function isNavigablePageIndex(
+  pageIndex: number,
+  pageCount: number,
+  numPages: number | undefined,
+): boolean {
+  if (!Number.isInteger(pageIndex) || pageIndex < 0) return false;
+  if (!Number.isFinite(pageCount) || pageCount < 1) return false;
+
+  const page = pageIndex + 1;
+  if (page > pageCount) return false;
+  // `numPages` is always present on a real PDFDocumentProxy; when it is missing
+  // the store's page count is the only bound available.
+  if (typeof numPages === 'number' && Number.isFinite(numPages) && page > numPages) {
+    return false;
+  }
+  return true;
+}
+
 export const BookmarkTree: React.FC<BookmarkTreeProps> = ({ pdfDoc }) => {
   const t = useT();
   const outline = usePdfStore((s) => s.outline);
+  const pageCount = usePdfStore((s) => s.pageCount);
+  const documentEpoch = usePdfStore((s) => s.documentEpoch);
   const { navigate } = usePageNavigation();
 
   const handleBookmarkClick = useCallback(
@@ -34,12 +64,33 @@ export const BookmarkTree: React.FC<BookmarkTreeProps> = ({ pdfDoc }) => {
           return;
         }
 
+        // Resolving a destination is asynchronous: the user may have switched
+        // documents while it ran, in which case this bookmark belongs to the
+        // document they left.
+        if (usePdfStore.getState().documentEpoch !== documentEpoch) {
+          console.warn(
+            'Ignoring bookmark destination resolved for a previous document:',
+            pageIndex,
+          );
+          return;
+        }
+
+        if (!isNavigablePageIndex(pageIndex, pageCount, pdfDoc.numPages)) {
+          // A malformed bookmark is not a fatal error: warn and leave the view
+          // where it is instead of navigating to a page that does not exist.
+          console.warn(
+            `Ignoring bookmark destination outside the document: page index ${pageIndex} ` +
+              `(${pageCount} pages)`,
+          );
+          return;
+        }
+
         await navigate(pageIndex + 1);
       } catch (error) {
         console.error('Failed to resolve bookmark destination:', error);
       }
     },
-    [navigate, pdfDoc],
+    [documentEpoch, navigate, pageCount, pdfDoc],
   );
 
   if (!outline || outline.length === 0) {

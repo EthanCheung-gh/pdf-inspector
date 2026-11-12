@@ -103,10 +103,12 @@ describe('LeftPanel', () => {
 
   it('resolves a named destination and delegates page loading to guarded navigation', async () => {
     const pdfDoc = {
+      numPages: 10,
       getDestination: vi.fn().mockResolvedValue([{ num: 12, gen: 0 }]),
       getPageIndex: vi.fn().mockResolvedValue(2),
     };
     usePdfStore.setState({
+      pageCount: 10,
       pdfDocRef: pdfDoc as any,
       outline: [{ title: 'Chapter 3', bold: false, italic: false, dest: 'chapter-three', items: [] }],
     });
@@ -123,10 +125,12 @@ describe('LeftPanel', () => {
   it('resolves an explicit destination and delegates page loading to guarded navigation', async () => {
     const pageRef = { num: 5, gen: 0 };
     const pdfDoc = {
+      numPages: 10,
       getDestination: vi.fn(),
       getPageIndex: vi.fn().mockResolvedValue(4),
     };
     usePdfStore.setState({
+      pageCount: 10,
       pdfDocRef: pdfDoc as any,
       outline: [{ title: 'Appendix', bold: false, italic: false, dest: [pageRef], items: [] }],
     });

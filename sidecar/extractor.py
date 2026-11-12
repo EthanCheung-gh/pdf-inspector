@@ -782,6 +782,11 @@ class PdfExtractor:
         returned: the diff needs it for page pairing and for page-level size
         changes even when every object type is ignored.
         """
+        # Validate before indexing: a request for page 0, a page past the end (a
+        # stale page number from a document that has since been replaced) or a
+        # non-integer must be a clear user-facing error, not an IndexError from
+        # ``self._pdf.pages[page_num - 1]``.
+        self._validate_page_range(page_num, page_num)
         page: Page = self._pdf.pages[page_num - 1]  # pdfplumber is 0-indexed
         requested = None if include_types is None else set(include_types)
 
@@ -949,6 +954,12 @@ class PdfExtractor:
         page_num = int(match.group(1))
         img_idx = int(match.group(2))
 
+        # The stream id carries its own page number, which may belong to another
+        # document (or be malformed). Python's negative indexing means page 0
+        # would silently read the *last* page, so the range is checked first.
+        total = len(self._pdf.pages)
+        if not 1 <= page_num <= total:
+            return {'error': f'Page {page_num} out of range'}
         page: Page = self._pdf.pages[page_num - 1]
         images = page.images
         if img_idx >= len(images):

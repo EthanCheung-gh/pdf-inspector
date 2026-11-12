@@ -3,6 +3,7 @@ import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { usePageNavigation } from '../usePageNavigation';
 import { usePdfStore } from '../../store/pdf-store';
+import type { PdfMetadata } from '../../types/pdf-objects';
 
 vi.mock('../../services/ipc-client', () => ({
   ipc: { extractPage: vi.fn() },
@@ -13,6 +14,23 @@ import { ipc } from '../../services/ipc-client';
 const pageData = () => ({
   width: 612, height: 792, chars: [], words: [], rects: [], lines: [], curves: [], images: [], tables: [],
 });
+
+const metadata = (pages: number): PdfMetadata => ({
+  pages,
+  version: '1.7',
+  encrypted: false,
+  page_w: 612,
+  page_h: 792,
+  title: '',
+  author: '',
+  producer: '',
+  fonts: [],
+});
+
+/** Open a different document, which is what invalidates in-flight requests. */
+function openOtherDocument(pages = 10): void {
+  usePdfStore.getState().setFile('/tmp/other.pdf', metadata(pages));
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -109,4 +127,102 @@ describe('usePageNavigation', () => {
       'Failed to load page data: Sidecar repeatedly crashes. Please restart the application. Please try again.',
     );
   });
+
+  // A page request is addressed to "the open document", not to a document id, so
+  // a response that arrives after a tab/document switch describes a PDF the user
+  // has already left: publishing it would show the wrong page, and reporting it
+  // would surface "list index out of range" for a page the new document may not
+  // even have.
+  it('drops a stale response that arrives after the document was replaced', async () => {
+    const first = deferred<ReturnType<typeof pageData>>();
+    vi.mocked(ipc.extractPage).mockReturnValueOnce(first.promise);
+    const { result } = renderHook(() => usePageNavigation());
+
+    let navigation!: Promise<void>;
+    act(() => { navigation = result.current.navigate(9); });
+
+    openOtherDocument(3);
+    await act(async () => { first.resolve(pageData()); await navigation; });
+
+    const state = usePdfStore.getState();
+    expect(state.pageData).toBeNull();
+    expect(state.filePath).toBe('/tmp/other.pdf');
+    expect(state.isLoading).toBe(false);
+  });
+
+  it('does not report a failure from a request owned by the previous document', async () => {
+    const first = deferred<ReturnType<typeof pageData>>();
+    vi.mocked(ipc.extractPage).mockReturnValueOnce(first.promise);
+    const { result } = renderHook(() => usePageNavigation());
+
+    let navigation!: Promise<void>;
+    act(() => { navigation = result.current.navigate(9); });
+
+    openOtherDocument(3);
+    await act(async () => {
+      first.reject(new Error('list index out of range'));
+      await navigation;
+    });
+
+    expect(usePdfStore.getState().error).toBeNull();
+  });
+
+  it('leaves the new document loading state alone when a stale request settles', async () => {
+    const first = deferred<ReturnType<typeof pageData>>();
+    vi.mocked(ipc.extractPage).mockReturnValueOnce(first.promise);
+    const { result } = renderHook(() => usePageNavigation());
+
+    let navigation!: Promise<void>;
+    act(() => { navigation = result.current.navigate(9); });
+
+    openOtherDocument(3);
+    // The new document's own navigation is in flight.
+    usePdfStore.setState({ isLoading: true });
+    await act(async () => { first.resolve(pageData()); await navigation; });
+
+    expect(usePdfStore.getState().isLoading).toBe(true);
+  });
+
+  it('forgets a page request superseded by an emptied document', async () => {
+    const first = deferred<ReturnType<typeof pageData>>();
+    vi.mocked(ipc.extractPage).mockReturnValueOnce(first.promise);
+    const { result } = renderHook(() => usePageNavigation());
+
+    let navigation!: Promise<void>;
+    act(() => { navigation = result.current.navigate(4); });
+
+    act(() => { usePdfStore.getState().resetDocument(); });
+    await act(async () => { first.resolve(pageData()); await navigation; });
+
+    const state = usePdfStore.getState();
+    expect(state.pageData).toBeNull();
+    expect(state.currentPage).toBe(1);
+    expect(state.error).toBeNull();
+  });
+
+  it.each([1.5, 2.000001, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -1, 0, 11])(
+    'rejects the invalid page number %p without calling the sidecar',
+    async (page) => {
+      const { result } = renderHook(() => usePageNavigation());
+
+      await act(async () => { await result.current.navigate(page); });
+
+      expect(ipc.extractPage).not.toHaveBeenCalled();
+      expect(usePdfStore.getState().error).toBeNull();
+      expect(usePdfStore.getState().currentPage).toBe(1);
+    },
+  );
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    'does not navigate while the page count is %p',
+    async (pageCount) => {
+      usePdfStore.setState({ pageCount });
+      const { result } = renderHook(() => usePageNavigation());
+
+      await act(async () => { await result.current.navigate(1); });
+
+      expect(ipc.extractPage).not.toHaveBeenCalled();
+      expect(usePdfStore.getState().isLoading).toBe(false);
+    },
+  );
 });
