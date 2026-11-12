@@ -773,6 +773,373 @@ def test_output_cannot_overwrite_an_input_pdf(docs, tmp_path):
     assert target.read_bytes().startswith(b'%PDF-')
 
 
+# --- security command -------------------------------------------------------
+
+SECURITY_SAMPLE = REPO_ROOT / 'web-samples' / 'security-sample.pdf'
+SECURITY_GENERATOR = REPO_ROOT / 'scripts' / 'generate-security-sample.py'
+
+
+@pytest.fixture(scope='module', autouse=True)
+def _generate_security_sample():
+    """Regenerate the deterministic sample if a checkout lacks the fixture."""
+    if not SECURITY_SAMPLE.exists():
+        subprocess.run(
+            [sys.executable, str(SECURITY_GENERATOR)],
+            check=True,
+            cwd=str(REPO_ROOT),
+        )
+    return SECURITY_SAMPLE
+
+
+SECURITY_REPORT_KEYS = {
+    'schemaVersion',
+    'tool',
+    'document',
+    'attachments',
+    'javascript',
+    'actions',
+    'signatures',
+    'encryption',
+    'findings',
+    'summary',
+}
+SECURITY_DOCUMENT_KEYS = {
+    'pages',
+    'version',
+    'encrypted',
+    'xfa',
+    'hasMetadata',
+    'outputIntents',
+}
+SECURITY_SUMMARY_KEYS = {'total', 'errors', 'warnings', 'info'}
+
+
+def run_security(*args: str) -> subprocess.CompletedProcess:
+    return run_cli('security', str(SECURITY_SAMPLE), *args)
+
+
+def security_json(*args: str) -> dict:
+    result = run_security('--format', 'json', *args)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def test_security_json_matches_the_security_report_contract():
+    data = security_json()
+
+    assert set(data) == SECURITY_REPORT_KEYS
+    assert data['schemaVersion'] == 1
+    assert data['tool']['name'] == 'pdf-inspector'
+    assert re.fullmatch(r'\d+\.\d+\.\d+', data['tool']['version'])
+    assert set(data['document']) == SECURITY_DOCUMENT_KEYS
+    assert data['document']['pages'] == 1
+    assert data['document']['xfa'] is True
+    assert data['encryption'] is None
+
+    assert [item['name'] for item in data['attachments']] == ['notes.txt']
+    assert data['attachments'][0]['mimeType'] == 'text/plain'
+    assert len(data['javascript']) == 2
+    assert {'JavaScript', 'URI'} <= {item['subtype'] for item in data['actions']}
+    assert [item['fieldName'] for item in data['signatures']] == ['Approval']
+    assert data['signatures'][0]['verified'] is False
+
+    assert set(data['summary']) == SECURITY_SUMMARY_KEYS
+    assert data['summary']['total'] == len(data['findings'])
+    assert data['summary']['warnings'] >= 2
+    for finding in data['findings']:
+        assert finding['category'] == 'security'
+        assert finding['severity'] in ('error', 'warning', 'info')
+
+
+def test_security_json_stdout_is_pure_json_and_deterministic():
+    first = run_security('--format', 'json')
+    second = run_security('--format', 'json')
+
+    assert first.returncode == second.returncode == 0
+    assert first.stderr == ''
+    assert first.stdout.lstrip().startswith('{')
+    json.loads(first.stdout)
+    assert first.stdout == second.stdout
+
+
+def test_security_json_has_no_absolute_paths_or_timestamps():
+    result = run_security('--format', 'json')
+
+    assert str(SECURITY_SAMPLE) not in result.stdout
+    assert str(REPO_ROOT) not in result.stdout
+    assert '.pdf' not in result.stdout
+    assert not re.search(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}', result.stdout)
+
+
+def test_security_summary_is_the_default_and_reports_counts():
+    result = run_security()
+
+    assert result.returncode == 0
+    assert result.stderr == ''
+    assert result.stdout.startswith('pdf-inspector ')
+    assert ' - PDF security' in result.stdout
+    assert (
+        'document: 1 page(s), version 1.7, encrypted: no, XFA: yes'
+        in result.stdout
+    )
+    assert (
+        'resources: 1 attachment, 2 JavaScript, 3 actions, 1 signature field'
+        in result.stdout
+    )
+    assert 'encryption: none' in result.stdout
+    assert 'summary: 0 errors, 3 warnings, 2 info (5 total)' in result.stdout
+    assert '[warning] security: Document contains JavaScript' in result.stdout
+
+
+def test_security_summary_shows_the_file_name_but_not_its_path():
+    result = run_security()
+
+    assert f'file: {SECURITY_SAMPLE.name}' in result.stdout
+    assert str(SECURITY_SAMPLE) not in result.stdout
+    assert str(SECURITY_SAMPLE.parent) not in result.stdout
+
+
+def test_security_html_on_stdout_is_standalone():
+    result = run_security('--format', 'html')
+
+    assert result.returncode == 0
+    assert result.stderr == ''
+    assert result.stdout.startswith('<!DOCTYPE html>')
+    assert '<title>PDF security report' in result.stdout
+    assert '<style>' in result.stdout
+    assert '<script' not in result.stdout
+    assert 'summary: 0 errors' not in result.stdout
+
+
+def test_security_output_file_equals_the_stdout_payload(tmp_path):
+    output = tmp_path / 'security.json'
+    result = run_security('--format', 'json', '--output', str(output))
+
+    assert result.returncode == 0
+    assert result.stderr == ''
+    assert not result.stdout.lstrip().startswith('{')
+    assert 'summary:' in result.stdout
+
+    written = json.loads(output.read_text(encoding='utf-8'))
+    assert written == security_json()
+
+
+def test_security_quiet_suppresses_the_human_summary_only():
+    quiet_summary = run_security('--quiet')
+    assert quiet_summary.returncode == 0
+    assert quiet_summary.stdout == ''
+    assert quiet_summary.stderr == ''
+
+    quiet_json = run_security('--format', 'json', '--quiet')
+    assert quiet_json.returncode == 0
+    assert json.loads(quiet_json.stdout)['attachments'][0]['name'] == 'notes.txt'
+
+
+def test_security_quiet_with_output_writes_the_file_without_stdout(tmp_path):
+    output = tmp_path / 'security.html'
+    result = run_security(
+        '--format', 'html', '--output', str(output), '--quiet'
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == ''
+    assert output.read_text(encoding='utf-8').startswith('<!DOCTYPE html>')
+
+
+@pytest.mark.parametrize(
+    'key, fail_on, expected',
+    [
+        ('security', 'none', 0),
+        ('security', 'error', 0),
+        ('security', 'warning', 1),
+        ('clean', 'none', 0),
+        ('clean', 'error', 0),
+        ('clean', 'warning', 0),
+    ],
+)
+def test_security_fail_on_thresholds(docs, key, fail_on, expected):
+    path = str(SECURITY_SAMPLE) if key == 'security' else docs['same_a']
+    result = run_cli('security', path, '--fail-on', fail_on, '--quiet')
+
+    assert result.returncode == expected, result.stderr
+    if expected:
+        assert 'fail-on warning' in result.stderr
+        assert '3 warning(s)' in result.stderr
+    else:
+        assert result.stderr == ''
+
+
+def test_security_fail_on_still_prints_the_summary():
+    result = run_security('--fail-on', 'warning')
+
+    assert result.returncode == 1
+    assert 'summary: 0 errors, 3 warnings' in result.stdout
+    assert 'pdf-inspector: ' in result.stderr
+
+
+def test_security_fail_on_writes_the_report_before_failing(tmp_path):
+    output = tmp_path / 'security.json'
+    result = run_security(
+        '--format',
+        'json',
+        '--output',
+        str(output),
+        '--fail-on',
+        'warning',
+    )
+
+    assert result.returncode == 1
+    written = json.loads(output.read_text(encoding='utf-8'))
+    assert written['summary']['warnings'] >= 2
+
+
+def test_security_failure_reason_helper():
+    clean = {'summary': {'errors': 0, 'warnings': 0}}
+    warned = {'summary': {'errors': 0, 'warnings': 2}}
+    failed = {'summary': {'errors': 1, 'warnings': 0}}
+
+    assert cli.security_failure_reason(clean, 'none') is None
+    assert cli.security_failure_reason(clean, 'error') is None
+    assert cli.security_failure_reason(clean, 'warning') is None
+
+    assert cli.security_failure_reason(warned, 'none') is None
+    assert cli.security_failure_reason(warned, 'error') is None
+    assert '2 warning(s)' in cli.security_failure_reason(warned, 'warning')
+
+    assert 'fail-on error' in cli.security_failure_reason(failed, 'error')
+    assert 'fail-on warning' in cli.security_failure_reason(failed, 'warning')
+
+    with pytest.raises(ValueError):
+        cli.security_failure_reason(clean, 'sometimes')
+
+
+def test_security_report_error_is_a_one_line_exit_2(monkeypatch, capsys, docs):
+    def explode(extractor):
+        raise ValueError('security report failed')
+
+    monkeypatch.setattr(cli, 'security_report', explode)
+
+    code = cli.main(['security', docs['same_a'], '--quiet'])
+
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.out == ''
+    assert 'security report failed' in captured.err
+    assert 'Traceback' not in captured.err
+
+
+def test_security_unknown_format_is_a_usage_error():
+    result = run_security('--format', 'yaml')
+
+    assert result.returncode == 2
+    assert 'invalid choice' in result.stderr.lower()
+    assert result.stdout == ''
+
+
+def test_security_unknown_fail_on_is_a_usage_error():
+    result = run_security('--fail-on', 'sometimes')
+
+    assert result.returncode == 2
+    assert result.stdout == ''
+
+
+def test_security_missing_file_argument_is_a_usage_error():
+    result = run_cli('security')
+
+    assert result.returncode == 2
+    assert 'usage' in result.stderr.lower()
+    assert result.stdout == ''
+
+
+def test_security_missing_file_is_a_one_line_error():
+    result = run_cli('security', '/definitely/not/here.pdf')
+
+    assert result.returncode == 2
+    assert result.stdout == ''
+    assert 'not found' in result.stderr
+    assert 'Traceback' not in result.stderr
+    assert result.stderr.strip().count('\n') == 0
+
+
+def test_security_directory_input_is_rejected(tmp_path):
+    result = run_cli('security', str(tmp_path))
+
+    assert result.returncode == 2
+    assert 'not a file' in result.stderr
+
+
+def test_security_non_pdf_input_is_rejected(docs):
+    result = run_cli('security', docs['not_pdf'])
+
+    assert result.returncode == 2
+    assert 'not a PDF' in result.stderr
+    assert result.stdout == ''
+    assert result.stderr.strip().count('\n') == 0
+
+
+def test_security_http_url_input_is_rejected_without_network():
+    result = run_cli('security', 'https://example.com/sample.pdf')
+
+    assert result.returncode == 2
+    assert 'local file path' in result.stderr
+    assert 'URL' in result.stderr
+    assert result.stdout == ''
+
+
+def test_security_malformed_pdf_is_a_report_error(docs):
+    result = run_cli('security', docs['broken'])
+
+    assert result.returncode == 2
+    assert 'Traceback' not in result.stderr
+    assert result.stderr.strip().count('\n') == 0
+    assert result.stdout == ''
+
+
+def test_security_output_to_missing_directory_fails(tmp_path):
+    missing = tmp_path / 'missing-dir' / 'security.json'
+    result = run_security('--format', 'json', '--output', str(missing))
+
+    assert result.returncode == 2
+    assert 'output directory does not exist' in result.stderr
+
+
+def test_security_output_to_directory_path_fails(tmp_path):
+    result = run_security('--format', 'json', '--output', str(tmp_path))
+
+    assert result.returncode == 2
+    assert 'directory' in result.stderr
+
+
+def test_security_output_cannot_overwrite_the_input_pdf(tmp_path):
+    target = tmp_path / 'input.pdf'
+    original = SECURITY_SAMPLE.read_bytes()
+    target.write_bytes(original)
+
+    result = run_cli(
+        'security',
+        str(target),
+        '--format',
+        'json',
+        '--output',
+        str(target),
+    )
+
+    assert result.returncode == 2
+    assert 'must not overwrite an input PDF' in result.stderr
+    assert target.read_bytes() == original
+
+
+def test_security_parser_defaults():
+    args = cli.build_parser().parse_args(['security', 'sample.pdf'])
+
+    assert args.command == 'security'
+    assert args.file == 'sample.pdf'
+    assert args.format == 'summary'
+    assert args.output is None
+    assert args.fail_on == 'none'
+    assert args.quiet is False
+
+
 # --- version ----------------------------------------------------------------
 
 
@@ -836,6 +1203,44 @@ def test_node_wrapper_forwards_diff_arguments_and_exit_code(docs):
     )
     assert failing.returncode == 1
     assert 'fail-on any' in failing.stderr
+
+
+@skip_without_node
+def test_node_wrapper_forwards_security_arguments_and_exit_code():
+    result = subprocess.run(
+        [
+            NODE,
+            str(WRAPPER),
+            'security',
+            str(SECURITY_SAMPLE),
+            '--format',
+            'json',
+            '--quiet',
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    data = json.loads(result.stdout)
+    assert data['attachments'][0]['name'] == 'notes.txt'
+    assert data['document']['xfa'] is True
+
+    failing = subprocess.run(
+        [
+            NODE,
+            str(WRAPPER),
+            'security',
+            str(SECURITY_SAMPLE),
+            '--fail-on',
+            'warning',
+            '--quiet',
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert failing.returncode == 1
+    assert 'fail-on warning' in failing.stderr
 
 
 @skip_without_node

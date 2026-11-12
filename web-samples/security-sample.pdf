@@ -1,0 +1,83 @@
+%PDF-1.7
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles 5 0 R /JavaScript 7 0 R >> /OpenAction 8 0 R /AcroForm 10 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 14 0 R >> >> /Contents 4 0 R /Annots [12 0 R] >>
+endobj
+4 0 obj
+<< /Length 60  >>
+stream
+BT /F1 20 Tf 72 700 Td (PDF Inspector security sample) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Names [(notes.txt) 6 0 R] >>
+endobj
+6 0 obj
+<< /Type /Filespec /UF (notes.txt) /F (notes.txt) /Desc (Sample embedded text file for the security CLI) /EF << /F 15 0 R >> >>
+endobj
+7 0 obj
+<< /Names [(security-sample) 9 0 R] >>
+endobj
+8 0 obj
+<< /S /JavaScript /JS (app.alert\(PDF Inspector security sample\)) >>
+endobj
+9 0 obj
+<< /S /JavaScript /JS (console.println\(PDF Inspector security sample\);) >>
+endobj
+10 0 obj
+<< /Fields [11 0 R] /XFA 13 0 R >>
+endobj
+11 0 obj
+<< /FT /Sig /T (Approval) /V 16 0 R /P 3 0 R >>
+endobj
+12 0 obj
+<< /Type /Annot /Subtype /Link /Rect [72 620 300 640] /Border [0 0 0] /A << /S /URI /URI (https://example.com/pdf-inspector/security) >> >>
+endobj
+13 0 obj
+<< /Length 100  >>
+stream
+<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/"><template><subform name="form1"/></template></xdp:xdp>
+endstream
+endobj
+14 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+15 0 obj
+<< /Length 42 /Type /EmbeddedFile /Subtype /text#2Fplain /Params << /Size 42 /ModDate (D:20240101000000Z) >> >>
+stream
+PDF Inspector security sample attachment.
+
+endstream
+endobj
+16 0 obj
+<< /Type /Sig /Name (Sample Signer) /M (D:20240101000000Z) /Reason (Approval) /Location (Sample) /SubFilter /adbe.pkcs7.detached /ByteRange [0 100 120 80] >>
+endobj
+xref
+0 17
+0000000000 65535 f 
+0000000009 00000 n 
+0000000145 00000 n 
+0000000202 00000 n 
+0000000346 00000 n 
+0000000457 00000 n 
+0000000505 00000 n 
+0000000648 00000 n 
+0000000702 00000 n 
+0000000787 00000 n 
+0000000879 00000 n 
+0000000930 00000 n 
+0000000994 00000 n 
+0000001150 00000 n 
+0000001303 00000 n 
+0000001374 00000 n 
+0000001562 00000 n 
+trailer
+<< /Size 17 /Root 1 0 R >>
+startxref
+1736
+%%EOF

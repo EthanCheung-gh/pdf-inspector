@@ -4,7 +4,9 @@ release/
 dist-sidecar/
 dist-web/
 dist-web-server/
-web-samples/
+web-samples/*
+# The security CLI/CI sample is generated deterministically and committed.
+!web-samples/security-sample.pdf
 sidecar/build/
 .venv/
 .superpowers/

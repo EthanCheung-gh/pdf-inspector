@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""``pdf-inspector diff`` / ``pdf-inspector audit`` command line interface.
+"""``pdf-inspector diff`` / ``audit`` / ``security`` command line interface.
 
 The CLI is a thin, dependency-free shell around :func:`sidecar.diff.diff_files`,
-:func:`sidecar.audit.audit_file`, :mod:`sidecar.report` and
-:mod:`sidecar.audit_report`.  Only local files are accepted (no URLs), JSON/HTML
-payloads go to stdout or ``--output``, and every diagnostic goes to stderr so
-machine consumers can pipe stdout safely.
+:func:`sidecar.audit.audit_file`, :func:`sidecar.audit.security_report`,
+:mod:`sidecar.report`, :mod:`sidecar.audit_report` and
+:mod:`sidecar.security_report`.  Only local files are accepted (no URLs),
+JSON/HTML payloads go to stdout or ``--output``, and every diagnostic goes to
+stderr so machine consumers can pipe stdout safely.
 
 Exit codes: ``0`` no failure, ``1`` the ``--fail-on`` predicate matched, ``2``
-usage/read/diff/audit error.
+usage/read/diff/audit/security error.
 """
 
 from __future__ import annotations
@@ -20,15 +21,19 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 try:  # imported as ``sidecar.cli`` (namespace package)
-    from .audit import AuditError, audit_file
+    from .audit import AuditError, audit_file, security_report
     from .audit_report import format_audit_summary, render_audit_html
     from .diff import DIFF_TYPES, DiffError, DiffOptions, diff_files, tool_version
+    from .extractor import PdfExtractor
     from .report import format_summary, page_geometry_changed, render_html
+    from .security_report import format_security_summary, render_security_html
 except ImportError:  # executed as ``python sidecar/cli.py``
-    from audit import AuditError, audit_file
+    from audit import AuditError, audit_file, security_report
     from audit_report import format_audit_summary, render_audit_html
     from diff import DIFF_TYPES, DiffError, DiffOptions, diff_files, tool_version
+    from extractor import PdfExtractor
     from report import format_summary, page_geometry_changed, render_html
+    from security_report import format_security_summary, render_security_html
 
 EXIT_OK = 0
 EXIT_FAIL = 1
@@ -65,7 +70,10 @@ def _positive_float(value: str) -> float:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog='pdf-inspector',
-        description='Inspect PDF internals, diff two PDF revisions and audit a PDF.',
+        description=(
+            'Inspect PDF internals, diff two PDF revisions, audit a PDF and list '
+            'its document security resources.'
+        ),
     )
     parser.add_argument(
         '--version',
@@ -210,6 +218,49 @@ def build_parser() -> argparse.ArgumentParser:
         action='store_true',
         help='suppress the human summary on stdout (JSON/HTML payloads are unaffected)',
     )
+
+    security_parser = subparsers.add_parser(
+        'security',
+        help='inspect document security resources of a local PDF',
+        description=(
+            'List embedded attachments, JavaScript previews, actions, signature '
+            'fields, XFA, encryption and permissions without executing scripts, '
+            'following actions, opening attachments or verifying signatures.'
+        ),
+        epilog=(
+            'exit codes: 0 = no threshold matched, 1 = --fail-on matched, '
+            '2 = usage/read/report error. Diagnostics are written to stderr; '
+            'JSON on stdout is never polluted.'
+        ),
+    )
+    security_parser.add_argument(
+        'file', metavar='FILE.pdf', help='PDF to inspect (local path)'
+    )
+    security_parser.add_argument(
+        '--format',
+        choices=FORMAT_CHOICES,
+        default='summary',
+        help='output format written to stdout and/or --output (default: summary)',
+    )
+    security_parser.add_argument(
+        '--output',
+        metavar='PATH',
+        help='also write the formatted payload to PATH (stdout keeps the summary)',
+    )
+    security_parser.add_argument(
+        '--fail-on',
+        choices=AUDIT_FAIL_ON_CHOICES,
+        default='none',
+        help=(
+            'which security findings exit 1 (default: none). "warning" fails on '
+            'warnings and errors, "error" only on errors, "none" never fails'
+        ),
+    )
+    security_parser.add_argument(
+        '--quiet',
+        action='store_true',
+        help='suppress the human summary on stdout (JSON/HTML payloads are unaffected)',
+    )
     return parser
 
 
@@ -323,6 +374,45 @@ def _render_audit_payload(
     if output_format == 'html':
         return render_audit_html(report)
     return format_audit_summary(report, source_label=source_label)
+
+
+def _render_security_payload(
+    report: Mapping[str, Any],
+    output_format: str,
+    *,
+    source_label: Optional[str] = None,
+) -> str:
+    """Render one security payload; JSON stays exactly the ``SecurityReport``."""
+    if output_format == 'json':
+        return json.dumps(report, indent=2, ensure_ascii=False) + '\n'
+    if output_format == 'html':
+        return render_security_html(report, source_label=source_label)
+    return format_security_summary(report, source_label=source_label)
+
+
+def security_file(path: Any) -> dict[str, Any]:
+    """Open a local PDF and return its complete ``SecurityReport``.
+
+    The security engine reads pdfminer objects, so it only needs to open the
+    document; it never extracts pages.  Open errors are reported as
+    :class:`AuditError`, which the CLI maps to exit code 2.
+    """
+    target = path if isinstance(path, Path) else Path(str(path))
+    extractor = None
+    try:
+        extractor = PdfExtractor(str(target))
+    except Exception as exc:
+        raise AuditError(f'Cannot open PDF {str(target)!r}: {exc}') from exc
+
+    try:
+        return security_report(extractor)
+    finally:
+        if extractor is not None:
+            try:
+                extractor.close()
+            except Exception:
+                # Closing is best effort: never mask the real report or error.
+                pass
 
 
 def _write_output(path_arg: str, payload: str) -> None:
@@ -468,6 +558,39 @@ def audit_failure_reason(report: Mapping[str, Any], fail_on: str) -> Optional[st
     return None
 
 
+def security_failure_reason(report: Mapping[str, Any], fail_on: str) -> Optional[str]:
+    """Return a one-line reason when ``fail_on`` matches, else ``None``.
+
+    ``warning`` covers warnings and errors, ``error`` only errors, and ``none``
+    never fails.  Counts come from the security report summary, so a report
+    without findings never trips a threshold.
+    """
+    if fail_on == 'none':
+        return None
+    if fail_on not in AUDIT_FAIL_ON_CHOICES:
+        raise ValueError(f'unknown security fail-on mode: {fail_on!r}')
+
+    summary = report.get('summary') or {}
+
+    def count(key: str) -> int:
+        try:
+            return int(summary.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    errors = count('errors')
+    warnings = count('warnings')
+
+    if fail_on == 'error' and errors:
+        return f'{errors} security error(s) found (fail-on error)'
+    if fail_on == 'warning' and (errors or warnings):
+        return (
+            f'{errors} security error(s) and {warnings} warning(s) found '
+            '(fail-on warning)'
+        )
+    return None
+
+
 # --- command ----------------------------------------------------------------
 
 
@@ -500,6 +623,42 @@ def _run_audit(args: argparse.Namespace) -> int:
     sys.stdout.flush()
 
     reason = audit_failure_reason(report, args.fail_on)
+    if reason is not None:
+        sys.stderr.write(f'pdf-inspector: {reason}\n')
+        sys.stderr.flush()
+        return EXIT_FAIL
+    return EXIT_OK
+
+
+def _run_security(args: argparse.Namespace) -> int:
+    input_path = _validate_input(args.file, 'security')
+    if args.output is not None:
+        _reject_input_overwrite(args.output, (input_path,))
+
+    report = security_file(input_path)
+    payload = _render_security_payload(
+        report,
+        args.format,
+        source_label=str(args.file),
+    )
+
+    if args.output is not None:
+        _write_output(args.output, payload)
+
+    if args.format == 'summary' or args.output is not None:
+        # Human summaries are never mixed into machine payloads on stdout.
+        if not args.quiet:
+            summary = (
+                payload
+                if args.format == 'summary'
+                else format_security_summary(report, source_label=str(args.file))
+            )
+            sys.stdout.write(summary)
+    else:
+        sys.stdout.write(payload)
+    sys.stdout.flush()
+
+    reason = security_failure_reason(report, args.fail_on)
     if reason is not None:
         sys.stderr.write(f'pdf-inspector: {reason}\n')
         sys.stderr.flush()
@@ -555,6 +714,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return _run_diff(args)
         if args.command == 'audit':
             return _run_audit(args)
+        if args.command == 'security':
+            return _run_security(args)
         parser.error(f'unknown command: {args.command}')
     except (CliError, DiffError, AuditError, ValueError) as exc:
         _config_error(exc)
