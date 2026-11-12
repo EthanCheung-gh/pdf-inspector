@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useT } from '../../i18n';
 import { usePageNavigation } from '../../hooks/usePageNavigation';
 import { ipc } from '../../services/ipc-client';
@@ -7,6 +7,8 @@ import {
   useDocumentTabsStore,
 } from '../../store/document-tabs-store';
 import type { DocumentTab, DocumentViewSnapshot } from '../../store/document-tabs-store';
+import { useSessionRestoreStore } from '../../store/session-restore-store';
+import { useSessionStore } from '../../store/session-store';
 import type { OpenPdfResult } from '../../types/ipc-protocol';
 import { usePdfStore } from '../../store/pdf-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
@@ -18,10 +20,17 @@ import styles from './DocumentTabs.module.css';
  *
  * Deliberately only view state: the document itself comes from `setFile`, and
  * analysis results (fonts/audit/raw) are not snapshotted, so they stay reset.
+ *
+ * The fit-to-width pass in `PdfViewport` runs once per loaded document and would
+ * otherwise overwrite the zoom just restored (a tab saved at 157% would snap
+ * back to the fit ratio). Asking it to skip that pass keeps the saved zoom; a
+ * normal first open never calls this, so it still fits.
  */
 export function restoreViewSnapshot(snapshot: DocumentViewSnapshot): void {
   const pdf = usePdfStore.getState();
   pdf.setZoom(snapshot.zoom);
+  // After `setZoom`, so the saved zoom is the one the fit pass must leave alone.
+  pdf.skipNextInitialFit();
   pdf.setOverlayVisibility(snapshot.overlayVisibility);
   if (snapshot.searchQuery) pdf.setSearchQuery(snapshot.searchQuery);
 
@@ -120,6 +129,48 @@ export const DocumentTabs: React.FC = () => {
   const [switchingTabId, setSwitchingTabId] = useState<string | null>(null);
   const [closingTabId, setClosingTabId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Whether this mount ever showed a tab. Startup mounts the bar with zero tabs
+  // (and so does the restore, until its first document lands): writing that
+  // empty set would erase the session the restore is about to read. An empty
+  // session is only persisted once tabs actually existed and were all closed.
+  const hasHadTabsRef = useRef(false);
+  // The restore engine writes the session itself when it finishes, so the bar
+  // must not race it with a save per intermediate tab.
+  const restoringSession = useSessionRestoreStore((state) => state.restoring);
+
+  // Session save trigger (Q2): the tab bar is the only component that knows the
+  // tab set, so it owns persistence. Page/zoom changes are deliberately not in
+  // this effect — they only reach storage through the explicit flushes below,
+  // so scrolling a document never writes on every page turn.
+  //
+  // While a restore is running the engine is the single writer: it opens
+  // documents one at a time and saves the surviving tabs once at the end, so a
+  // save here would persist a half-restored session. `restoringSession` is a
+  // dependency on purpose: when the run ends the effect re-runs and stores the
+  // final tab set, which also covers a run that stopped early because the user
+  // opened a document of their own.
+  useEffect(() => {
+    if (restoringSession) return;
+    if (tabs.length > 0) hasHadTabsRef.current = true;
+    else if (!hasHadTabsRef.current) return;
+    useSessionStore.getState().saveTabs(tabs, activeTabId);
+  }, [tabs, activeTabId, restoringSession]);
+
+  // Recent files are populated from the tab that is active, which covers every
+  // open path (toolbar, URL dialog, drag/drop, web upload, a restored session)
+  // without each entry point having to remember to record it. `recordOpen` is an
+  // idempotent upsert, and the identity key keeps it from firing for snapshot
+  // changes alone.
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
+  const activeTabIdentity = activeTab
+    ? `${activeTab.documentId ?? ''}|${activeTab.sourceUrl ?? ''}|${activeTab.path}`
+    : '';
+  useEffect(() => {
+    if (!activeTabIdentity) return;
+    const store = useDocumentTabsStore.getState();
+    const tab = store.tabs.find((candidate) => candidate.id === store.activeTabId);
+    if (tab) useSessionStore.getState().recordOpen(tab);
+  }, [activeTabIdentity]);
 
   // Returns whether the tab actually became the open document, which is what a
   // close must know: a failed activation leaves the old tab (and the old
@@ -271,6 +322,35 @@ export const DocumentTabs: React.FC = () => {
     },
     [closingTabId, openTab, switchingTabId, t],
   );
+
+  // Snapshot and session flush on the way out. The debounce-less tab effect
+  // above covers the tab set, but the page/zoom/panel state of the *active*
+  // document only exists in the live stores until it is captured, so a refresh,
+  // a window close or a tab going to the background must capture it first.
+  useEffect(() => {
+    const flushSession = (): void => {
+      // Same single-writer rule as the save effect: while the restore engine
+      // runs it owns the session, and a flush would persist a partial run.
+      if (useSessionRestoreStore.getState().restoring) return;
+      const store = useDocumentTabsStore.getState();
+      if (store.tabs.length === 0 && !hasHadTabsRef.current) return;
+      // Capture the live view before the tab set is serialized.
+      store.saveActiveSnapshot();
+      const current = useDocumentTabsStore.getState();
+      useSessionStore.getState().saveTabs(current.tabs, current.activeTabId);
+    };
+    const handleVisibilityChange = (): void => {
+      // Only leaving the page is a "save point"; coming back is not.
+      if (document.visibilityState === 'hidden') flushSession();
+    };
+
+    window.addEventListener('beforeunload', flushSession);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('beforeunload', flushSession);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
 
   if (!supportsDocumentTabs() || tabs.length === 0) return null;
 

@@ -5,6 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDocumentTabsStore } from '../../store/document-tabs-store';
 import { useI18nStore } from '../../i18n/store';
 import { usePdfStore } from '../../store/pdf-store';
+import {
+  SESSION_STORAGE_KEY,
+  configureSessionStorage,
+  createMemorySessionStorage,
+  useSessionStore,
+} from '../../store/session-store';
+import type { SessionStorage } from '../../store/session-store';
+import { useSessionRestoreStore } from '../../store/session-restore-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
 import type { IpcApi, OpenPdfResult } from '../../types/ipc-protocol';
 import type { PdfMetadata } from '../../types/pdf-objects';
@@ -67,6 +75,33 @@ const opened = (
 const tabStore = () => useDocumentTabsStore.getState();
 const pdfStore = () => usePdfStore.getState();
 
+/** The session record these tests persisted through the save triggers. */
+interface SavedSession {
+  tabs: Array<{
+    kind: string;
+    path: string | null;
+    sourceUrl: string | null;
+    documentId: string | null;
+    name: string;
+    snapshot: { currentPage: number; zoom: number };
+  }>;
+  activeIndex: number;
+  restoreLastSession: boolean;
+}
+
+let sessionStorage: SessionStorage;
+
+const readSavedSession = (): SavedSession =>
+  JSON.parse(sessionStorage.getItem(SESSION_STORAGE_KEY) ?? 'null') as SavedSession;
+
+/** jsdom exposes `visibilityState` as a prototype getter; override per test. */
+function setVisibilityState(value: 'visible' | 'hidden'): void {
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    get: () => value,
+  });
+}
+
 /** Desktop bridge: the presence of `openPdfPath` is what enables the tab bar. */
 function installDesktopBridge(): void {
   (window as unknown as { pdfInspector?: Partial<IpcApi> }).pdfInspector = { openPdfPath };
@@ -107,11 +142,20 @@ beforeEach(() => {
   tabStore().reset();
   pdfStore().resetDocument();
   useWorkspaceStore.setState({ leftTab: 'objects', inspectorTab: 'inspect' });
+  // Session persistence is exercised by the save-trigger tests below; give every
+  // test its own store so a saved session cannot leak between them.
+  sessionStorage = createMemorySessionStorage();
+  configureSessionStorage(sessionStorage);
+  useSessionStore.getState().reset();
+  useSessionRestoreStore.getState().reset();
 });
 
 afterEach(() => {
   cleanup();
   delete (window as unknown as { pdfInspector?: Partial<IpcApi> }).pdfInspector;
+  useSessionStore.getState().reset();
+  useSessionRestoreStore.getState().reset();
+  configureSessionStorage(null);
 });
 
 describe('tab bar visibility', () => {
@@ -201,6 +245,9 @@ describe('switching documents', () => {
 
     // Snapshot restored onto the re-opened document.
     expect(pdfStore().zoom).toBe(1.5);
+    // The zoom is only safe because the fit-to-width pass is told to stand down;
+    // without it PdfViewport would fit the re-opened document over this value.
+    expect(pdfStore().skipInitialFit).toBe(true);
     expect(pdfStore().overlayVisibility.word).toBe(false);
     expect(useWorkspaceStore.getState().leftTab).toBe('fonts');
     expect(useWorkspaceStore.getState().inspectorTab).toBe('page');
@@ -816,6 +863,158 @@ describe('closing web tabs', () => {
   });
 });
 
+describe('session persistence', () => {
+  it('saves the open tabs after the tab set changes', () => {
+    tabStore().addTab(opened('/docs/a.pdf'));
+
+    render(React.createElement(DocumentTabs));
+
+    const saved = readSavedSession();
+    expect(saved.tabs.map((tab) => tab.name)).toEqual(['a.pdf']);
+    expect(saved.activeIndex).toBe(0);
+    expect(saved.tabs[0]).toMatchObject({ kind: 'local', path: '/docs/a.pdf' });
+    // The preference is persisted alongside, not reset by a save.
+    expect(saved.restoreLastSession).toBe(true);
+  });
+
+  it('does not persist page/zoom changes that no trigger captured', () => {
+    tabStore().addTab(opened('/docs/a.pdf'));
+    render(React.createElement(DocumentTabs));
+
+    pdfStore().setPage(3);
+    pdfStore().setZoom(2);
+
+    // Page/zoom only reach storage through an explicit save point, never by
+    // themselves, so a document is not written on every page turn.
+    expect(readSavedSession().tabs[0].snapshot).toMatchObject({ currentPage: 1, zoom: 1 });
+  });
+
+  it('saves the new active index when the user switches tabs', async () => {
+    tabStore().addTab(opened('/docs/a.pdf'));
+    tabStore().addTab(opened('/docs/b.pdf'));
+    openPdfPath.mockResolvedValue(opened('/docs/a.pdf'));
+
+    render(React.createElement(DocumentTabs));
+
+    await act(async () => {
+      fireEvent.click(findTab('a.pdf'));
+    });
+
+    await waitFor(() => expect(pdfStore().filePath).toBe('/docs/a.pdf'));
+    const saved = readSavedSession();
+    expect(saved.tabs.map((tab) => tab.name)).toEqual(['a.pdf', 'b.pdf']);
+    expect(saved.activeIndex).toBe(0);
+  });
+
+  it('records the active document as a recent file', async () => {
+    tabStore().addTab(opened('/docs/a.pdf'));
+
+    render(React.createElement(DocumentTabs));
+    expect(useSessionStore.getState().recent.map((entry) => entry.name)).toEqual(['a.pdf']);
+
+    // Opening a second document (toolbar, URL dialog, drag/drop) activates its
+    // tab, which is what makes it show up in the recent list.
+    await act(async () => {
+      tabStore().addTab(opened('/docs/b.pdf'));
+    });
+
+    expect(useSessionStore.getState().recent.map((entry) => entry.name)).toEqual([
+      'b.pdf',
+      'a.pdf',
+    ]);
+  });
+
+  it('does not wipe the saved session when the bar mounts with no tabs', () => {
+    tabStore().addTab(opened('/docs/a.pdf'));
+    useSessionStore.getState().saveTabs(tabStore().tabs, tabStore().activeTabId);
+    tabStore().reset();
+
+    // Startup renders the bar before the restore engine has opened anything;
+    // writing that empty set would erase the session the restore reads.
+    render(React.createElement(DocumentTabs));
+
+    expect(readSavedSession().tabs.map((tab) => tab.name)).toEqual(['a.pdf']);
+  });
+
+  it('persists an empty session when the last tab is closed', async () => {
+    tabStore().addTab(opened('/docs/a.pdf'));
+    pdfStore().setFile('/docs/a.pdf', metadata);
+
+    render(React.createElement(DocumentTabs));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close a.pdf' }));
+    });
+
+    expect(tabStore().tabs).toEqual([]);
+    // The next start must not restore a document the user closed.
+    expect(readSavedSession()).toMatchObject({ tabs: [], activeIndex: 0 });
+  });
+
+  it('leaves session writes to the engine while a restore is running', () => {
+    useSessionRestoreStore.getState().begin(2);
+    tabStore().addTab(opened('/docs/a.pdf'));
+
+    render(React.createElement(DocumentTabs));
+
+    // The restore engine is the single writer: no half-restored session is
+    // persisted while it is opening documents one by one.
+    expect(sessionStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+
+    // The unload flush follows the same rule.
+    pdfStore().setPage(3);
+    fireEvent(window, new Event('beforeunload'));
+    expect(sessionStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+  });
+
+  it('persists the final tab set once the restore finishes', async () => {
+    useSessionRestoreStore.getState().begin(1);
+    tabStore().addTab(opened('/docs/a.pdf'));
+
+    render(React.createElement(DocumentTabs));
+    expect(sessionStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+
+    await act(async () => {
+      useSessionRestoreStore.getState().finish();
+    });
+
+    // The end of the run re-runs the save effect with the surviving tab set,
+    // covering a restore that stopped early (e.g. the user opened a document).
+    expect(readSavedSession().tabs.map((tab) => tab.name)).toEqual(['a.pdf']);
+  });
+
+  it('captures the live view before persisting on beforeunload', () => {
+    tabStore().addTab(opened('/docs/a.pdf'));
+    pdfStore().setFile('/docs/a.pdf', metadata);
+
+    render(React.createElement(DocumentTabs));
+
+    pdfStore().setPage(4);
+    pdfStore().setZoom(1.75);
+    fireEvent(window, new Event('beforeunload'));
+
+    expect(readSavedSession().tabs[0].snapshot).toMatchObject({ currentPage: 4, zoom: 1.75 });
+  });
+
+  it('saves on visibilitychange only when the page becomes hidden', () => {
+    tabStore().addTab(opened('/docs/a.pdf'));
+    pdfStore().setFile('/docs/a.pdf', metadata);
+
+    render(React.createElement(DocumentTabs));
+
+    pdfStore().setPage(3);
+    setVisibilityState('hidden');
+    fireEvent(document, new Event('visibilitychange'));
+    expect(readSavedSession().tabs[0].snapshot.currentPage).toBe(3);
+
+    // Becoming visible again is not a save point: nothing was captured since.
+    pdfStore().setPage(5);
+    setVisibilityState('visible');
+    fireEvent(document, new Event('visibilitychange'));
+    expect(readSavedSession().tabs[0].snapshot.currentPage).toBe(3);
+  });
+});
+
 describe('helpers', () => {
   it('picks the same neighbour removeTab would activate', () => {
     const first = tabStore().addTab(opened('/docs/a.pdf'));
@@ -852,6 +1051,8 @@ describe('helpers', () => {
 
     const state = pdfStore();
     expect(state.zoom).toBe(1.25);
+    // The one-shot skip is what keeps PdfViewport from fitting this zoom away.
+    expect(state.skipInitialFit).toBe(true);
     expect(state.overlayVisibility.char).toBe(false);
     expect(useWorkspaceStore.getState().leftTab).toBe('layers');
     expect(useWorkspaceStore.getState().inspectorTab).toBe('results');
