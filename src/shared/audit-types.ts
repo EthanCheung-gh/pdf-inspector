@@ -49,6 +49,15 @@ export interface AuditFinding {
   evidence: string | null;
   /** Suggested fix, or `null` when the finding is diagnostic only. */
   recommendation: string | null;
+  /**
+   * Stable identity of the finding: 32 lowercase hex characters.
+   *
+   * Computed by the engine from `category`, `title`, `detail` and `evidence`
+   * only, so moving a finding to another page, changing its severity or
+   * rewording its recommendation does not change it. Reports produced before
+   * fingerprints existed omit the field; the CLI fills it in for a baseline.
+   */
+  fingerprint?: string;
 }
 
 export interface AuditDocumentInfo {
@@ -91,6 +100,92 @@ export interface AuditReport {
   document: AuditDocumentInfo;
   summary: AuditSummary;
   findings: AuditFinding[];
+}
+
+/**
+ * How one current finding relates to a baseline report.
+ *
+ * `moved` means the same fingerprint appeared on a different page, `escalated`
+ * means a paired finding's severity rank rose (`info` < `warning` < `error`),
+ * and `fixed` only appears on a baseline finding that is no longer current.
+ * `waived` is reserved for an accepted waiver; S1 reports it as `0`.
+ */
+export type AuditBaselineStatus =
+  | 'new'
+  | 'existing'
+  | 'moved'
+  | 'escalated'
+  | 'fixed'
+  | 'waived';
+
+/**
+ * One accepted waiver that suppressed a finding (see `sidecar/waivers.py`).
+ *
+ * `page` is omitted when the waiver applies to the fingerprint on any page;
+ * `expires` is the last day the waiver is valid (`YYYY-MM-DD`, inclusive).
+ */
+export interface AuditBaselineWaiver {
+  fingerprint: string;
+  page?: number | null;
+  reason: string;
+  expires: string;
+}
+
+/** Waiver bookkeeping of one comparison: applied, expired and unused entries. */
+export interface AuditBaselineWaiverCounts {
+  applied: number;
+  expired: number;
+  unused: number;
+}
+
+/** Per-status counts of a `BaselineComparison`, in contract order. */
+export interface AuditBaselineCounts {
+  new: number;
+  existing: number;
+  moved: number;
+  escalated: number;
+  fixed: number;
+  waived: number;
+}
+
+/** Page and finding totals for one side of a comparison. */
+export interface AuditBaselineSideSummary {
+  pages: number;
+  findings: number;
+}
+
+/**
+ * One compared finding: the current finding (or `null` for `fixed`) plus the
+ * matched baseline finding (or `null` for `new`). Both carry the full
+ * `AuditFinding` so a consumer never has to re-read either report.
+ */
+export interface AuditBaselineFinding {
+  status: AuditBaselineStatus;
+  fingerprint: string;
+  current: AuditFinding | null;
+  baseline: AuditFinding | null;
+  /**
+   * The waiver that accepted this finding, when one applied. Only `waived`
+   * entries carry it; older producers omit the field.
+   */
+  waiver?: AuditBaselineWaiver | null;
+}
+
+/**
+ * The `--baseline-output` payload (see `sidecar/baseline.py`).
+ *
+ * Deterministic: current findings appear in report order, then fixed baseline
+ * findings in baseline order; no timestamps or absolute paths are included.
+ */
+export interface AuditBaselineComparison {
+  schemaVersion: 1;
+  tool: AuditTool;
+  current: AuditBaselineSideSummary;
+  baseline: AuditBaselineSideSummary;
+  summary: AuditBaselineCounts;
+  findings: AuditBaselineFinding[];
+  /** Waiver bookkeeping; only producers that loaded a waiver file set it. */
+  waivers?: AuditBaselineWaiverCounts;
 }
 
 /**

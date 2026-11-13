@@ -18,6 +18,7 @@ import audit  # noqa: E402
 from audit import (  # noqa: E402
     AUDIT_CATEGORIES,
     FINDING_KEYS,
+    FINGERPRINT_KEY,
     accessibility_findings,
     accessibility_report,
     audit_document,
@@ -816,7 +817,7 @@ def test_findings_follow_the_audit_contract_and_are_sorted():
     assert findings == audit.sort_findings(findings)
     assert len(findings) == len({audit._sort_key(finding) for finding in findings})
     for finding in findings:
-        assert set(finding) == set(FINDING_KEYS)
+        assert set(finding) == set(FINDING_KEYS) | {FINGERPRINT_KEY}
         assert finding["category"] in AUDIT_CATEGORIES
         assert finding["category"] == "structure"
         assert finding["severity"] in {"error", "warning", "info"}

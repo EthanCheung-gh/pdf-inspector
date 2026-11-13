@@ -617,6 +617,167 @@ jobs:
           grep -q 'PDF audit report' audit-artifacts/report.html
           echo "HTML report: $(wc -c < audit-artifacts/report.html) bytes"
 
+      - name: Generate an audit baseline from the sample PDF (expect exit 0)
+        run: |
+          set -euo pipefail
+
+          set +e
+          python sidecar/cli.py audit web-samples/basic.pdf \
+            --format json \
+            --output audit-artifacts/audit-baseline.json \
+            --fail-on none
+          code=$?
+          set -e
+
+          echo "pdf-inspector exited with $code"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::expected exit 0 while generating the baseline, got $code"
+            exit 1
+          fi
+          test -s audit-artifacts/audit-baseline.json
+
+      - name: Re-audit against the baseline (expect exit 0 and no new findings)
+        run: |
+          set -euo pipefail
+
+          set +e
+          python sidecar/cli.py audit web-samples/basic.pdf \
+            --format json \
+            --output audit-artifacts/audit-current.json \
+            --baseline audit-artifacts/audit-baseline.json \
+            --baseline-output audit-artifacts/audit-comparison.json \
+            --fail-on warning
+          code=$?
+          set -e
+
+          echo "pdf-inspector exited with $code"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::expected exit 0 for an unchanged document, got $code"
+            exit 1
+          fi
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(
+              Path('audit-artifacts/audit-comparison.json').read_text(encoding='utf-8')
+          )
+          summary = data['summary']
+          assert data['current'] == data['baseline'], data
+          assert summary['new'] == 0, summary
+          assert summary['escalated'] == 0, summary
+          assert summary['moved'] == 0, summary
+          assert summary['fixed'] == 0, summary
+          assert summary['existing'] == data['current']['findings'], summary
+          assert summary['waived'] == 0, summary
+          print('baseline comparison OK:', summary)
+          PY
+
+      - name: Emit SARIF for code scanning (expect exit 0)
+        # A repository-relative input path keeps artifactLocation.uri relative,
+        # which is what code scanning expects.
+        run: |
+          set -euo pipefail
+
+          set +e
+          python sidecar/cli.py audit web-samples/basic.pdf \
+            --format sarif \
+            --output audit-artifacts/audit.sarif \
+            --baseline audit-artifacts/audit-baseline.json \
+            --fail-on none
+          code=$?
+          set -e
+
+          echo "pdf-inspector exited with $code"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::expected exit 0 while writing SARIF, got $code"
+            exit 1
+          fi
+          test -s audit-artifacts/audit.sarif
+
+      - name: Assert the audit SARIF 2.1.0 structure
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path('audit-artifacts/audit.sarif').read_text(encoding='utf-8'))
+          assert data['$schema'] == 'https://json.schemastore.org/sarif-2.1.0.json'
+          assert data['version'] == '2.1.0', data['version']
+          assert len(data['runs']) == 1, len(data['runs'])
+
+          run = data['runs'][0]
+          assert run['columnKind'] == 'utf16CodeUnits', run['columnKind']
+          driver = run['tool']['driver']
+          assert driver['name'] == 'pdf-inspector', driver['name']
+          assert driver['rules'], 'no SARIF rules'
+
+          rule_ids = [rule['id'] for rule in driver['rules']]
+          assert rule_ids == sorted(rule_ids), rule_ids
+          assert len(rule_ids) == len(set(rule_ids)), rule_ids
+
+          results = run['results']
+          assert results, 'no SARIF results'
+          located = 0
+          for result in results:
+              assert result['ruleId'] in rule_ids, result
+              assert driver['rules'][result['ruleIndex']]['id'] == result['ruleId'], result
+              assert result['level'] in {'error', 'warning', 'note'}, result
+              assert result['message']['text'], result
+              fingerprint = result['partialFingerprints']['pdfInspectorFinding/v1']
+              assert len(fingerprint) == 32, result
+              # The baseline was generated from the same PDF.
+              assert result['baselineState'] == 'unchanged', result
+              # A document-level finding has no location; a page finding must
+              # keep the repository-relative uri it was invoked with.
+              if 'locations' in result:
+                  located += 1
+                  location = result['locations'][0]['physicalLocation']
+                  assert location['artifactLocation']['uri'] == 'web-samples/basic.pdf', location
+                  assert location['region']['startPage'] >= 1, location
+          assert located, 'no page-level SARIF result to check'
+
+          print('audit SARIF OK:', len(results), 'result(s),', len(rule_ids), 'rule(s)')
+          PY
+
+      - name: Assert the SARIF output is deterministic
+        run: |
+          set -euo pipefail
+
+          python sidecar/cli.py audit web-samples/basic.pdf \
+            --format sarif \
+            --output audit-artifacts/audit-repeat.sarif \
+            --baseline audit-artifacts/audit-baseline.json \
+            --fail-on none
+          if ! cmp -s audit-artifacts/audit.sarif audit-artifacts/audit-repeat.sarif; then
+            echo "::error::two SARIF runs over the same input differ"
+            exit 1
+          fi
+          echo "SARIF is byte-identical across runs"
+
+      - name: Reject --sarif-uri without --format sarif (expect exit 2)
+        run: |
+          set -euo pipefail
+
+          set +e
+          python sidecar/cli.py audit web-samples/basic.pdf \
+            --format json \
+            --output audit-artifacts/sarif-uri-mismatch.json \
+            --sarif-uri docs/basic.pdf
+          code=$?
+          set -e
+
+          echo "pdf-inspector exited with $code"
+          if [ "$code" -ne 2 ]; then
+            echo "::error::expected exit 2 for --sarif-uri with --format json, got $code"
+            exit 1
+          fi
+          if [ -e audit-artifacts/sarif-uri-mismatch.json ]; then
+            echo "::error::a rejected invocation must not write a payload"
+            exit 1
+          fi
+
       - name: Upload audit artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -1068,3 +1229,72 @@ jobs:
           test -f "$REPORT_PATH"
           test -s "$REPORT_PATH"
           grep -q '<!DOCTYPE html>' "$REPORT_PATH"
+
+      - name: Audit a sample PDF to SARIF through the action (expect success)
+        id: sarif
+        uses: ./audit
+        with:
+          path: web-samples/basic.pdf
+          fail-on: none
+          format: sarif
+          sarif-path: audit-artifacts/action.sarif
+
+      - name: Assert the action wrote a parsable SARIF payload
+        env:
+          EXIT_CODE: ${{ steps.sarif.outputs.exit-code }}
+          SARIF_PATH: ${{ steps.sarif.outputs.sarif-path }}
+        run: |
+          set -euo pipefail
+          echo "exit-code=$EXIT_CODE sarif-path=$SARIF_PATH"
+          test "$EXIT_CODE" = "0"
+          test -n "$SARIF_PATH"
+          test -f "$SARIF_PATH"
+          test -s "$SARIF_PATH"
+
+          python - "$SARIF_PATH" <<'PY'
+          import json
+          import sys
+
+          data = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert data['$schema'] == 'https://json.schemastore.org/sarif-2.1.0.json'
+          assert data['version'] == '2.1.0', data['version']
+
+          run = data['runs'][0]
+          driver = run['tool']['driver']
+          assert driver['name'] == 'pdf-inspector', driver['name']
+          rules = {rule['id'] for rule in driver['rules']}
+          results = run['results']
+          assert rules, 'no SARIF rules'
+          assert results, 'no SARIF results'
+          for result in results:
+              assert result['ruleId'] in rules, result
+              assert result['level'] in {'error', 'warning', 'note'}, result
+              assert result['message']['text'], result
+              assert result['partialFingerprints']['pdfInspectorFinding/v1'], result
+          print('action SARIF OK:', len(results), 'result(s)')
+          PY
+
+      - name: Audit with a missing baseline through the action (expected failure)
+        id: missing-baseline
+        continue-on-error: true
+        uses: ./audit
+        with:
+          path: web-samples/basic.pdf
+          fail-on: none
+          format: sarif
+          sarif-path: audit-artifacts/missing-baseline.sarif
+          baseline-path: audit-artifacts/does-not-exist.json
+
+      - name: Assert the rejected baseline failed before any payload was written
+        env:
+          OUTCOME: ${{ steps.missing-baseline.outcome }}
+        run: |
+          set -euo pipefail
+          echo "outcome=$OUTCOME"
+          # The input validation step rejects the missing file: the step fails
+          # (before Python is installed) and no SARIF payload is left behind.
+          test "$OUTCOME" = "failure"
+          if [ -e audit-artifacts/missing-baseline.sarif ]; then
+            echo "::error::a rejected baseline must not produce a payload"
+            exit 1
+          fi

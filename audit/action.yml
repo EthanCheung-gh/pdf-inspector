@@ -1,8 +1,8 @@
 name: PDF Inspector Audit
 description: >-
   Audit a local PDF for font, page, image, metadata, structure and security
-  findings, write JSON/HTML reports and fail the step when findings match the
-  configured severity threshold.
+  findings, write JSON/HTML/SARIF reports and fail the step when findings match
+  the configured severity threshold.
 
 branding:
   icon: shield
@@ -17,27 +17,61 @@ inputs:
   fail-on:
     description: >-
       Which findings fail the step: error, warning or none. "warning" fails on
-      warnings and errors, "error" only on errors, "none" always exits 0.
+      warnings and errors, "error" only on errors, "none" always exits 0. With
+      baseline-path only new or escalated findings count.
     required: false
     default: error
   format:
     description: >-
       Primary output used for the step summary and default artifact path:
-      summary, json or html. JSON/HTML payloads are written to files, not the log.
+      summary, json, html or sarif. JSON/HTML/SARIF payloads are written to
+      files, not the log.
     required: false
     default: summary
   json-path:
     description: >-
       Where to write the JSON AuditReport. Defaults to the runner temp directory
       when format is json; set it explicitly to keep JSON alongside a
-      summary/html run (that adds one extra CLI pass).
+      summary/html/sarif run (that adds one extra CLI pass).
     required: false
     default: ''
   report-path:
     description: >-
       Where to write the standalone HTML report. Defaults to the runner temp
       directory when format is html; set it explicitly to keep HTML alongside a
-      summary/json run (that adds one extra CLI pass).
+      summary/json/sarif run (that adds one extra CLI pass).
+    required: false
+    default: ''
+  baseline-path:
+    description: >-
+      Previous audit report (JSON) to compare against. Local file only; a
+      missing file or an http(s) URL fails the step with exit code 2. Only new
+      or escalated findings count for fail-on.
+    required: false
+    default: ''
+  baseline-output-path:
+    description: >-
+      Where to write the baseline comparison JSON (requires baseline-path).
+    required: false
+    default: ''
+  waivers-path:
+    description: >-
+      Expiring waiver policy (JSON) whose accepted findings never fail the step.
+      Local file only; expired entries are reported on stderr.
+    required: false
+    default: ''
+  sarif-path:
+    description: >-
+      Where to write the SARIF 2.1.0 payload. Defaults to the runner temp
+      directory when format is sarif; set it explicitly to keep SARIF alongside a
+      summary/json/html run (that adds one extra CLI pass).
+    required: false
+    default: ''
+  sarif-uri:
+    description: >-
+      artifactLocation.uri used by the SARIF payload (default: the path input).
+      Use a repository-relative path so code scanning resolves the file. Only
+      valid with format sarif.
     required: false
     default: ''
   python-version:
@@ -63,6 +97,12 @@ outputs:
       stay workspace-relative), or empty when no HTML artifact was requested or
       produced.
     value: ${{ steps.audit.outputs.report-path }}
+  sarif-path:
+    description: >-
+      Path of the SARIF 2.1.0 payload written by this run (as given, so relative
+      inputs stay workspace-relative), or empty when no SARIF artifact was
+      requested or produced.
+    value: ${{ steps.audit.outputs.sarif-path }}
 
 runs:
   using: composite
@@ -74,6 +114,13 @@ runs:
         INPUT_PATH: ${{ inputs.path }}
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
         INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_JSON_PATH: ${{ inputs.json-path }}
+        INPUT_REPORT_PATH: ${{ inputs.report-path }}
+        INPUT_BASELINE_PATH: ${{ inputs.baseline-path }}
+        INPUT_BASELINE_OUTPUT_PATH: ${{ inputs.baseline-output-path }}
+        INPUT_WAIVERS_PATH: ${{ inputs.waivers-path }}
+        INPUT_SARIF_PATH: ${{ inputs.sarif-path }}
+        INPUT_SARIF_URI: ${{ inputs.sarif-uri }}
       run: |
         set -euo pipefail
 
@@ -105,11 +152,70 @@ runs:
         esac
 
         case "$INPUT_FORMAT" in
-          summary | json | html) ;;
+          summary | json | html | sarif) ;;
           *)
-            error "input 'format' must be one of summary, json, html (got '$INPUT_FORMAT')"
+            error "input 'format' must be one of summary, json, html, sarif (got '$INPUT_FORMAT')"
             ;;
         esac
+
+        # A JSON baseline/waiver file must exist locally: a URL would turn the
+        # comparison into a network fetch, and a missing file usually means a
+        # checkout or path bug that must fail before the audit runs.
+        check_local_json() {
+          local name="$1" value="$2" lowered
+          [ -n "$value" ] || return 0
+          lowered="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+          case "$lowered" in
+            http://* | https://*)
+              error "input '$name' must be a local path, not a URL: $value (remote inputs are not supported)"
+              ;;
+          esac
+          if [ ! -f "$value" ]; then
+            error "input '$name' file not found (relative to $PWD): $value"
+          fi
+        }
+
+        check_local_json baseline-path "$INPUT_BASELINE_PATH"
+        check_local_json waivers-path "$INPUT_WAIVERS_PATH"
+
+        if [ -n "$INPUT_BASELINE_OUTPUT_PATH" ] && [ -z "$INPUT_BASELINE_PATH" ]; then
+          error "input 'baseline-output-path' requires 'baseline-path'"
+        fi
+
+        # The comparison artifact and the report artifacts are separate outputs:
+        # if two of them name the same file, the later write silently replaces
+        # the earlier one (the secondary pass could even overwrite the primary
+        # payload). Compare the configured paths textually, without resolving
+        # symlinks, so the check stays deterministic and never depends on what
+        # happens to exist on disk yet.
+        normalize_path() {
+          local value="$1"
+          while [ "${value#./}" != "$value" ]; do
+            value="${value#./}"
+          done
+          while [ "${value%/}" != "$value" ]; do
+            value="${value%/}"
+          done
+          printf '%s' "$value"
+        }
+
+        check_distinct_from_comparison() {
+          local name="$1" value="$2"
+          [ -n "$value" ] || return 0
+          if [ "$(normalize_path "$value")" = "$(normalize_path "$INPUT_BASELINE_OUTPUT_PATH")" ]; then
+            error "input 'baseline-output-path' must differ from input '$name': both are $INPUT_BASELINE_OUTPUT_PATH"
+          fi
+        }
+
+        if [ -n "$INPUT_BASELINE_OUTPUT_PATH" ]; then
+          check_distinct_from_comparison json-path "$INPUT_JSON_PATH"
+          check_distinct_from_comparison report-path "$INPUT_REPORT_PATH"
+          check_distinct_from_comparison sarif-path "$INPUT_SARIF_PATH"
+        fi
+
+        if [ -n "$INPUT_SARIF_URI" ] && [ "$INPUT_FORMAT" != "sarif" ]; then
+          error "input 'sarif-uri' requires format 'sarif' (got '$INPUT_FORMAT')"
+        fi
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -138,6 +244,11 @@ runs:
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_JSON_PATH: ${{ inputs.json-path }}
         INPUT_REPORT_PATH: ${{ inputs.report-path }}
+        INPUT_BASELINE_PATH: ${{ inputs.baseline-path }}
+        INPUT_BASELINE_OUTPUT_PATH: ${{ inputs.baseline-output-path }}
+        INPUT_WAIVERS_PATH: ${{ inputs.waivers-path }}
+        INPUT_SARIF_PATH: ${{ inputs.sarif-path }}
+        INPUT_SARIF_URI: ${{ inputs.sarif-uri }}
         RUNNER_TEMP_DIR: ${{ runner.temp }}
       run: |
         set -uo pipefail
@@ -152,6 +263,11 @@ runs:
         format="$INPUT_FORMAT"
         json_path="$INPUT_JSON_PATH"
         report_path="$INPUT_REPORT_PATH"
+        sarif_path="$INPUT_SARIF_PATH"
+        baseline_path="$INPUT_BASELINE_PATH"
+        baseline_output_path="$INPUT_BASELINE_OUTPUT_PATH"
+        waivers_path="$INPUT_WAIVERS_PATH"
+        sarif_uri="$INPUT_SARIF_URI"
 
         ensure_parent() {
           local path="$1" parent
@@ -161,40 +277,73 @@ runs:
         }
 
         # Default artifacts live in the runner temp directory so nothing is
-        # written into the repository; callers override with json-path/report-path.
+        # written into the repository; callers override with json-path/
+        # report-path/sarif-path.
         if [ -z "$json_path" ] && [ "$format" = "json" ]; then
           json_path="${RUNNER_TEMP_DIR}/pdf-inspector-audit.json"
         fi
         if [ -z "$report_path" ] && [ "$format" = "html" ]; then
           report_path="${RUNNER_TEMP_DIR}/pdf-inspector-audit-report.html"
         fi
+        if [ -z "$sarif_path" ] && [ "$format" = "sarif" ]; then
+          sarif_path="${RUNNER_TEMP_DIR}/pdf-inspector-audit.sarif"
+        fi
 
         primary_output=""
         case "$format" in
           json) primary_output="$json_path" ;;
           html) primary_output="$report_path" ;;
+          sarif) primary_output="$sarif_path" ;;
         esac
         ensure_parent "$primary_output"
+        ensure_parent "$baseline_output_path"
         # A stale payload from an earlier step in the same job must not mask a
         # run that never wrote its output.
         if [ -n "$primary_output" ]; then
           rm -f -- "$primary_output"
         fi
 
-        args=(audit "$INPUT_PATH" --format "$format" --fail-on "$fail_on")
-        if [ -n "$primary_output" ]; then
-          args+=(--output "$primary_output")
-        fi
+        # One CLI pass. The baseline, the waiver policy, the comparison artifact
+        # and the SARIF uri are appended to *every* pass: a primary summary and a
+        # secondary JSON/SARIF artifact must describe the same comparison, or the
+        # gate and the artifacts disagree.
+        run_pass() {
+          local pass_format="$1" pass_fail_on="$2"
+          shift 2
+          local pass_args=(audit "$INPUT_PATH" --format "$pass_format" --fail-on "$pass_fail_on")
+          if [ -n "$baseline_path" ]; then
+            pass_args+=(--baseline "$baseline_path")
+            if [ -n "$baseline_output_path" ]; then
+              pass_args+=(--baseline-output "$baseline_output_path")
+            fi
+          fi
+          if [ -n "$waivers_path" ]; then
+            pass_args+=(--waivers "$waivers_path")
+          fi
+          if [ "$pass_format" = "sarif" ] && [ -n "$sarif_uri" ]; then
+            pass_args+=(--sarif-uri "$sarif_uri")
+          fi
+          if [ "$#" -gt 0 ]; then
+            pass_args+=("$@")
+          fi
+          echo "::group::python ${cli} ${pass_args[*]}"
+          # GitHub's bash shell enables `-e`; a non-zero audit exit is expected
+          # when --fail-on matches, so the caller captures it instead of aborting
+          # before the action outputs are written.
+          python "$cli" "${pass_args[@]}"
+          local status=$?
+          echo "::endgroup::"
+          return "$status"
+        }
 
-        echo "::group::python ${cli} ${args[*]}"
-        # GitHub's bash shell enables `-e`; a non-zero audit exit is expected
-        # when --fail-on matches, so capture it instead of aborting before the
-        # action outputs are written.
         set +e
-        python "$cli" "${args[@]}"
+        if [ -n "$primary_output" ]; then
+          run_pass "$format" "$fail_on" --output "$primary_output"
+        else
+          run_pass "$format" "$fail_on"
+        fi
         exit_code=$?
         set -e
-        echo "::endgroup::"
 
         # A run that was asked for a payload file must leave one behind; a
         # missing file usually means the Python environment is broken, and an
@@ -204,15 +353,14 @@ runs:
           exit 2
         fi
 
-        # json-path/report-path may name the artifact of the *other* format;
-        # produce it with a quiet, non-failing second pass.
+        # json-path/report-path/sarif-path may name the artifact of the *other*
+        # format; produce it with a quiet, non-failing second pass.
         secondary_exit=0
         write_secondary() {
           local payload_format="$1" path="$2"
           [ -n "$path" ] || return 0
           ensure_parent "$path"
-          python "$cli" audit "$INPUT_PATH" \
-            --format "$payload_format" --output "$path" --fail-on none --quiet
+          run_pass "$payload_format" none --output "$path" --quiet
         }
 
         if [ "$format" != "json" ] && [ -n "$INPUT_JSON_PATH" ]; then
@@ -237,11 +385,23 @@ runs:
             report_path=""
           fi
         fi
+        if [ "$format" != "sarif" ] && [ -n "$INPUT_SARIF_PATH" ]; then
+          set +e
+          write_secondary sarif "$sarif_path"
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            secondary_exit=$status
+            echo "::error::failed to write the SARIF payload to $sarif_path"
+            sarif_path=""
+          fi
+        fi
 
         {
           echo "exit-code=$exit_code"
           echo "json-path=$json_path"
           echo "report-path=$report_path"
+          echo "sarif-path=$sarif_path"
         } >> "$GITHUB_OUTPUT"
 
         {
@@ -252,11 +412,23 @@ runs:
           echo "| exit code | \`$exit_code\` |"
           echo "| fail-on | \`$fail_on\` |"
           echo "| format | \`$format\` |"
+          if [ -n "$baseline_path" ]; then
+            echo "| baseline | \`$baseline_path\` |"
+          fi
+          if [ -n "$waivers_path" ]; then
+            echo "| waivers | \`$waivers_path\` |"
+          fi
+          if [ -n "$baseline_output_path" ]; then
+            echo "| baseline comparison | \`$baseline_output_path\` |"
+          fi
           if [ -n "$json_path" ]; then
             echo "| JSON | \`$json_path\` |"
           fi
           if [ -n "$report_path" ]; then
             echo "| HTML | \`$report_path\` |"
+          fi
+          if [ -n "$sarif_path" ]; then
+            echo "| SARIF | \`$sarif_path\` |"
           fi
         } >> "$GITHUB_STEP_SUMMARY"
 

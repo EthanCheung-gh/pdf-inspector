@@ -7,7 +7,20 @@ so PDF text such as ``<script>`` can never become markup, and identical
 ``AuditReport`` input renders byte-identical output (CI artifact friendly).
 
 ``format_audit_summary`` is the human text the CLI prints; ``render_audit_html``
-is the single-file report written by ``--format html``.
+is the single-file report written by ``--format html``.  Both accept an optional
+``BaselineComparison`` (see :mod:`sidecar.baseline`): the summary appends one
+``baseline: ...`` line and the HTML adds a ``Baseline`` section with the status
+counts and one status badge per compared finding.  Without a comparison the
+output is byte-identical to the report-only rendering.
+
+Both also accept an optional :class:`sidecar.waivers.WaiverApplication` (or any
+mapping with ``applied``/``expired``/``unused``): the summary appends exactly one
+``waivers: N applied, N expired, N unused`` line and the HTML adds an escaped
+``Waivers`` section listing the reason and expiry date of every applied or
+expired waiver, plus a ``waived`` badge on each waived finding.  The waiver file
+path is never rendered, only the policy facts, and the output stays
+deterministic and script-free.  Without waivers the output is byte-identical to
+the pre-waiver rendering.
 
 The summary shows at most ``MAX_SUMMARY_FINDINGS`` findings and orders them
 severity-first (error, then warning, then info) before truncating, so a long
@@ -19,7 +32,7 @@ text stays deterministic.  The HTML report lists every finding in report order.
 from __future__ import annotations
 
 import html
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 # Findings listed in the plain-text summary before the rest is counted.
 MAX_SUMMARY_FINDINGS = 20
@@ -36,6 +49,34 @@ SEVERITY_FIELDS = (
 # ``format_audit_summary`` truncation order: errors first, then warnings, info.
 # Unknown severities sort last; the sort is stable, so report order survives.
 SEVERITY_ORDER = {'error': 0, 'warning': 1, 'info': 2}
+
+# Status order of a ``BaselineComparison`` summary, shared by text and HTML.
+BASELINE_STATUSES = ('new', 'existing', 'moved', 'escalated', 'fixed', 'waived')
+
+# Only appended to the inline stylesheet when a baseline is rendered, so the
+# report-only HTML stays byte-identical.
+_BASELINE_CSS = """
+table.baseline-table th { width: 180px; }
+ul.baseline-findings { margin: 0; padding: 0; list-style: none; }
+li.baseline-finding { margin: 0 0 6px; padding: 6px 10px; background: #fbfcfe; border: 1px solid #e1e5ec; border-radius: 6px; }
+.badge-baseline-new { background: #fde8e8; color: #a02121; }
+.badge-baseline-existing { background: #eef0f4; color: #4a5261; }
+.badge-baseline-moved { background: #fdf3dd; color: #8a5b06; }
+.badge-baseline-escalated { background: #fde8e8; color: #7a1a1a; }
+.badge-baseline-fixed { background: #e7f5ea; color: #1f6b34; }
+.badge-baseline-waived { background: #eef0f4; color: #4a5261; }
+.badge-baseline-unknown { background: #eef0f4; color: #4a5261; }
+""".strip()
+
+# Only appended to the inline stylesheet when a waiver application is rendered,
+# so the no-waiver HTML stays byte-identical.
+_WAIVER_CSS = """
+table.waiver-table th { width: 180px; }
+ul.waiver-list { margin: 0; padding: 0; list-style: none; }
+li.waiver { margin: 0 0 6px; padding: 6px 10px; background: #fbfcfe; border: 1px solid #e1e5ec; border-radius: 6px; }
+.badge-waived { background: #eef0f4; color: #4a5261; }
+.badge-waiver-expired { background: #fde8e8; color: #a02121; }
+""".strip()
 
 _CSS = """
 :root { color-scheme: light; }
@@ -147,14 +188,18 @@ def _counts(report: Mapping[str, Any]) -> dict[str, int]:
     return counts
 
 
+def _page_number(finding: Mapping[str, Any]) -> Optional[int]:
+    page = finding.get('page')
+    try:
+        return None if page is None else int(page)
+    except (TypeError, ValueError):
+        return None
+
+
 def _finding_location(finding: Mapping[str, Any]) -> str:
     """``metadata, page 2`` or just the category for document-level findings."""
     category = _plain(finding.get('category')) or 'unknown'
-    page = finding.get('page')
-    try:
-        page_number = None if page is None else int(page)
-    except (TypeError, ValueError):
-        page_number = None
+    page_number = _page_number(finding)
     return f'{category}, page {page_number}' if page_number is not None else category
 
 
@@ -170,6 +215,100 @@ def _document_facts(document: Mapping[str, Any]) -> str:
 
 def _severity_rank(finding: Mapping[str, Any]) -> int:
     return SEVERITY_ORDER.get(_plain(finding.get('severity')), len(SEVERITY_ORDER))
+
+
+def _baseline_counts(baseline: Mapping[str, Any]) -> dict[str, int]:
+    """The six status counts of a comparison, recomputed from its findings.
+
+    ``summary`` is authoritative when present; a synthetic comparison without
+    one still renders correct counts by walking its ``findings``.
+    """
+    summary = baseline.get('summary')
+    if isinstance(summary, Mapping):
+        return {status: _fmt_int(summary.get(status)) for status in BASELINE_STATUSES}
+
+    counts = {status: 0 for status in BASELINE_STATUSES}
+    for entry in baseline.get('findings') or ():
+        if not isinstance(entry, Mapping):
+            continue
+        status = _text(entry.get('status'))
+        if status in counts:
+            counts[status] += 1
+    return counts
+
+
+def _baseline_line(baseline: Mapping[str, Any]) -> str:
+    counts = _baseline_counts(baseline)
+    parts = ', '.join(f'{counts[status]} {status}' for status in BASELINE_STATUSES)
+    return f'baseline: {parts}'
+
+
+# --- waiver view ------------------------------------------------------------
+
+
+def _waiver_field(source: Any, name: str) -> Any:
+    """One field of a waiver application, a waiver or a plain mapping."""
+    if isinstance(source, Mapping):
+        return source.get(name)
+    return getattr(source, name, None)
+
+
+def _waiver_counts(waivers: Any) -> dict[str, int]:
+    """``applied``/``expired``/``unused`` counts of a waiver application."""
+    applied = _waiver_field(waivers, 'applied')
+    return {
+        'applied': len(applied) if isinstance(applied, (Mapping, list, tuple)) else 0,
+        'expired': len(_waiver_sequence(waivers, 'expired')),
+        'unused': len(_waiver_sequence(waivers, 'unused')),
+    }
+
+
+def _waiver_sequence(waivers: Any, name: str) -> list[Any]:
+    value = _waiver_field(waivers, name)
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return []
+
+
+def _applied_items(waivers: Any) -> list[Any]:
+    """Applied waivers in current-finding order (deterministic)."""
+    applied = _waiver_field(waivers, 'applied')
+    if isinstance(applied, Mapping):
+        keys = [key for key in applied if isinstance(key, int) and not isinstance(key, bool)]
+        return [applied[key] for key in sorted(keys)]
+    if isinstance(applied, (list, tuple)):
+        return list(applied)
+    return []
+
+
+def _applied_indices(waivers: Any) -> frozenset[int]:
+    """Indices of the current findings a waiver accepted."""
+    applied = _waiver_field(waivers, 'applied')
+    if not isinstance(applied, Mapping):
+        return frozenset()
+    return frozenset(
+        key for key in applied if isinstance(key, int) and not isinstance(key, bool)
+    )
+
+
+def _waiver_expires(waiver: Any) -> str:
+    """The expiry date of a waiver as ``YYYY-MM-DD`` (a date or a string)."""
+    value = _waiver_field(waiver, 'expires')
+    if hasattr(value, 'isoformat'):
+        return _text(value.isoformat())
+    return _plain(value)
+
+
+def _waiver_reason(waiver: Any) -> str:
+    return _plain(_waiver_field(waiver, 'reason')) or '(no reason recorded)'
+
+
+def _waiver_line(waivers: Any) -> str:
+    counts = _waiver_counts(waivers)
+    return (
+        f'waivers: {counts["applied"]} applied, {counts["expired"]} expired, '
+        f'{counts["unused"]} unused'
+    )
 
 
 def prioritize_findings(
@@ -190,6 +329,8 @@ def prioritize_findings(
 def format_audit_summary(
     report: Mapping[str, Any],
     source_label: Any = None,
+    baseline: Optional[Mapping[str, Any]] = None,
+    waivers: Optional[Any] = None,
     *,
     max_findings: int = MAX_SUMMARY_FINDINGS,
 ) -> str:
@@ -200,6 +341,15 @@ def format_audit_summary(
     severity counts and the first ``max_findings`` findings after a severity-first
     sort, so errors and warnings are never hidden behind earlier ``info``
     findings; the remainder is reported as a count.
+
+    ``baseline`` is an optional ``BaselineComparison``: it adds exactly one
+    ``baseline: N new, N existing, ...`` line after the severity counts and
+    changes nothing else.
+
+    ``waivers`` is an optional waiver application.  When given, exactly one
+    ``waivers: N applied, N expired, N unused`` line follows the severity counts
+    (and the baseline line, when both are present).  The waiver file path is
+    never printed.
     """
     tool = report.get('tool') or {}
     version = _plain(tool.get('version')) or '0.0.0'
@@ -220,6 +370,10 @@ def format_audit_summary(
         f'summary: {counts["errors"]} errors, {counts["warnings"]} warnings, '
         f'{counts["info"]} info ({counts["total"]} total)'
     )
+    if isinstance(baseline, Mapping):
+        lines.append(_baseline_line(baseline))
+    if waivers is not None:
+        lines.append(_waiver_line(waivers))
 
     if not findings:
         lines.append(NO_FINDINGS_TEXT)
@@ -324,15 +478,20 @@ def _render_detail_rows(finding: Mapping[str, Any]) -> str:
     return f'<dl class="details">{"".join(rows)}</dl>'
 
 
-def _render_finding(finding: Mapping[str, Any], position: int) -> str:
+def _render_finding(
+    finding: Mapping[str, Any], position: int, *, waived: bool = False
+) -> str:
     severity = _text(finding.get('severity')) or 'unknown'
     css_kind = severity if severity in ('error', 'warning', 'info') else 'unknown'
     title = _text(finding.get('title')) or '(untitled finding)'
     detail = finding.get('detail')
 
+    badges = _badge(severity)
+    if waived:
+        badges += ' ' + _waived_badge()
     parts = [
         f'<li class="finding finding-{css_kind}" id="finding-{position}">',
-        f'<h3>{_esc(title)} {_badge(severity)}</h3>',
+        f'<h3>{_esc(title)} {badges}</h3>',
         f'<p class="meta">{_esc(_finding_location(finding))}</p>',
     ]
     if detail is not None and _text(detail).strip():
@@ -342,10 +501,16 @@ def _render_finding(finding: Mapping[str, Any], position: int) -> str:
     return ''.join(parts)
 
 
-def _render_findings_section(report: Mapping[str, Any]) -> str:
-    findings = [
-        item for item in report.get('findings') or () if isinstance(item, Mapping)
-    ]
+def _render_findings_section(
+    report: Mapping[str, Any],
+    waived_indices: frozenset[int] = frozenset(),
+) -> str:
+    raw_findings = report.get('findings') or ()
+    if not isinstance(raw_findings, Sequence) or isinstance(
+        raw_findings, (str, bytes)
+    ):
+        raw_findings = ()
+    findings = [item for item in raw_findings if isinstance(item, Mapping)]
     parts = [
         '<section id="findings">',
         '<h2>Findings</h2>',
@@ -353,8 +518,17 @@ def _render_findings_section(report: Mapping[str, Any]) -> str:
     ]
     if findings:
         parts.append('<ol class="findings">')
-        for position, finding in enumerate(findings, start=1):
-            parts.append(_render_finding(finding, position))
+        # ``waived_indices`` indexes the raw findings array (the same index the
+        # waiver application uses), so a non-Mapping entry must not shift the
+        # id or the badge of the findings that follow it.
+        for index, finding in enumerate(raw_findings):
+            if not isinstance(finding, Mapping):
+                continue
+            parts.append(
+                _render_finding(
+                    finding, index + 1, waived=index in waived_indices
+                )
+            )
         parts.append('</ol>')
     else:
         parts.append('<p class="empty">No audit findings.</p>')
@@ -362,14 +536,184 @@ def _render_findings_section(report: Mapping[str, Any]) -> str:
     return ''.join(parts)
 
 
-def render_audit_html(report: Mapping[str, Any]) -> str:
-    """Render a full, self-contained HTML audit report (inline CSS, no scripts)."""
+def _status_badge(status: Any) -> str:
+    value = _text(status) or 'unknown'
+    css_kind = value if value in BASELINE_STATUSES else 'unknown'
+    return f'<span class="badge badge-baseline-{css_kind}">{_esc(value)}</span>'
+
+
+def _waived_badge() -> str:
+    """The ``waived`` badge used for a finding accepted by a waiver."""
+    return '<span class="badge badge-waived">waived</span>'
+
+
+def _render_baseline_entry(entry: Mapping[str, Any]) -> str:
+    status = _text(entry.get('status')) or 'unknown'
+    current = entry.get('current')
+    baseline = entry.get('baseline')
+    finding = current if isinstance(current, Mapping) else baseline
+    if not isinstance(finding, Mapping):
+        finding = {}
+    location = _finding_location(finding)
+    title = _plain(finding.get('title')) or '(untitled finding)'
+
+    movement = ''
+    if isinstance(current, Mapping) and isinstance(baseline, Mapping):
+        old_page = _page_number(baseline)
+        new_page = _page_number(current)
+        if old_page is not None and new_page is not None and old_page != new_page:
+            movement = f' <span class="muted">p.{old_page} &rarr; p.{new_page}</span>'
+
+    waiver = ''
+    waiver_entry = entry.get('waiver')
+    if isinstance(waiver_entry, Mapping):
+        expires = _waiver_expires(waiver_entry)
+        note = _waiver_reason(waiver_entry)
+        if expires:
+            note += f' (expires {expires})'
+        waiver = f' <span class="muted">waiver: {_esc(note)}</span>'
+
+    return ''.join(
+        [
+            '<li class="baseline-finding">',
+            _status_badge(status),
+            f' <span class="mono">{_esc(location)}</span> ',
+            _esc(title),
+            movement,
+            waiver,
+            '</li>',
+        ]
+    )
+
+
+def _render_baseline_section(baseline: Any) -> str:
+    """The ``Baseline`` section, or ``''`` when no comparison was supplied."""
+    if not isinstance(baseline, Mapping):
+        return ''
+    counts = _baseline_counts(baseline)
+    rows = [
+        f'<tr><th scope="row">{_esc(status.capitalize())}</th>'
+        f'<td>{counts[status]}</td></tr>'
+        for status in BASELINE_STATUSES
+    ]
+    entries = [
+        item for item in baseline.get('findings') or () if isinstance(item, Mapping)
+    ]
+    parts = [
+        '<section id="baseline">',
+        '<h2>Baseline</h2>',
+        '<table class="baseline-table">',
+        '<caption>Findings compared to the baseline</caption>',
+        '<thead><tr><th>Status</th><th>Count</th></tr></thead>',
+        '<tbody>',
+        *rows,
+        '</tbody>',
+        '</table>',
+    ]
+    if entries:
+        parts.append('<ul class="baseline-findings">')
+        for entry in entries:
+            parts.append(_render_baseline_entry(entry))
+        parts.append('</ul>')
+    else:
+        parts.append('<p class="empty">No findings to compare.</p>')
+    parts.append('</section>')
+    return ''.join(parts)
+
+
+def _render_waiver_item(waiver: Any, state: str) -> str:
+    """One applied/expired waiver: badge, fingerprint, reason and expiry date."""
+    badge = (
+        _waived_badge()
+        if state == 'applied'
+        else '<span class="badge badge-waiver-expired">expired</span>'
+    )
+    fingerprint = _plain(_waiver_field(waiver, 'fingerprint'))
+    expires = _waiver_expires(waiver)
+    note = _waiver_reason(waiver)
+    if expires:
+        note += f' (expires {expires})'
+    fingerprint_html = (
+        f' <span class="mono">{_esc(fingerprint)}</span>' if fingerprint else ''
+    )
+    return ''.join(
+        [
+            f'<li class="waiver waiver-{_esc(state)}">',
+            badge,
+            fingerprint_html,
+            f' {_esc(note)}',
+            '</li>',
+        ]
+    )
+
+
+def _render_waivers_section(waivers: Any) -> str:
+    """The ``Waivers`` section, or ``''`` when no waiver application was given."""
+    if waivers is None:
+        return ''
+    counts = _waiver_counts(waivers)
+    rows = [
+        ('Applied', counts['applied']),
+        ('Expired', counts['expired']),
+        ('Unused', counts['unused']),
+    ]
+    applied = _applied_items(waivers)
+    expired = _waiver_sequence(waivers, 'expired')
+    parts = [
+        '<section id="waivers">',
+        '<h2>Waivers</h2>',
+        '<table class="waiver-table">',
+        '<caption>Expiring finding waivers</caption>',
+        '<thead><tr><th>State</th><th>Count</th></tr></thead>',
+        '<tbody>',
+        *[
+            f'<tr><th scope="row">{_esc(label)}</th><td>{count}</td></tr>'
+            for label, count in rows
+        ],
+        '</tbody>',
+        '</table>',
+    ]
+    if applied or expired:
+        parts.append('<ul class="waiver-list">')
+        for waiver in applied:
+            parts.append(_render_waiver_item(waiver, 'applied'))
+        for waiver in expired:
+            parts.append(_render_waiver_item(waiver, 'expired'))
+        parts.append('</ul>')
+    else:
+        parts.append('<p class="empty">No applied or expired waivers.</p>')
+    parts.append('</section>')
+    return ''.join(parts)
+
+
+def render_audit_html(
+    report: Mapping[str, Any],
+    baseline: Optional[Mapping[str, Any]] = None,
+    waivers: Optional[Any] = None,
+) -> str:
+    """Render a full, self-contained HTML audit report (inline CSS, no scripts).
+
+    ``baseline`` is an optional ``BaselineComparison``.  It adds a ``Baseline``
+    section (status counts and one badge per compared finding) and the small
+    stylesheet those badges need; every value is escaped like any other report
+    text, and the output stays deterministic.  Without a comparison the HTML is
+    byte-identical to the report-only rendering.
+
+    ``waivers`` is an optional waiver application.  It adds a ``Waivers``
+    section (applied/expired/unused counts plus the reason and expiry date of
+    every applied or expired waiver), a ``waived`` badge on each accepted
+    finding and the stylesheet those need.  The waiver file path is never
+    rendered, and without waivers the HTML is byte-identical to the pre-waiver
+    rendering.
+    """
     tool = report.get('tool') or {}
     version = _text(tool.get('version')) or '0.0.0'
     schema_version = _text(report.get('schemaVersion')) or '1'
     document = report.get('document') or {}
     if not isinstance(document, Mapping):
         document = {}
+    baseline_section = _render_baseline_section(baseline)
+    waiver_section = _render_waivers_section(waivers)
 
     lines = [
         '<!DOCTYPE html>',
@@ -380,6 +724,8 @@ def render_audit_html(report: Mapping[str, Any]) -> str:
         f'<title>PDF audit report - pdf-inspector {_esc(version)}</title>',
         '<style>',
         _CSS,
+        *([_BASELINE_CSS] if baseline_section else []),
+        *([_WAIVER_CSS] if waiver_section else []),
         '</style>',
         '</head>',
         '<body>',
@@ -390,7 +736,9 @@ def render_audit_html(report: Mapping[str, Any]) -> str:
         '</header>',
         _render_document_section(document),
         _render_summary_section(report),
-        _render_findings_section(report),
+        *([baseline_section] if baseline_section else []),
+        *([waiver_section] if waiver_section else []),
+        _render_findings_section(report, _applied_indices(waivers)),
         '<footer>',
         f'Generated by pdf-inspector {_esc(version)}. '
         'Deterministic report: no timestamps, no external assets, no scripts.',
@@ -403,6 +751,7 @@ def render_audit_html(report: Mapping[str, Any]) -> str:
 
 
 __all__ = [
+    'BASELINE_STATUSES',
     'MAX_SUMMARY_FINDINGS',
     'NO_FINDINGS_TEXT',
     'SEVERITY_FIELDS',

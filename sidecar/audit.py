@@ -9,6 +9,13 @@ category (``fonts``, ``pages``, ``images``, ``metadata``, ``structure``,
 ``security``), then page ascending (document-level findings first), then title,
 so two runs over the same file produce byte-identical JSON.
 
+Every finding also carries a stable ``fingerprint``: a hash of its category,
+title, detail and evidence only, so a baseline can recognise the same problem
+across runs even when it moved to another page or changed severity.  References
+to the finding's own page in those texts are normalised (``Page 3`` becomes
+``Page #``) before hashing; see :func:`finding_fingerprint`.  :mod:`baseline`
+compares reports by it.
+
 The ``structure`` category combines the original "not tagged" hint with the
 heuristic accessibility checks in :func:`accessibility_findings`, which consume
 the read-only resources collected by :mod:`accessibility`.  That inventory
@@ -37,6 +44,7 @@ Two implementation notes:
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from pathlib import Path
@@ -106,6 +114,12 @@ _CONTENT_KEYS = ('chars', 'words', 'rects', 'lines', 'curves', 'images', 'tables
 # reportlab-style subset tag in front of a BaseFont name.
 _SUBSET_PREFIX = re.compile(r'^[A-Z]{6}\+')
 
+# A page reference inside finding text: ``Page 7`` / ``page 7``.  Only the
+# finding's own page number is normalised before hashing (see
+# :func:`finding_fingerprint`), so page-scoped findings keep their identity when
+# the page moves.
+_PAGE_REFERENCE = re.compile(r'\b(Page|page)\s+(\d+)\b')
+
 FINDING_KEYS = (
     'category',
     'severity',
@@ -115,6 +129,14 @@ FINDING_KEYS = (
     'evidence',
     'recommendation',
 )
+
+# Stable finding identity, appended after the seven contract keys.
+FINGERPRINT_KEY = 'fingerprint'
+FINGERPRINT_VERSION = 'pdf-inspector-finding-v1'
+FINGERPRINT_LENGTH = 32
+
+# Every key ``_finding()`` emits: the seven fields above plus the fingerprint.
+FINDING_OUTPUT_KEYS = FINDING_KEYS + (FINGERPRINT_KEY,)
 
 
 class AuditError(ValueError):
@@ -189,6 +211,61 @@ def tool() -> dict[str, str]:
     return {'name': TOOL_NAME, 'version': tool_version()}
 
 
+def _normalize_page_reference(value: Any, page: Any) -> str:
+    """Replace references to the finding's own page with ``Page #``/``page #``.
+
+    Page-scoped checks embed the page number in their title and detail
+    (``Page 3 has a low-resolution image``), so a finding that moves to another
+    page would otherwise hash as a different finding and be reported as
+    new+fixed instead of moved.  Only the finding's own positive page number is
+    normalised and the case of the word is preserved; every other number is
+    hashed verbatim.  Document-level findings (``page`` ``None``) are unchanged.
+    """
+    text = _text(value)
+    if isinstance(page, bool) or not isinstance(page, int) or page < 1:
+        return text
+    expected = str(page)
+
+    def replace(match: re.Match) -> str:
+        if match.group(2) != expected:
+            return match.group(0)
+        return f'{match.group(1)} #'
+
+    return _PAGE_REFERENCE.sub(replace, text)
+
+
+def finding_fingerprint(finding: Mapping[str, Any]) -> str:
+    """Stable identity of one finding: 32 lowercase hex characters.
+
+    Only ``category``, ``title``, ``detail`` and ``evidence`` are hashed, so the
+    same problem keeps its identity when it moves to another page, when its
+    severity changes or when its recommendation is reworded.  ``page``,
+    ``severity`` and ``recommendation`` are deliberately excluded; a wording
+    change to a hashed field is a different finding and needs a fresh baseline.
+
+    References to the finding's own page in ``title``/``detail``/``evidence``
+    are normalised before hashing: ``Page 3`` becomes ``Page #`` and ``page 3``
+    becomes ``page #`` (the case of the word is preserved) when the finding is
+    on page 3.  A page-scoped check therefore keeps its identity when the page
+    moves, while a different page number mentioned in the same text is still
+    hashed verbatim, and a document-level finding is not normalised at all.
+
+    Missing values hash as the empty string (``None`` and ``''`` are the same
+    identity); no other normalisation is applied.  The version prefix is part of
+    the payload so an algorithm change can bump :data:`FINGERPRINT_VERSION` and
+    make stale baselines fail to match instead of matching wrongly.
+    """
+    page = finding.get('page')
+    payload = '\x1f'.join([
+        FINGERPRINT_VERSION,
+        _text(finding.get('category')),
+        _normalize_page_reference(finding.get('title'), page),
+        _normalize_page_reference(finding.get('detail'), page),
+        _normalize_page_reference(finding.get('evidence'), page),
+    ])
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()[:FINGERPRINT_LENGTH]
+
+
 def _finding(
     category: str,
     severity: str,
@@ -203,7 +280,7 @@ def _finding(
         raise ValueError(f'Unknown audit category: {category!r}')
     if severity not in AUDIT_SEVERITIES:
         raise ValueError(f'Unknown audit severity: {severity!r}')
-    return {
+    finding = {
         'category': category,
         'severity': severity,
         'page': None if page is None else int(page),
@@ -212,6 +289,10 @@ def _finding(
         'evidence': evidence,
         'recommendation': recommendation,
     }
+    # Computed last so every call site gets it without passing it around, and
+    # the fingerprint never feeds back into its own input.
+    finding[FINGERPRINT_KEY] = finding_fingerprint(finding)
+    return finding
 
 
 def _sort_key(finding: Mapping[str, Any]) -> tuple:
@@ -2017,6 +2098,10 @@ __all__ = [
     'AUDIT_SEVERITIES',
     'AuditError',
     'FINDING_KEYS',
+    'FINDING_OUTPUT_KEYS',
+    'FINGERPRINT_KEY',
+    'FINGERPRINT_LENGTH',
+    'FINGERPRINT_VERSION',
     'MIN_IMAGE_DPI',
     'PAGE_BATCH_SIZE',
     'SCHEMA_VERSION',
@@ -2026,6 +2111,7 @@ __all__ = [
     'audit_document',
     'audit_file',
     'audit_pages',
+    'finding_fingerprint',
     'security_findings',
     'security_report',
     'sort_findings',

@@ -28,6 +28,7 @@ import audit  # noqa: E402
 from audit import (  # noqa: E402
     AUDIT_CATEGORIES,
     FINDING_KEYS,
+    FINGERPRINT_KEY,
     AuditError,
     audit_document,
     audit_file,
@@ -304,7 +305,7 @@ def test_audit_file_matches_the_shared_report_schema(tmp_path):
     assert set(report["summary"]) == {"total", "errors", "warnings", "info"}
     assert report["document"]["pages"] == 1
     for finding in report["findings"]:
-        assert set(finding) == set(FINDING_KEYS)
+        assert set(finding) == set(FINDING_KEYS) | {FINGERPRINT_KEY}
         assert finding["category"] in AUDIT_CATEGORIES
         assert finding["severity"] in {"error", "warning", "info"}
         assert finding["page"] is None or isinstance(finding["page"], int)
