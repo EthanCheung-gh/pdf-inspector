@@ -30,7 +30,9 @@ from extractor import PdfExtractor  # noqa: E402
 
 
 def _multi_page(path: Path, texts) -> str:
-    canvas = rl_canvas.Canvas(str(path), pagesize=letter)
+    # invariant=1 keeps the info dictionary deterministic: metadata is compared
+    # by default, so a creation timestamp must not create documentChanges.
+    canvas = rl_canvas.Canvas(str(path), pagesize=letter, invariant=1)
     for text in texts:
         canvas.setFont('Helvetica', 12)
         canvas.drawString(100, 700, text)
@@ -41,7 +43,7 @@ def _multi_page(path: Path, texts) -> str:
 
 def _object_page(path: Path, image_path: str, header_right: str = 'Header B') -> str:
     """A page with text, a rect, a line, an image and a ruled table."""
-    canvas = rl_canvas.Canvas(str(path), pagesize=letter)
+    canvas = rl_canvas.Canvas(str(path), pagesize=letter, invariant=1)
     canvas.setFont('Helvetica', 10)
     canvas.drawString(60, 760, 'Body text')
     canvas.rect(50, 650, 300, 80)
@@ -62,7 +64,7 @@ def _png(path: Path, color) -> str:
 
 
 def _table_page(path: Path, header_right: str) -> str:
-    canvas = rl_canvas.Canvas(str(path), pagesize=letter)
+    canvas = rl_canvas.Canvas(str(path), pagesize=letter, invariant=1)
     canvas.rect(50, 650, 300, 80)
     canvas.line(200, 650, 200, 730)
     canvas.line(50, 690, 350, 690)

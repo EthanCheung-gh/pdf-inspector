@@ -32,8 +32,13 @@ from extractor import PdfExtractor  # noqa: E402
 
 
 def _multi_page(path: Path, draws, pagesize=letter) -> str:
-    """Build a PDF from one draw callback per page."""
-    canvas = rl_canvas.Canvas(str(path), pagesize=pagesize)
+    """Build a PDF from one draw callback per page.
+
+    ``invariant=1`` pins the info dict, so two fixtures built at different times
+    never differ by a CreationDate/ModDate timestamp (the engine compares
+    document metadata as of R2).
+    """
+    canvas = rl_canvas.Canvas(str(path), pagesize=pagesize, invariant=1)
     for draw in draws:
         draw(canvas)
         canvas.showPage()

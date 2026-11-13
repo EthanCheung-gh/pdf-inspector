@@ -92,7 +92,9 @@ def _page(canvas, text: str, x: float) -> None:
 
 
 def _pdf(path: Path, pages) -> str:
-    canvas = rl_canvas.Canvas(str(path), pagesize=letter)
+    # invariant=1 keeps the info dictionary deterministic: metadata is compared
+    # by default, so a creation timestamp must not create documentChanges.
+    canvas = rl_canvas.Canvas(str(path), pagesize=letter, invariant=1)
     for text, x in pages:
         _page(canvas, text, x)
     canvas.save()

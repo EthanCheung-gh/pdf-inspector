@@ -25,8 +25,9 @@ objects are paired, so removing one restores exactly the masked changes.
 Two passes keep the work proportional to what changed:
 
 * the *signature* pass (:func:`_page_signature`) hashes a page's geometry, its
-  content streams and its resources straight from pdfminer objects — no
-  pdfplumber layout, no object extraction — and also yields the page size;
+  content streams, its resources and its ``/Annots`` straight from pdfminer
+  objects — no pdfplumber layout, no object extraction — and also yields the
+  page size;
 * the *diff* pass extracts a page pair only when their signatures differ, and
   asks ``PdfExtractor.extract_page`` only for the object types that are neither
   ignored nor excluded.
@@ -38,7 +39,42 @@ A run stops growing at :data:`MAX_DIFF_CHANGES` changes.  The cap exists so a
 pathological pair (a whole page rewritten, character-level diffs of a long text
 PDF) cannot produce an unbounded JSON payload; the result then reports
 ``truncated: true`` and ``summary.changesTruncated: true`` instead of silently
-looking complete.
+looking complete.  The collector's own caps (per-page/all-document annotation
+limits, form limits, metadata/page-label limits) use the same flags and add
+``summary.resourcesTruncated: true``: a capped resource block never reports a
+clean comparison either.
+
+Document resources
+------------------
+
+:mod:`sidecar.diff_resources` collects annotations, links, form widgets, the
+info dictionary and ``/PageLabels`` without rendering or opening anything.  The
+diff compares them on top of the object diff:
+
+* annotations/links/form widgets are paired per aligned page by the collector's
+  stable identity, and their differences join the *same* ``pages[].changes``
+  list with ``type`` ``annotation``/``link``/``form``.  They therefore share page
+  grouping, ignore-region masking (only entries with a BBox can be masked) and
+  the change cap, but they never enter the object counters: the summary counts
+  them as ``resourcesAdded``/``resourcesRemoved``/``resourcesModified``/
+  ``resourcesMoved``.
+* metadata and page labels become ``documentChanges`` entries
+  (``type`` ``metadata``/``page-label``) instead of page changes, so a
+  metadata-only edit leaves every page ``unchanged``.  ``page-label`` entries
+  carry the 1-based page number and are never duplicated into a page's changes.
+* the page fast path requires *both* an equal page signature and an equal
+  ``page_resource_digest``, so identical objects with edited annotations are
+  still reported (and marked ``changed``) instead of being skipped.
+
+An identity that already embeds the rect (every identity except ``/NM`` ones,
+including every form identity) changes when the resource moves, so such a move
+is reported as one removed plus one added resource rather than ``moved``.  That
+is deliberate: guessing a positional match could merge unrelated resources.
+
+The new payload fields are additive and optional: ``documentChanges`` and the
+``summary`` resource counters are only present when the run actually compared
+resources and found something, so an object-only result keeps its historical
+shape.  ``schemaVersion`` stays ``1``.
 """
 
 from __future__ import annotations
@@ -60,6 +96,11 @@ try:  # imported as ``sidecar.diff`` (namespace package)
 except ImportError:  # executed as a script with ``sidecar/`` on sys.path
     from extractor import PdfExtractor
 
+try:  # read-only resource collection and digests (see sidecar/diff_resources.py)
+    from .diff_resources import collect_document_resources, page_resource_digest
+except ImportError:  # executed as a script with ``sidecar/`` on sys.path
+    from diff_resources import collect_document_resources, page_resource_digest
+
 
 SCHEMA_VERSION = 1
 TOOL_NAME = 'pdf-inspector'
@@ -68,6 +109,64 @@ TOOL_NAME = 'pdf-inspector'
 DIFF_TYPES = ('word', 'char', 'rect', 'line', 'curve', 'image', 'table')
 TEXT_TYPES = frozenset({'word', 'char'})
 TEXT_TOLERANCES = ('exact', 'normalized', 'case-insensitive')
+
+# Page-level resource types, reported after every object type.  A resource
+# change uses the same ``DiffChange`` shape as an object change, so it can live
+# in ``DiffPage.changes`` and share page grouping, region masking and the
+# ``MAX_DIFF_CHANGES`` cap.
+RESOURCE_TYPES = ('annotation', 'link', 'form')
+# Every type a page-level change list can carry, in report/sort order.
+CHANGE_TYPE_ORDER = DIFF_TYPES + RESOURCE_TYPES
+_CHANGE_TYPE_ORDER = {name: index for index, name in enumerate(CHANGE_TYPE_ORDER)}
+_RESOURCE_TYPE_SET = frozenset(RESOURCE_TYPES)
+
+# ``RESOURCE_TYPES`` -> the collector's per-page key.
+_PAGE_RESOURCE_KEYS = {
+    'annotation': 'annotations',
+    'link': 'links',
+    'form': 'forms',
+}
+
+# ``RESOURCE_TYPES`` -> the ``DiffOptions`` flag that skips it.
+_RESOURCE_IGNORE_ATTRS = {
+    'annotation': 'ignore_annotations',
+    'link': 'ignore_links',
+    'form': 'ignore_forms',
+}
+
+# Fields compared per resource kind.  ``rect`` is handled separately because a
+# rect-only difference is a *move*, not a modification (see
+# ``_resource_change``).  ``identity`` is the R1 identity used to pair entries.
+_RESOURCE_FIELDS = {
+    'annotation': ('subtype', 'title', 'contents', 'color', 'opacity', 'flags'),
+    'link': ('uri', 'internalPage', 'unsafeUrl', 'target', 'action', 'contents'),
+    'form': ('fieldType', 'fieldName', 'value', 'defaultValue', 'options', 'flags'),
+}
+
+# Field a resource change uses for ``textOld``/``textNew``.
+_RESOURCE_TEXT_FIELDS = {
+    'annotation': 'contents',
+    'link': 'target',
+    'form': 'value',
+}
+
+# Document-level change types and the metadata fields compared, in report order.
+DOCUMENT_CHANGE_TYPES = ('metadata', 'page-label')
+_DOCUMENT_TYPE_ORDER = {name: index for index, name in enumerate(DOCUMENT_CHANGE_TYPES)}
+METADATA_FIELDS = (
+    'title',
+    'author',
+    'subject',
+    'keywords',
+    'creator',
+    'producer',
+    'creationDate',
+    'modDate',
+    'language',
+)
+_METADATA_FIELD_ORDER = {name: index for index, name in enumerate(METADATA_FIELDS)}
+# Page-label entry keys compared besides the rendered label itself.
+_PAGE_LABEL_FIELDS = ('style', 'prefix', 'start')
 
 # Extract ``PageData`` key for each diff object type.
 _PAGE_KEYS = {
@@ -161,6 +260,12 @@ class DiffOptions:
     stroke/char colour fields; ``ignore_images`` is equivalent to adding
     ``"image"`` to ``ignore_types``; ``ignore_regions`` are page-scoped
     rectangles (MediaBox-relative PDF points) that mask intersecting changes.
+
+    ``ignore_annotations``/``ignore_links``/``ignore_forms`` skip the matching
+    page-level resource comparison and ``ignore_metadata``/``ignore_page_labels``
+    skip the matching document-level comparison.  All five default to ``False``:
+    unlike character-level diffs, annotation/form counts are usually small, so
+    resources are compared unless the caller opts out.
     """
 
     position_tolerance: float = 1.0
@@ -170,6 +275,11 @@ class DiffOptions:
     ignore_colors: bool = False
     ignore_images: bool = False
     ignore_regions: list[dict[str, Any]] = field(default_factory=list)
+    ignore_annotations: bool = False
+    ignore_links: bool = False
+    ignore_forms: bool = False
+    ignore_metadata: bool = False
+    ignore_page_labels: bool = False
 
     def __post_init__(self) -> None:
         try:
@@ -732,10 +842,13 @@ def _page_signature(
 
     Returns ``(signature_hex, width, height)``.  The digest covers the
     normalised MediaBox/CropBox, ``/Rotate``, every content stream (decoded, in
-    page order) and the page's resource dictionary — including the fonts and
+    page order), the page's resource dictionary — including the fonts and
     images it references, which is what separates "same drawing program" from
-    "same appearance".  ```page.chars`` is never touched and ``extract_page`` is
-    never called, so a page costs a few milliseconds at most.
+    "same appearance" — and the page's ``/Annots`` array, so a page whose
+    objects are identical but whose annotations/links/form widgets changed is
+    never treated as fast-path unchanged.  ``page.chars`` is never touched and
+    ``extract_page`` is never called, so a page costs a few milliseconds at
+    most.
 
     A page whose signature cannot be computed gets a per-side marker instead of
     an exception: two markers never compare equal, which forces the full
@@ -767,6 +880,13 @@ def _page_signature(
         hasher.value(getattr(page_obj, 'contents', None))
         hasher._tag('Resources')
         hasher.value(getattr(page_obj, 'resources', None))
+        # Annotations are part of the page identity too: identical objects with
+        # a different annotation/URI/form value must reach the full comparison
+        # instead of being skipped by the fast path.  A page without /Annots
+        # hashes the same "none" marker on both sides, so its equality is
+        # unchanged.
+        hasher._tag('Annots')
+        hasher.value(attrs.get('Annots'))
         signature = hasher.hexdigest()
     except Exception:
         # Unprovable page: a marker that can never equal the other side's.
@@ -1192,9 +1312,15 @@ def _make_change(
 
 
 def _change_sort_key(change: Mapping[str, Any]) -> tuple:
+    """Report order: type, then top-to-bottom/left-to-right, then kind.
+
+    Resource types sort after every object type (``CHANGE_TYPE_ORDER``), so a
+    page lists its drawn objects first and its annotations/links/form fields
+    after them.
+    """
     bbox = change.get('oldBBox') or change.get('newBBox') or {}
     return (
-        DIFF_TYPES.index(change['type']),
+        _CHANGE_TYPE_ORDER.get(str(change.get('type')), len(CHANGE_TYPE_ORDER)),
         -round(_number(bbox.get('y1')), 3),
         round(_number(bbox.get('x0')), 3),
         -round(_number(bbox.get('y0')), 3),
@@ -1661,6 +1787,465 @@ def _page_geometry_change(
     )
 
 
+# --- resource comparison (annotations, links, forms, metadata, page labels) --
+
+
+def _resource_ignored(kind: str, options: DiffOptions) -> bool:
+    return bool(getattr(options, _RESOURCE_IGNORE_ATTRS[kind], False))
+
+
+def page_resource_comparison_enabled(options: DiffOptions) -> bool:
+    """True when at least one page-level resource kind is compared."""
+    return not all(_resource_ignored(kind, options) for kind in RESOURCE_TYPES)
+
+
+def document_resource_comparison_enabled(options: DiffOptions) -> bool:
+    """True when metadata or page labels are compared."""
+    return not (options.ignore_metadata and options.ignore_page_labels)
+
+
+def resource_comparison_enabled(options: DiffOptions) -> bool:
+    """True when the run has to collect resources at all."""
+    return page_resource_comparison_enabled(options) or document_resource_comparison_enabled(
+        options
+    )
+
+
+# Collector cap/skip reason -> the ``DiffOptions`` switch whose kind it degrades.
+# ``destinations`` resolves internal link targets, and ``pages`` means a whole
+# page's annotation/link/form blocks failed to parse (any compared kind suffers).
+_RESOURCE_INCOMPLETE_ATTRS = {
+    'annotations': 'ignore_annotations',
+    'annotationsPerPage': 'ignore_annotations',
+    'links': 'ignore_links',
+    'destinations': 'ignore_links',
+    'forms': 'ignore_forms',
+    'formFields': 'ignore_forms',
+    'formOptions': 'ignore_forms',
+    'metadata': 'ignore_metadata',
+    'pageLabels': 'ignore_page_labels',
+}
+
+
+def resource_comparison_incomplete(
+    old_resources: Optional[Mapping[str, Any]],
+    new_resources: Optional[Mapping[str, Any]],
+    options: DiffOptions,
+) -> bool:
+    """True when a *compared* resource kind was capped or could not be read.
+
+    The collector records per-block ``truncated``/``skipped`` counts instead of
+    failing (a 600-annotation page must not abort the diff).  Those notes still
+    make the result incomplete, so the engine flags truncation exactly like the
+    ``MAX_DIFF_CHANGES`` cap: a capped or skipped block never reports a clean
+    "no changes" for the kind that was being compared.  Notes about a kind that
+    the options skipped are ignored: its result is intentionally absent.
+    """
+    if not resource_comparison_enabled(options):
+        return False
+    pages_compared = page_resource_comparison_enabled(options)
+    for resources in (old_resources, new_resources):
+        if not resources:
+            continue
+        for bucket in ('truncated', 'skipped'):
+            counts = resources.get(bucket) or {}
+            if not isinstance(counts, Mapping):
+                continue
+            for key, value in counts.items():
+                try:
+                    if int(value or 0) <= 0:
+                        continue
+                except (TypeError, ValueError):
+                    continue
+                if key == 'pages':
+                    if pages_compared:
+                        return True
+                    continue
+                attr = _RESOURCE_INCOMPLETE_ATTRS.get(str(key))
+                if attr is None:
+                    # Unknown reason from a newer collector: stay conservative and
+                    # never claim the run was complete.
+                    return True
+                if not bool(getattr(options, attr, False)):
+                    return True
+    return False
+
+
+def _page_resources_at(
+    resources: Optional[Mapping[str, Any]],
+    index: Optional[int],
+) -> Optional[dict[str, Any]]:
+    """The collector entry of one 1-based page, or ``None`` when unavailable.
+
+    ``None`` means "this side has no resource data" (resources were not
+    collected, or the page does not exist on that side), which is exactly what
+    the one-sided resource comparison expects.
+    """
+    if not resources or index is None:
+        return None
+    pages = resources.get('pages') or ()
+    if 1 <= index <= len(pages):
+        entry = pages[index - 1]
+        if isinstance(entry, Mapping):
+            return dict(entry)
+    return None
+
+
+def _page_resource_digest(
+    page_resources: Mapping[str, Any],
+    options: DiffOptions,
+) -> str:
+    """Digest of the *compared* resource kinds of one page.
+
+    Ignored kinds are hashed as empty lists, so turning a kind off also removes
+    it from the page fast path: a page whose only difference is an ignored kind
+    stays "unchanged" instead of being compared and reported as changed with no
+    changes.
+    """
+    comparable = {
+        _PAGE_RESOURCE_KEYS[kind]: (
+            []
+            if _resource_ignored(kind, options)
+            else [
+                entry
+                for entry in page_resources.get(_PAGE_RESOURCE_KEYS[kind]) or ()
+                if isinstance(entry, Mapping)
+            ]
+        )
+        for kind in RESOURCE_TYPES
+    }
+    return page_resource_digest(comparable)
+
+
+def _digest_at(digests: Optional[Sequence[str]], index: Optional[int]) -> Optional[str]:
+    if digests is None or index is None or not 1 <= index <= len(digests):
+        return None
+    return digests[index - 1]
+
+
+def _resource_text(kind: str, entry: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """The text a resource change reports in ``textOld``/``textNew``."""
+    if not entry:
+        return None
+    if kind == 'link':
+        value = entry.get('target') or entry.get('uri')
+    else:
+        value = entry.get(_RESOURCE_TEXT_FIELDS[kind])
+    return None if value is None else str(value)
+
+
+def _identity_embeds_rect(identity: str) -> bool:
+    """True when the R1 identity already contains the rect.
+
+    ``/NM`` identities (``ann:nm:…``, ``link:nm:…``) do not embed the rect, so a
+    matched entry can be reported as *moved*.  Every other identity (including
+    every form identity) embeds the rect, which means moving such a resource
+    changes its identity: the diff then reports one removed and one added entry
+    instead of a move.  That is a documented limitation, not a bug: inventing a
+    positional fallback would risk merging unrelated resources.
+    """
+    return '|rect=' in identity or identity.startswith(('link:rect:', 'form:rect:'))
+
+
+def _resource_details(
+    kind: str,
+    identity: str,
+    old_entry: Optional[Mapping[str, Any]],
+    new_entry: Optional[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """``details`` of one resource change: kind, identity and old/new fields.
+
+    Every difference is reported as an ``{'old', 'new'}`` pair (a one-sided
+    entry pairs its values with ``None``), so the UI renders one table for added,
+    removed, moved and modified resources alike.
+    """
+    details: dict[str, Any] = {'resource': kind, 'identity': identity}
+    for field in _RESOURCE_FIELDS[kind]:
+        old_value = None if old_entry is None else old_entry.get(field)
+        new_value = None if new_entry is None else new_entry.get(field)
+        if old_value != new_value:
+            details[field] = {'old': old_value, 'new': new_value}
+    old_rect = None if old_entry is None else old_entry.get('rect')
+    new_rect = None if new_entry is None else new_entry.get('rect')
+    if old_rect != new_rect:
+        details['rect'] = {'old': old_rect, 'new': new_rect}
+    return details
+
+
+def _resource_change(
+    kind: str,
+    identity: str,
+    old_entry: Optional[Mapping[str, Any]],
+    new_entry: Optional[Mapping[str, Any]],
+    old_page: Optional[int],
+    new_page: Optional[int],
+) -> Optional[dict[str, Any]]:
+    """One page-level resource change, or ``None`` when nothing differs."""
+    details = _resource_details(kind, identity, old_entry, new_entry)
+    field_changes = any(
+        key not in ('resource', 'identity', 'rect') for key in details
+    )
+    rect_changed = 'rect' in details
+
+    if old_entry is None:
+        change_kind = 'added'
+    elif new_entry is None:
+        change_kind = 'removed'
+    elif field_changes:
+        change_kind = 'modified'
+    elif rect_changed and not _identity_embeds_rect(identity):
+        change_kind = 'moved'
+    elif rect_changed:
+        # Only reachable when two identities collide at the identity's rounding
+        # precision: report it as a modification, never as a move.
+        change_kind = 'modified'
+    else:
+        return None
+
+    return _make_change(
+        change_kind,
+        kind,
+        old_page,
+        new_page,
+        # A resource entry keeps its box under ``rect``; ``_make_change`` wants
+        # the box itself so ``oldBBox``/``newBBox`` stay the contract's shape.
+        None if old_entry is None else old_entry.get('rect'),
+        None if new_entry is None else new_entry.get('rect'),
+        text_old=_resource_text(kind, old_entry),
+        text_new=_resource_text(kind, new_entry),
+        details=details,
+    )
+
+
+def _resource_changes(
+    kind: str,
+    old_entries: Iterable[Mapping[str, Any]],
+    new_entries: Iterable[Mapping[str, Any]],
+    old_page: Optional[int],
+    new_page: Optional[int],
+    limit: Optional[int] = None,
+) -> list[dict[str, Any]]:
+    """Pair one resource kind by R1 identity and report the differences.
+
+    Identities are unique per page (the collector suffixes collisions), so
+    pairing is a dictionary lookup.  Identities are visited in sorted order and
+    the change list is sorted again by :func:`_change_sort_key`, so the output
+    never depends on dictionary order.
+    """
+    old_by_identity = {
+        str(entry['identity']): entry
+        for entry in old_entries or ()
+        if isinstance(entry, Mapping) and entry.get('identity')
+    }
+    new_by_identity = {
+        str(entry['identity']): entry
+        for entry in new_entries or ()
+        if isinstance(entry, Mapping) and entry.get('identity')
+    }
+
+    changes: list[dict[str, Any]] = []
+    for identity in sorted(set(old_by_identity) | set(new_by_identity)):
+        if limit is not None and len(changes) >= limit:
+            break
+        change = _resource_change(
+            kind,
+            identity,
+            old_by_identity.get(identity),
+            new_by_identity.get(identity),
+            old_page,
+            new_page,
+        )
+        if change is not None:
+            changes.append(change)
+    return changes
+
+
+def _page_resource_changes(
+    old_resources: Optional[Mapping[str, Any]],
+    new_resources: Optional[Mapping[str, Any]],
+    options: DiffOptions,
+    old_page: Optional[int],
+    new_page: Optional[int],
+    limit: Optional[int] = None,
+) -> list[dict[str, Any]]:
+    """Every annotation/link/form change of one aligned page pair.
+
+    A one-sided page passes ``None`` for the missing side, which turns all of its
+    resources into added/removed entries.  ``limit`` is the page's remaining
+    change budget, exactly like the object loops.
+    """
+    changes: list[dict[str, Any]] = []
+    for kind in RESOURCE_TYPES:
+        if _resource_ignored(kind, options):
+            continue
+        remaining = None if limit is None else max(0, limit - len(changes))
+        if remaining == 0:
+            break
+        changes.extend(
+            _resource_changes(
+                kind,
+                (old_resources or {}).get(_PAGE_RESOURCE_KEYS[kind]) or (),
+                (new_resources or {}).get(_PAGE_RESOURCE_KEYS[kind]) or (),
+                old_page,
+                new_page,
+                limit=remaining,
+            )
+        )
+    return changes
+
+
+def _metadata_value(metadata: Optional[Mapping[str, Any]], field: str) -> Optional[str]:
+    if not metadata:
+        return None
+    value = metadata.get(field)
+    return None if value is None else str(value)
+
+
+def _document_change(
+    kind: str,
+    type_: str,
+    page: Optional[int],
+    field: str,
+    old_value: Optional[str],
+    new_value: Optional[str],
+    details: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    return {
+        'kind': kind,
+        'type': type_,
+        'page': page,
+        'field': field,
+        'oldValue': old_value,
+        'newValue': new_value,
+        'details': details or {},
+    }
+
+
+def _value_kind(old_value: Optional[str], new_value: Optional[str]) -> str:
+    if old_value is None:
+        return 'added'
+    if new_value is None:
+        return 'removed'
+    return 'modified'
+
+
+def _metadata_changes(
+    old_metadata: Optional[Mapping[str, Any]],
+    new_metadata: Optional[Mapping[str, Any]],
+    options: DiffOptions,
+) -> list[dict[str, Any]]:
+    """Info dictionary/catalog language differences, one entry per field."""
+    if options.ignore_metadata:
+        return []
+    changes: list[dict[str, Any]] = []
+    for field in METADATA_FIELDS:
+        old_value = _metadata_value(old_metadata, field)
+        new_value = _metadata_value(new_metadata, field)
+        if old_value == new_value:
+            continue
+        changes.append(
+            _document_change(
+                _value_kind(old_value, new_value), 'metadata', None, field, old_value, new_value
+            )
+        )
+    return changes
+
+
+def _page_label_changes(
+    old_labels: Iterable[Mapping[str, Any]],
+    new_labels: Iterable[Mapping[str, Any]],
+    options: DiffOptions,
+) -> list[dict[str, Any]]:
+    """Page label differences; ``page`` is the 1-based PDF page number."""
+    if options.ignore_page_labels:
+        return []
+    old_by_page = {
+        int(label['page']): label
+        for label in old_labels or ()
+        if isinstance(label, Mapping) and isinstance(label.get('page'), int)
+    }
+    new_by_page = {
+        int(label['page']): label
+        for label in new_labels or ()
+        if isinstance(label, Mapping) and isinstance(label.get('page'), int)
+    }
+
+    changes: list[dict[str, Any]] = []
+    for page in sorted(set(old_by_page) | set(new_by_page)):
+        old_entry = old_by_page.get(page)
+        new_entry = new_by_page.get(page)
+        old_value = None if old_entry is None else old_entry.get('label')
+        new_value = None if new_entry is None else new_entry.get('label')
+        details: dict[str, Any] = {}
+        for field in _PAGE_LABEL_FIELDS:
+            old_field = None if old_entry is None else old_entry.get(field)
+            new_field = None if new_entry is None else new_entry.get(field)
+            if old_field != new_field:
+                details[field] = {'old': old_field, 'new': new_field}
+        if old_value == new_value and not details:
+            continue
+        changes.append(
+            _document_change(
+                _value_kind(old_value, new_value),
+                'page-label',
+                page,
+                'page-label',
+                None if old_value is None else str(old_value),
+                None if new_value is None else str(new_value),
+                details,
+            )
+        )
+    return changes
+
+
+def _document_change_sort_key(change: Mapping[str, Any]) -> tuple:
+    """Metadata first (field order), then page labels by page number."""
+    type_ = str(change.get('type') or '')
+    field = str(change.get('field') or '')
+    if type_ == 'metadata':
+        page_key: float = -1.0
+        field_key = _METADATA_FIELD_ORDER.get(field, len(METADATA_FIELDS))
+    else:
+        page_key = _number(change.get('page'), 0.0)
+        field_key = 0
+    return (
+        _DOCUMENT_TYPE_ORDER.get(type_, len(DOCUMENT_CHANGE_TYPES)),
+        page_key,
+        field_key,
+        field,
+        _KIND_ORDER.get(change.get('kind'), 9),
+        change.get('oldValue') or '',
+        change.get('newValue') or '',
+        json.dumps(change.get('details') or {}, sort_keys=True, ensure_ascii=False),
+    )
+
+
+def _document_changes(
+    old_resources: Optional[Mapping[str, Any]],
+    new_resources: Optional[Mapping[str, Any]],
+    options: DiffOptions,
+) -> list[dict[str, Any]]:
+    """Metadata and page-label changes, sorted deterministically.
+
+    Document changes are never affected by ignore regions (they carry no box)
+    and never enter a page's ``changes`` list, so a metadata-only edit does not
+    mark every page changed.
+    """
+    if old_resources is None or new_resources is None:
+        return []
+    changes = _metadata_changes(
+        old_resources.get('metadata'), new_resources.get('metadata'), options
+    )
+    changes.extend(
+        _page_label_changes(
+            old_resources.get('pageLabels') or (),
+            new_resources.get('pageLabels') or (),
+            options,
+        )
+    )
+    return sorted(changes, key=_document_change_sort_key)
+
+
 def _diff_pair_changes(
     old_page: Mapping[str, Any],
     new_page: Mapping[str, Any],
@@ -1669,6 +2254,8 @@ def _diff_pair_changes(
     new_index: int,
     include_page_geometry: bool = True,
     max_changes: Optional[int] = None,
+    old_resources: Optional[Mapping[str, Any]] = None,
+    new_resources: Optional[Mapping[str, Any]] = None,
 ) -> tuple[list[dict[str, Any]], bool]:
     """:func:`diff_pages` plus whether the change list was truncated.
 
@@ -1676,6 +2263,11 @@ def _diff_pair_changes(
     than the budget is built so truncation is detectable without a second pass,
     then the sorted list is sliced.  Matching always runs to completion, so the
     kept changes are the same ones an uncapped run would report first.
+
+    ``old_resources``/``new_resources`` are the collector entries of the two
+    pages.  Their changes join the same list (and the same budget) as object
+    changes, so page grouping, region masking, sorting and the cap behave
+    exactly as they do for objects.
     """
     changes: list[dict[str, Any]] = []
     if include_page_geometry:
@@ -1721,9 +2313,24 @@ def _diff_pair_changes(
                     limit=remaining,
                 )
             )
+
+    if old_resources is not None or new_resources is not None:
+        remaining = None if limit is None else max(0, limit - len(changes))
+        if remaining is None or remaining > 0:
+            changes.extend(
+                _page_resource_changes(
+                    old_resources,
+                    new_resources,
+                    options,
+                    old_index,
+                    new_index,
+                    limit=remaining,
+                )
+            )
     # Region masking runs on the matched changes, immediately before sorting:
     # the object pairing never sees the regions, so removing a region restores
-    # exactly the changes it hid.
+    # exactly the changes it hid.  Resource changes with a BBox are masked the
+    # same way; metadata/page labels are document-level and never reach here.
     sorted_changes = _sort_changes(_without_ignored_changes(changes, options))
     truncated = max_changes is not None and len(sorted_changes) > max_changes
     if truncated:
@@ -1771,12 +2378,16 @@ def _one_sided_changes(
     kind: str,
     options: DiffOptions,
     max_changes: Optional[int] = None,
+    resources: Optional[Mapping[str, Any]] = None,
 ) -> tuple[list[dict[str, Any]], bool]:
     """Every object of an added/removed page becomes one added/removed change.
 
     ``max_changes`` is the run's remaining change budget, so a large inserted
     page cannot push the result past :data:`MAX_DIFF_CHANGES` either.  Returns
     ``(changes, truncated)`` like :func:`_diff_pair_changes`.
+
+    ``resources`` is the collector entry of the page: its annotations, links and
+    form widgets become added/removed resource changes alongside the objects.
     """
     changes: list[dict[str, Any]] = []
     # See _diff_pair_changes: building one extra change makes truncation visible.
@@ -1811,6 +2422,19 @@ def _one_sided_changes(
                 )
         if limit is not None and len(changes) >= limit:
             break
+    if resources is not None:
+        remaining = None if limit is None else max(0, limit - len(changes))
+        if remaining is None or remaining > 0:
+            changes.extend(
+                _page_resource_changes(
+                    resources if kind == 'removed' else None,
+                    resources if kind == 'added' else None,
+                    options,
+                    page_num if kind == 'removed' else None,
+                    page_num if kind == 'added' else None,
+                    limit=remaining,
+                )
+            )
     # A one-sided page only has one side's changes, so only that side's regions
     # can mask them (the other page number is null on every change).
     sorted_changes = _sort_changes(_without_ignored_changes(changes, options))
@@ -1837,7 +2461,10 @@ def options_to_dict(options: DiffOptions) -> dict[str, Any]:
     """Serialise options with the contract's camelCase keys.
 
     ``ignoreRegions`` is echoed normalized (ordered boxes, integer page
-    numbers), so a JSON consumer can reproduce the mask that was applied.
+    numbers), so a JSON consumer can reproduce the mask that was applied. Every
+    boolean switch is echoed explicitly (never omitted), including the resource
+    switches, so a report shows that metadata/page labels were compared or
+    skipped. The resource keys are additive: older consumers ignore them.
     """
     ignored = set(options.ignore_types)
     return {
@@ -1847,6 +2474,11 @@ def options_to_dict(options: DiffOptions) -> dict[str, Any]:
         'ignoreFonts': bool(options.ignore_fonts),
         'ignoreColors': bool(options.ignore_colors),
         'ignoreImages': bool(options.ignore_images),
+        'ignoreAnnotations': bool(options.ignore_annotations),
+        'ignoreLinks': bool(options.ignore_links),
+        'ignoreForms': bool(options.ignore_forms),
+        'ignoreMetadata': bool(options.ignore_metadata),
+        'ignorePageLabels': bool(options.ignore_page_labels),
         'ignoreRegions': [
             {
                 'oldPage': region['oldPage'],
@@ -2117,6 +2749,38 @@ def diff_files(
         budget = MAX_DIFF_CHANGES
         truncated = False
 
+        # Resources are collected once per side, and only when the options ask
+        # for them.  Byte-identical files cannot differ, so they skip collection
+        # entirely (the same shortcut the signature pass takes).
+        resource_comparison = resource_comparison_enabled(opts) and not identical_files
+        old_resources: Optional[dict[str, Any]] = (
+            collect_document_resources(old_extractor) if resource_comparison else None
+        )
+        new_resources: Optional[dict[str, Any]] = (
+            collect_document_resources(new_extractor) if resource_comparison else None
+        )
+        # A capped or unreadable resource block makes the result incomplete for
+        # the kinds that were compared.  Report it through the same truncation
+        # flag as the MAX_DIFF_CHANGES cap instead of claiming a clean run.
+        resources_truncated = resource_comparison_incomplete(
+            old_resources, new_resources, opts
+        )
+        if resources_truncated:
+            truncated = True
+        # Page resource digests join the page fast path: two pages are only
+        # "unchanged" when their objects *and* their compared resources match.
+        page_resources_compared = resource_comparison and page_resource_comparison_enabled(opts)
+        old_resource_digests: Optional[list[str]] = (
+            [_page_resource_digest(page, opts) for page in old_resources.get('pages') or ()]
+            if page_resources_compared and old_resources is not None
+            else None
+        )
+        new_resource_digests: Optional[list[str]] = (
+            [_page_resource_digest(page, opts) for page in new_resources.get('pages') or ()]
+            if page_resources_compared and new_resources is not None
+            else None
+        )
+
         pages: list[dict[str, Any]] = []
         for index, (old_index, new_index) in enumerate(pairs):
             if old_index is None and new_index is None:  # pragma: no cover - defensive
@@ -2127,20 +2791,34 @@ def diff_files(
             # Once the change budget is spent, the remaining pages only need
             # their geometry: sizes and status stay correct without building
             # object lists that could never be reported.
-            page_types = include_types if budget > 0 else frozenset()
-            # The fast path: equal signatures mean equal pages, so there is
-            # nothing to extract and nothing to compare.
-            unchanged_pair = (
+            budget_spent = budget <= 0
+            page_types = include_types if not budget_spent else frozenset()
+            # The fast path: equal signatures *and* equal resources mean equal
+            # pages, so there is nothing to extract and nothing to compare.
+            signatures_equal = (
                 old_index is not None
                 and new_index is not None
                 and old_signatures[old_index - 1][0] == new_signatures[new_index - 1][0]
             )
+            resources_equal = True
+            if signatures_equal:
+                resources_equal = _digest_at(old_resource_digests, old_index) == _digest_at(
+                    new_resource_digests, new_index
+                )
+            unchanged_pair = signatures_equal and resources_equal
+            # Same objects, different annotations/links/form fields: the page is
+            # not unchanged, but it does not need an object extraction either.
+            resource_only_pair = signatures_equal and not resources_equal
+
+            old_page_resources = _page_resources_at(old_resources, old_index)
+            new_page_resources = _page_resources_at(new_resources, new_index)
+
             if old_index is None:
                 page = _extract_page(
                     new_extractor, new_index, new_file, 'new', page_types
                 )
                 changes, page_truncated = _one_sided_changes(
-                    page, new_index, 'added', opts, budget
+                    page, new_index, 'added', opts, budget, resources=new_page_resources
                 )
                 pages.append(
                     {
@@ -2161,7 +2839,7 @@ def diff_files(
                     old_extractor, old_index, old_file, 'old', page_types
                 )
                 changes, page_truncated = _one_sided_changes(
-                    page, old_index, 'removed', opts, budget
+                    page, old_index, 'removed', opts, budget, resources=old_page_resources
                 )
                 pages.append(
                     {
@@ -2193,6 +2871,35 @@ def diff_files(
                         'changes': [],
                     }
                 )
+            elif resource_only_pair:
+                # Empty page dicts: no object type has anything to compare, so
+                # only the resource comparison runs.  ``include_page_geometry``
+                # is off because the signatures prove the geometry is equal.
+                changes, page_truncated = _diff_pair_changes(
+                    {},
+                    {},
+                    opts,
+                    old_index,
+                    new_index,
+                    include_page_geometry=False,
+                    max_changes=budget,
+                    old_resources=old_page_resources,
+                    new_resources=new_page_resources,
+                )
+                pages.append(
+                    {
+                        'oldIndex': old_index,
+                        'newIndex': new_index,
+                        'status': 'changed' if changes else 'unchanged',
+                        'oldSize': _signature_size(old_signatures[old_index - 1]),
+                        'newSize': _signature_size(new_signatures[new_index - 1]),
+                        'match': {
+                            'score': 1.0,
+                            'reordered': old_index != new_index,
+                        },
+                        'changes': changes,
+                    }
+                )
             else:
                 old_page = _extract_page(
                     old_extractor, old_index, old_file, 'old', page_types
@@ -2201,7 +2908,14 @@ def diff_files(
                     new_extractor, new_index, new_file, 'new', page_types
                 )
                 changes, page_truncated = _diff_pair_changes(
-                    old_page, new_page, opts, old_index, new_index, max_changes=budget
+                    old_page,
+                    new_page,
+                    opts,
+                    old_index,
+                    new_index,
+                    max_changes=budget,
+                    old_resources=old_page_resources,
+                    new_resources=new_page_resources,
                 )
                 pages.append(
                     {
@@ -2230,13 +2944,17 @@ def diff_files(
             budget = max(0, budget - len(changes))
             if page_truncated:
                 truncated = True
-            elif not unchanged_pair and not page_types and _page_still_differs(
-                old_fingerprints, new_fingerprints, old_index, new_index
+            elif budget_spent and (
+                not resources_equal
+                or _page_still_differs(
+                    old_fingerprints, new_fingerprints, old_index, new_index
+                )
             ):
                 # The budget was already spent when this page came up, so it was
-                # not compared.  Its fingerprint still says it differs (or it is
-                # one-sided), which means the report stops before real changes:
-                # flag the truncation instead of silently calling it unchanged.
+                # not compared.  Its fingerprint (or its resource digest) still
+                # says it differs, or it is one-sided, which means the report
+                # stops before real changes: flag the truncation instead of
+                # silently calling it unchanged.
                 truncated = True
 
             _emit_progress(
@@ -2244,6 +2962,12 @@ def diff_files(
             )
 
         all_changes = [change for page in pages for change in page['changes']]
+        # Resource changes never enter the object counters: a consumer that
+        # counts objects keeps seeing object-only numbers.
+        resource_changes = [
+            change for change in all_changes if change['type'] in _RESOURCE_TYPE_SET
+        ]
+        document_changes = _document_changes(old_resources, new_resources, opts)
         summary = {
             'pagesAdded': sum(1 for page in pages if page['status'] == 'added'),
             'pagesRemoved': sum(1 for page in pages if page['status'] == 'removed'),
@@ -2251,14 +2975,51 @@ def diff_files(
             'pagesReordered': sum(
                 1 for page in pages if (page['match'] or {}).get('reordered')
             ),
-            'objectsAdded': sum(1 for change in all_changes if change['kind'] == 'added'),
-            'objectsRemoved': sum(1 for change in all_changes if change['kind'] == 'removed'),
-            'objectsMoved': sum(1 for change in all_changes if change['kind'] == 'moved'),
-            'objectsModified': sum(1 for change in all_changes if change['kind'] == 'modified'),
-            # True when the change lists above stop at MAX_DIFF_CHANGES, i.e.
-            # the report is complete for the pages but not for the documents.
+            'objectsAdded': sum(
+                1 for change in all_changes
+                if change['kind'] == 'added' and change['type'] not in _RESOURCE_TYPE_SET
+            ),
+            'objectsRemoved': sum(
+                1 for change in all_changes
+                if change['kind'] == 'removed' and change['type'] not in _RESOURCE_TYPE_SET
+            ),
+            'objectsMoved': sum(
+                1 for change in all_changes
+                if change['kind'] == 'moved' and change['type'] not in _RESOURCE_TYPE_SET
+            ),
+            'objectsModified': sum(
+                1 for change in all_changes
+                if change['kind'] == 'modified' and change['type'] not in _RESOURCE_TYPE_SET
+            ),
+            # True when the change lists above are incomplete: the change budget
+            # was spent, a page could not be compared, or a compared resource
+            # block hit a collector cap (see ``resourcesTruncated``).
             'changesTruncated': truncated,
         }
+        # Resource counters are additive and only present when the run actually
+        # compared resources, so an object-only result keeps its historical
+        # shape (and old JSON consumers see exactly the fields they know).
+        if resource_changes or document_changes:
+            summary['resourcesAdded'] = sum(
+                1 for change in resource_changes if change['kind'] == 'added'
+            )
+            summary['resourcesRemoved'] = sum(
+                1 for change in resource_changes if change['kind'] == 'removed'
+            )
+            summary['resourcesModified'] = sum(
+                1 for change in resource_changes if change['kind'] == 'modified'
+            )
+            # Moved resources live in their page's change list; without this
+            # counter a report could list a move while claiming 0/0/0.
+            summary['resourcesMoved'] = sum(
+                1 for change in resource_changes if change['kind'] == 'moved'
+            )
+            summary['documentChanges'] = len(document_changes)
+        if resources_truncated:
+            # Same safety meaning as ``changesTruncated``: some compared resource
+            # block hit a collector cap or could not be read, so the resource
+            # comparison is incomplete even when no change was reported.
+            summary['resourcesTruncated'] = True
 
         _emit_progress(
             progress,
@@ -2270,7 +3031,7 @@ def diff_files(
             },
         )
 
-        return {
+        result: dict[str, Any] = {
             'schemaVersion': SCHEMA_VERSION,
             'tool': {'name': TOOL_NAME, 'version': tool_version()},
             'options': options_to_dict(opts),
@@ -2280,8 +3041,13 @@ def diff_files(
             # Mirrors summary.changesTruncated; kept top level so a consumer that
             # only looks at counts can still tell the run hit the safety cap.
             'truncated': truncated,
-            'pages': pages,
         }
+        if document_changes:
+            # Metadata/page labels only: page-level resources live in
+            # pages[].changes, so nothing is reported twice.
+            result['documentChanges'] = document_changes
+        result['pages'] = pages
+        return result
     finally:
         _close_extractor(old_extractor)
         _close_extractor(new_extractor)
@@ -2290,19 +3056,27 @@ def diff_files(
 __all__ = [
     'DiffError',
     'DiffOptions',
+    'CHANGE_TYPE_ORDER',
     'DIFF_TYPES',
+    'DOCUMENT_CHANGE_TYPES',
     'MAX_DIFF_CHANGES',
+    'METADATA_FIELDS',
+    'RESOURCE_TYPES',
     'SCHEMA_VERSION',
     'TOOL_NAME',
     'bbox_intersects',
     'change_is_ignored',
     'diff_files',
     'diff_pages',
+    'document_resource_comparison_enabled',
     'normalize_ignore_regions',
     'normalize_text',
     'options_to_dict',
     'page_fingerprint',
     'page_match_score',
+    'page_resource_comparison_enabled',
     'pair_pages',
+    'resource_comparison_enabled',
+    'resource_comparison_incomplete',
     'tool_version',
 ]

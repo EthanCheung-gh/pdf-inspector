@@ -44,7 +44,10 @@ MATCH_KEYS = {'score', 'reordered'}
 
 
 def _single_page(path: Path, draw, pagesize=letter, rotation=None) -> str:
-    canvas = rl_canvas.Canvas(str(path), pagesize=pagesize)
+    # ``invariant=1`` pins the info dict (CreationDate/ModDate/producer) so the
+    # document-metadata comparison in the engine cannot see a timestamp that
+    # happens to straddle a second boundary between two fixtures.
+    canvas = rl_canvas.Canvas(str(path), pagesize=pagesize, invariant=1)
     draw(canvas)
     if rotation is not None:
         canvas.setPageRotation(rotation)
@@ -54,7 +57,7 @@ def _single_page(path: Path, draw, pagesize=letter, rotation=None) -> str:
 
 
 def _multi_page(path: Path, draws, pagesize=letter) -> str:
-    canvas = rl_canvas.Canvas(str(path), pagesize=pagesize)
+    canvas = rl_canvas.Canvas(str(path), pagesize=pagesize, invariant=1)
     for draw in draws:
         draw(canvas)
         canvas.showPage()
@@ -229,6 +232,11 @@ def test_options_are_serialised_with_contract_keys(tmp_path):
         'ignoreFonts': False,
         'ignoreColors': False,
         'ignoreImages': False,
+        'ignoreAnnotations': False,
+        'ignoreLinks': False,
+        'ignoreForms': False,
+        'ignoreMetadata': False,
+        'ignorePageLabels': False,
         'ignoreRegions': [],
     }
 
