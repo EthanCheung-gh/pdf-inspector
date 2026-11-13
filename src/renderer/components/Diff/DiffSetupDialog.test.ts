@@ -168,6 +168,102 @@ describe('DiffSetupDialog character-level changes', () => {
   });
 });
 
+describe('DiffSetupDialog content resources', () => {
+  const LABELS = ['Annotations', 'Links', 'Forms', 'Metadata', 'Page labels'];
+  const contentToggle = (label: string): HTMLInputElement =>
+    screen.getByRole('checkbox', { name: label }) as HTMLInputElement;
+
+  it('compares every resource by default and explains the read-only contract', () => {
+    render(React.createElement(DiffSetupDialog));
+    openDialog();
+
+    for (const label of LABELS) expect(contentToggle(label).checked).toBe(true);
+    expect(store().options).toMatchObject({
+      ignoreAnnotations: false,
+      ignoreLinks: false,
+      ignoreForms: false,
+      ignoreMetadata: false,
+      ignorePageLabels: false,
+    });
+    expect(
+      within(screen.getByRole('dialog')).getByText(/links are never opened/),
+    ).toBeTruthy();
+  });
+
+  it('turns one resource off without touching the others', () => {
+    render(React.createElement(DiffSetupDialog));
+    openDialog();
+
+    fireEvent.click(contentToggle('Annotations'));
+    expect(contentToggle('Annotations').checked).toBe(false);
+    expect(store().options.ignoreAnnotations).toBe(true);
+    expect(store().options.ignoreLinks).toBe(false);
+
+    fireEvent.click(contentToggle('Page labels'));
+    expect(contentToggle('Page labels').checked).toBe(false);
+    expect(store().options.ignorePageLabels).toBe(true);
+    expect(store().options.ignoreForms).toBe(false);
+  });
+
+  it('sends the content switches with the comparison', async () => {
+    store().setSource('old', '/docs/old.pdf', 'old.pdf');
+    store().setSource('new', '/docs/new.pdf', 'new.pdf');
+    diffPdfs.mockResolvedValueOnce(makeSampleResult());
+
+    render(React.createElement(DiffSetupDialog));
+    openDialog();
+    fireEvent.click(contentToggle('Links'));
+    fireEvent.click(contentToggle('Metadata'));
+    fireEvent.click(compareButton());
+
+    await waitFor(() => expect(store().active).toBe(true));
+    expect(diffPdfs).toHaveBeenCalledWith(
+      '/docs/old.pdf',
+      '/docs/new.pdf',
+      expect.objectContaining({
+        ignoreLinks: true,
+        ignoreMetadata: true,
+        ignoreAnnotations: false,
+        ignoreForms: false,
+        ignorePageLabels: false,
+      }),
+    );
+  });
+
+  it('disables every content toggle while a comparison is running', async () => {
+    store().setSource('old', '/docs/old.pdf', 'old.pdf');
+    store().setSource('new', '/docs/new.pdf', 'new.pdf');
+    let resolveDiff: (value: unknown) => void = () => {};
+    diffPdfs.mockReturnValueOnce(new Promise((resolve) => { resolveDiff = resolve; }));
+
+    render(React.createElement(DiffSetupDialog));
+    openDialog();
+    fireEvent.click(compareButton());
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Comparing'));
+    for (const label of LABELS) expect(contentToggle(label).disabled).toBe(true);
+
+    resolveDiff(makeSampleResult());
+    await waitFor(() => expect(store().active).toBe(true));
+  });
+
+  it('translates the group and its labels', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+
+    render(React.createElement(DiffSetupDialog));
+    openDialog();
+
+    const dialog = screen.getByRole('dialog', { name: '比较 PDF' });
+    expect(within(dialog).getByRole('group', { name: '内容' })).toBeTruthy();
+    for (const label of ['注释', '链接', '表单', '元数据', '页面标签']) {
+      expect((within(dialog).getByRole('checkbox', { name: label }) as HTMLInputElement).checked).toBe(
+        true,
+      );
+    }
+    expect(within(dialog).getByText(/不会打开链接/)).toBeTruthy();
+  });
+});
+
 describe('DiffSetupDialog compare', () => {
   it('diffs the chosen sources with the dialog options and opens the workspace', async () => {
     store().setSource('old', '/docs/old.pdf', 'old.pdf');
@@ -195,6 +291,12 @@ describe('DiffSetupDialog compare', () => {
       ignoreFonts: true,
       ignoreColors: true,
       ignoreImages: true,
+      // Content resources are compared unless their checkbox is cleared.
+      ignoreAnnotations: false,
+      ignoreLinks: false,
+      ignoreForms: false,
+      ignoreMetadata: false,
+      ignorePageLabels: false,
       ignoreRegions: [],
     });
     expect(store().result).toBe(result);

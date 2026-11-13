@@ -384,6 +384,100 @@
   border: 0;
 }
 
+/* --- left: document changes (metadata / page labels) -------------------- */
+
+/* Document-scoped rows sit above the page groups, so they use their own
+ * compact disclosure header instead of a page header. */
+.documentChanges {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  min-width: 0;
+  border-top: 1px solid var(--pi-border-faint);
+  border-bottom: 1px solid var(--pi-border-faint);
+}
+
+.documentHeader {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 8px;
+  color: var(--pi-text-secondary);
+  background: var(--pi-bg-panel-alt);
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+}
+
+.documentHeader:hover {
+  background: var(--pi-bg-checker);
+}
+
+.documentHeader:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: -2px;
+}
+
+.documentTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pi-text-tab);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.documentList {
+  max-height: 148px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+/* Kind + type + value/field + page. The value column can shrink to nothing, so
+ * a long title or URL never widens the 200px sidebar. The compound selector
+ * outranks the shared `.changeItem` grid declared later in this file. */
+.changeItem.documentItem {
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.documentMain {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.documentField {
+  overflow: hidden;
+  color: var(--pi-text-subtle);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.documentPage {
+  color: var(--pi-text-subtle);
+  font-size: 10px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.documentEmpty {
+  margin: 0;
+  padding: 4px 8px 6px 21px;
+  color: var(--pi-text-subtle);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
 .pageList {
   flex: 1;
   min-height: 0;
@@ -850,7 +944,17 @@
   border-bottom: 1px solid var(--pi-border-faint);
   text-align: left;
   vertical-align: top;
-  overflow-wrap: anywhere;
+}
+
+/* Label cells ("Detail", "contents", "Colour") are short tokens. Wrapping them
+ * only when a token genuinely cannot fit keeps the min-content width at the
+ * whole word, so a 320px details panel never renders "Det/ail" or "cont/ents".
+ * `break-word` (not `anywhere`) is deliberate: `anywhere` would let the table
+ * shrink the column below one word and split it unnecessarily. */
+.detailTable th {
+  overflow-wrap: break-word;
+  word-break: normal;
+  hyphens: manual;
 }
 
 .detailTable thead th {
@@ -863,8 +967,11 @@
   font-weight: 400;
 }
 
+/* Value cells can hold a long URL, annotation text or a path with no break
+ * opportunity at all; those must stay inside the panel and remain readable. */
 .detailTable td {
   color: var(--pi-text);
+  overflow-wrap: anywhere;
 }
 
 .tableCaption {

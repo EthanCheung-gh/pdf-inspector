@@ -1,10 +1,29 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
-import type { DiffSide } from '../../../shared/diff-types';
-import { useT } from '../../i18n';
+import type { DiffResourceType, DiffSide } from '../../../shared/diff-types';
+import { useT, type MessageKey } from '../../i18n';
 import { ipc } from '../../services/ipc-client';
 import { useElapsedSeconds } from '../../hooks/useElapsedSeconds';
 import { selectCharacterLevelChanges, useDiffStore } from '../../store/diff-store';
 import styles from './DiffSetupDialog.module.css';
+
+/** The five content switches of the `Content` group, in display order. */
+const CONTENT_OPTIONS: ReadonlyArray<{
+  type: DiffResourceType;
+  labelKey: MessageKey;
+  /** The store option the checkbox reads; `true` means "skip this resource". */
+  ignoreKey:
+    | 'ignoreAnnotations'
+    | 'ignoreLinks'
+    | 'ignoreForms'
+    | 'ignoreMetadata'
+    | 'ignorePageLabels';
+}> = [
+  { type: 'annotation', labelKey: 'diff.setup.includeAnnotations', ignoreKey: 'ignoreAnnotations' },
+  { type: 'link', labelKey: 'diff.setup.includeLinks', ignoreKey: 'ignoreLinks' },
+  { type: 'form', labelKey: 'diff.setup.includeForms', ignoreKey: 'ignoreForms' },
+  { type: 'metadata', labelKey: 'diff.setup.includeMetadata', ignoreKey: 'ignoreMetadata' },
+  { type: 'page-label', labelKey: 'diff.setup.includePageLabels', ignoreKey: 'ignorePageLabels' },
+];
 
 /**
  * Old/new pickers plus the handful of engine options the UI exposes.
@@ -23,6 +42,7 @@ export const DiffSetupDialog: React.FC = () => {
   const error = useDiffStore((s) => s.error);
   const setPositionTolerance = useDiffStore((s) => s.setPositionTolerance);
   const setOptions = useDiffStore((s) => s.setOptions);
+  const setResourceIncluded = useDiffStore((s) => s.setResourceIncluded);
   const characterLevelChanges = useDiffStore(selectCharacterLevelChanges);
   const setCharacterLevelChanges = useDiffStore((s) => s.setCharacterLevelChanges);
   const closeSetup = useDiffStore((s) => s.closeSetup);
@@ -35,6 +55,7 @@ export const DiffSetupDialog: React.FC = () => {
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const toleranceId = useId();
+  const contentId = useId();
 
   // Fresh transient state on each open; sources/options persist so reopening the
   // dialog to tweak a threshold does not force the user to pick files again.
@@ -219,6 +240,29 @@ export const DiffSetupDialog: React.FC = () => {
             {t('diff.setup.characterLevel')}
           </label>
           <p className={styles.optionHint}>{t('diff.setup.characterLevelHint')}</p>
+        </div>
+
+        {/*
+          Resources are on by default: their counts are small compared with
+          character-level object changes, and a metadata edit is cheap to find.
+          Every switch is read-only — nothing is opened, filled in or executed.
+        */}
+        <div className={styles.options} role="group" aria-labelledby={contentId}>
+          <span id={contentId} className={styles.groupTitle}>
+            {t('diff.setup.contentGroup')}
+          </span>
+          {CONTENT_OPTIONS.map((option) => (
+            <label key={option.type} className={styles.checkboxRow}>
+              <input
+                type="checkbox"
+                checked={options[option.ignoreKey] !== true}
+                disabled={loading}
+                onChange={(event) => setResourceIncluded(option.type, event.target.checked)}
+              />
+              {t(option.labelKey)}
+            </label>
+          ))}
+          <p className={styles.optionHint}>{t('diff.setup.contentHint')}</p>
         </div>
 
         <div className={styles.errorArea} role="alert">

@@ -6,15 +6,27 @@
  * canvas, and so the components stay thin. Coordinate handling matches the
  * rest of the app: diff boxes are MediaBox-relative PDF points with y growing
  * upwards, and the canvas flips them against the rendered page height.
+ *
+ * Page changes are object changes plus annotation/link/form resource changes:
+ * the engine gives a resource the same `DiffChange` shape, so filtering,
+ * grouping, previews and boxes work for both without a second code path.
+ * Metadata and page labels are document changes (`DiffResult.documentChanges`)
+ * and are filtered/described by their own helpers below.
  */
 import {
   DIFF_OBJECT_TYPES,
+  DIFF_PAGE_RESOURCE_TYPES,
+  DIFF_RESOURCE_TYPES,
   type DiffBBox,
   type DiffChange,
   type DiffChangeKind,
+  type DiffChangeType,
+  type DiffDocumentChange,
   type DiffObjectType,
   type DiffPage,
+  type DiffPageResourceType,
   type DiffPageSize,
+  type DiffResourceType,
   type DiffSide,
 } from '../../shared/diff-types';
 import { DEFAULT_LOCALE } from '../i18n/locales';
@@ -38,10 +50,118 @@ export const DIFF_CHANGE_KINDS: readonly DiffChangeKind[] = [
 
 export const DIFF_OBJECT_TYPE_ORDER: readonly DiffObjectType[] = DIFF_OBJECT_TYPES;
 
+/** Page-level resource types, in the engine's report order. */
+export const DIFF_PAGE_RESOURCE_TYPE_ORDER: readonly DiffPageResourceType[] =
+  DIFF_PAGE_RESOURCE_TYPES;
+
+/** Every resource type, including the document-level `metadata`/`page-label`. */
+export const DIFF_RESOURCE_TYPE_ORDER: readonly DiffResourceType[] = DIFF_RESOURCE_TYPES;
+
+/**
+ * Every type a page change list can carry, in the order the engine sorts them:
+ * object types first, then annotations, links and form widgets.
+ *
+ * The type dropdown and the badge list use this, so a resource type is
+ * selectable without a second table. `metadata`/`page-label` are deliberately
+ * absent: they are document changes, not page changes.
+ */
+export const DIFF_CHANGE_TYPE_ORDER: readonly DiffChangeType[] = [
+  ...DIFF_OBJECT_TYPES,
+  ...DIFF_PAGE_RESOURCE_TYPES,
+];
+
+/** Document-level change types; never present in a page change list. */
+export const DIFF_DOCUMENT_CHANGE_TYPES: readonly DiffDocumentChange['type'][] = [
+  'metadata',
+  'page-label',
+];
+
+/**
+ * Every option of the workspace's type filter: page change types first, then
+ * the document change types.
+ *
+ * `metadata`/`page-label` are listed so a document row can be isolated, even
+ * though they never match a page change. Label text comes from
+ * `diffChangeTypeLabel`; object types keep their raw schema value.
+ */
+export const DIFF_FILTER_TYPE_ORDER: readonly DiffChangeType[] = [
+  ...DIFF_CHANGE_TYPE_ORDER,
+  ...DIFF_DOCUMENT_CHANGE_TYPES,
+];
+
+const PAGE_RESOURCE_TYPE_SET: ReadonlySet<string> = new Set(DIFF_PAGE_RESOURCE_TYPES);
+const RESOURCE_TYPE_SET: ReadonlySet<string> = new Set(DIFF_RESOURCE_TYPES);
+
+/** True for an annotation/link/form change (a resource inside a page). */
+export const isPageResourceChange = (
+  change: DiffChange,
+): change is DiffChange & { type: DiffPageResourceType } =>
+  PAGE_RESOURCE_TYPE_SET.has(change.type);
+
+const RESOURCE_TYPE_LABEL_KEYS: Record<DiffResourceType, MessageKey> = {
+  annotation: 'diff.resource.type.annotation',
+  link: 'diff.resource.type.link',
+  form: 'diff.resource.type.form',
+  metadata: 'diff.resource.type.metadata',
+  'page-label': 'diff.resource.type.page-label',
+};
+
+/**
+ * Display label of a change type.
+ *
+ * Object types and raw schema values (`word`, `rect`, …) stay verbatim;
+ * resource types get a translated badge/option label. Document change types
+ * (`metadata`, `page-label`) use the same table.
+ */
+export function diffChangeTypeLabel(
+  type: DiffChangeType,
+  t: TranslateFn = defaultTranslate,
+): string {
+  return RESOURCE_TYPE_SET.has(type)
+    ? t(RESOURCE_TYPE_LABEL_KEYS[type as DiffResourceType])
+    : type;
+}
+
+/** Page-level resource changes per type, for the workspace summary. */
+export function countPageResourceChanges(
+  pages: DiffPage[],
+): Record<DiffPageResourceType, number> {
+  const counts: Record<DiffPageResourceType, number> = { annotation: 0, link: 0, form: 0 };
+  for (const page of pages) {
+    for (const change of page.changes) {
+      if (isPageResourceChange(change)) counts[change.type] += 1;
+    }
+  }
+  return counts;
+}
+
+/**
+ * Result-page index that shows a 1-based PDF page number.
+ *
+ * Page labels describe the new document when it still has the page, so the new
+ * side wins; a removed page falls back to the old side. Returns `null` when
+ * neither side lists the page, which disables "Go to page" rather than jumping
+ * somewhere unrelated.
+ */
+export function findResultPageIndexForPdfPage(
+  pages: DiffPage[],
+  page: number,
+): number | null {
+  if (!Number.isFinite(page)) return null;
+  const newMatch = pages.findIndex((candidate) => candidate.newIndex === page);
+  if (newMatch >= 0) return newMatch;
+  const oldMatch = pages.findIndex((candidate) => candidate.oldIndex === page);
+  return oldMatch >= 0 ? oldMatch : null;
+}
+
+/** True for a document change type (`metadata` or `page-label`). */
+export const isDocumentChangeType = (type: string): type is DiffDocumentChange['type'] =>
+  type === 'metadata' || type === 'page-label';
+
 /** `'all'` means "no restriction", which is the default for both dropdowns. */
 export interface DiffFilter {
   kind: DiffChangeKind | 'all';
-  type: DiffObjectType | 'all';
+  type: DiffChangeType | 'all';
 }
 
 export const DEFAULT_DIFF_FILTER: DiffFilter = { kind: 'all', type: 'all' };
@@ -104,6 +224,37 @@ export function countFilteredChanges(pages: DiffPage[], filter: DiffFilter): num
   );
 }
 
+/**
+ * True when a document change survives the type filter.
+ *
+ * Document changes are document-scoped, so the page filter and the kind filter
+ * never apply to them: a metadata row is listed even while the user is looking
+ * at "added" page changes.
+ */
+export function matchesDocumentChangeFilter(
+  change: DiffDocumentChange,
+  filter: DiffFilter,
+): boolean {
+  return filter.type === 'all' || change.type === filter.type;
+}
+
+/** Document changes matching the filter, in the engine's order. */
+export function filterDocumentChanges(
+  changes: readonly DiffDocumentChange[] | undefined,
+  filter: DiffFilter,
+): DiffDocumentChange[] {
+  if (!changes) return [];
+  return changes.filter((change) => matchesDocumentChangeFilter(change, filter));
+}
+
+/** Number of document changes matching the filter. */
+export function countFilteredDocumentChanges(
+  changes: readonly DiffDocumentChange[] | undefined,
+  filter: DiffFilter,
+): number {
+  return filterDocumentChanges(changes, filter).length;
+}
+
 /** The first page worth showing after a diff: the first one that changed. */
 export function firstInterestingPageIndex(pages: DiffPage[]): number {
   const index = pages.findIndex((page) => page.status !== 'unchanged');
@@ -148,6 +299,11 @@ export interface DiffBoxSpec {
   /** Page size the bbox is measured against (PDF points). */
   space: DiffPageSize;
   selected: boolean;
+  /**
+   * True for an annotation/link/form change. Resource boxes are stroked with a
+   * dashed outline so a page object and a page resource never look alike.
+   */
+  resource?: boolean;
 }
 
 export interface DiffBoxRect {
@@ -160,6 +316,8 @@ export interface DiffBoxRect {
   height: number;
   color: string;
   selected: boolean;
+  /** Mirrors `DiffBoxSpec.resource`: the canvas draws it dashed. */
+  resource: boolean;
 }
 
 const validSize = (size: DiffPageSize | null | undefined): size is DiffPageSize =>
@@ -177,7 +335,10 @@ const validBBox = (bbox: DiffBBox | null | undefined): bbox is DiffBBox =>
  * Collect the boxes a pane must draw for one page and one side.
  *
  * Page-geometry changes and changes without a bbox on that side are skipped.
- * The selected box is emitted last so it is painted on top of its neighbours.
+ * Annotation/link/form changes are drawn like object changes whenever they
+ * carry a bbox; document changes never reach a page and therefore never draw a
+ * box. The selected box is emitted last so it is painted on top of its
+ * neighbours.
  */
 export function collectPageBoxes(
   page: DiffPage,
@@ -202,6 +363,7 @@ export function collectPageBoxes(
       side,
       bbox,
       space,
+      resource: isPageResourceChange(change),
       selected: Boolean(
         selection && selection.pageIndex === pageIndex && selection.changeIndex === changeIndex,
       ),
@@ -267,6 +429,7 @@ export function diffBoxRects(
       side: box.side,
       color: DIFF_BOX_COLORS[box.side][box.kind],
       selected: box.selected,
+      resource: box.resource === true,
       ...rect,
     });
     return rects;
@@ -391,11 +554,37 @@ interface DetailPair {
   new?: unknown;
 }
 
+/** Detail keys rendered by their own component or carried as provenance. */
+const DETAIL_SKIPPED_KEYS: ReadonlySet<string> = new Set([
+  'cellChanges',
+  'pageGeometry',
+  // Resource provenance: the kind and the engine's pairing identity are not a
+  // before/after value, so they never become a row.
+  'resource',
+  'identity',
+]);
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
 
 const isPair = (value: unknown): value is DetailPair =>
   isRecord(value) && ('old' in value || 'new' in value);
+
+/**
+ * Internal destination page of a link change, preferring the new side.
+ *
+ * External links have no `internalPage`, so they stay text-only: this helper
+ * never resolves a URI and never opens anything. A `null` new target falls back
+ * to the old page when a link stopped being internal.
+ */
+export function diffLinkTargetPage(change: DiffChange): number | null {
+  if (change.type !== 'link') return null;
+  const value = change.details?.internalPage;
+  if (!isPair(value)) return null;
+  const candidate = value.new ?? value.old;
+  if (typeof candidate !== 'number' || !Number.isFinite(candidate)) return null;
+  return Math.trunc(candidate);
+}
 
 const formatValue = (value: unknown, t: TranslateFn): string => {
   if (value === undefined || value === null) return '—';
@@ -404,6 +593,17 @@ const formatValue = (value: unknown, t: TranslateFn): string => {
     return Number.isFinite(value) ? String(Math.round(value * 1000) / 1000) : '—';
   }
   if (typeof value === 'boolean') return value ? t('diff.detail.yes') : t('diff.detail.no');
+  // Flat scalar arrays (colour channels, options, flags) read as a comma list.
+  // Nested structures (e.g. curve `points` as `[[x, y], …]`) keep their JSON
+  // shape: flattening them into `10, 20, 30, 40` would lose the pairing.
+  if (Array.isArray(value)) {
+    const flat = value.every(
+      (item) => item === null || item === undefined || typeof item !== 'object',
+    );
+    return flat
+      ? value.map((item) => formatValue(item, t)).join(', ')
+      : JSON.stringify(value);
+  }
   if (isRecord(value)) {
     const width = value.width;
     const height = value.height;
@@ -413,17 +613,34 @@ const formatValue = (value: unknown, t: TranslateFn): string => {
     if (typeof value.x === 'number' && typeof value.y === 'number') {
       return `${value.x}, ${value.y}`;
     }
+    // Resource `rect` details are PDF boxes; format them like `formatDiffBBox`
+    // instead of dumping JSON into the details table.
+    if (
+      typeof value.x0 === 'number' &&
+      typeof value.y0 === 'number' &&
+      typeof value.x1 === 'number' &&
+      typeof value.y1 === 'number'
+    ) {
+      return formatDiffBBox({
+        x0: value.x0,
+        y0: value.y0,
+        x1: value.x1,
+        y1: value.y1,
+      });
+    }
     return JSON.stringify(value);
   }
-  if (Array.isArray(value)) return value.map((item) => formatValue(item, t)).join(', ');
   return String(value);
 };
 
 /**
  * Flatten `change.details` into label/old/new rows.
  *
- * `cellChanges` and `pageGeometry` are handled by their own renderers, so they
- * are excluded here.
+ * `cellChanges` and `pageGeometry` are handled by their own renderers, and the
+ * resource provenance keys (`resource`, `identity`) are metadata rather than a
+ * change, so all four are excluded here. Every other key — including resource
+ * field names such as `contents`, `uri` or `fieldName` — is shown verbatim
+ * until the i18n catalog names it.
  */
 export function describeDiffDetails(
   change: DiffChange,
@@ -431,7 +648,7 @@ export function describeDiffDetails(
 ): DiffDetailRow[] {
   const details = change.details ?? {};
   return Object.entries(details).reduce<DiffDetailRow[]>((rows, [key, value]) => {
-    if (key === 'cellChanges' || key === 'pageGeometry') return rows;
+    if (DETAIL_SKIPPED_KEYS.has(key)) return rows;
     const labelKey = DETAIL_LABEL_KEYS[key];
     // Unknown detail keys are engine field names: show them verbatim.
     const label = labelKey ? t(labelKey) : key;
@@ -446,6 +663,50 @@ export function describeDiffDetails(
     }
     return rows;
   }, []);
+}
+
+/**
+ * Old/new rows of one document change (metadata field or page label).
+ *
+ * The field name is a schema value (`title`, `page-label`, …) and is shown
+ * verbatim, exactly like an object change's unknown detail keys. Label
+ * style/prefix/start differences follow as their own rows.
+ */
+export function describeDocumentChange(
+  change: DiffDocumentChange,
+  t: TranslateFn = defaultTranslate,
+): DiffDetailRow[] {
+  const rows: DiffDetailRow[] = [
+    {
+      label: change.field,
+      oldValue: formatValue(change.oldValue, t),
+      newValue: formatValue(change.newValue, t),
+    },
+  ];
+  for (const [key, value] of Object.entries(change.details ?? {})) {
+    if (!isPair(value)) continue;
+    rows.push({
+      label: key,
+      oldValue: formatValue(value.old, t),
+      newValue: formatValue(value.new, t),
+    });
+  }
+  return rows;
+}
+
+/**
+ * One-line preview of a document change: its new value, else its old one.
+ *
+ * A metadata row can legitimately have an empty new value (a removed field), so
+ * an empty preview falls back to the translated "(empty)" placeholder instead of
+ * rendering a blank row.
+ */
+export function diffDocumentChangePreview(
+  change: DiffDocumentChange,
+  t: TranslateFn = defaultTranslate,
+): string {
+  const value = (change.newValue ?? change.oldValue ?? '').replace(/\s+/g, ' ').trim();
+  return value || t('diff.detail.empty');
 }
 
 export interface TableCellChange {

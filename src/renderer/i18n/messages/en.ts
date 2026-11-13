@@ -339,6 +339,14 @@ export const en = {
   'diff.setup.characterLevel': 'Character-level changes',
   'diff.setup.characterLevelHint':
     'Word-level changes are always reported. Character-level changes are optional because a large text PDF can produce millions of one-glyph changes.',
+  'diff.setup.contentGroup': 'Content',
+  'diff.setup.includeAnnotations': 'Annotations',
+  'diff.setup.includeLinks': 'Links',
+  'diff.setup.includeForms': 'Forms',
+  'diff.setup.includeMetadata': 'Metadata',
+  'diff.setup.includePageLabels': 'Page labels',
+  'diff.setup.contentHint':
+    'Annotations, links, forms, metadata and page labels are compared by default. They are read-only: links are never opened and forms are never filled in.',
   'diff.setup.comparing': 'Comparing documents…',
   'diff.setup.comparingHint':
     'Large PDFs can take several minutes; the comparison continues while pages make progress.',
@@ -418,12 +426,26 @@ export const en = {
   'diff.summary.objectsRemoved': 'Objects removed',
   'diff.summary.objectsMoved': 'Objects moved',
   'diff.summary.objectsModified': 'Objects modified',
+  'diff.summary.annotations': 'Annotations',
+  'diff.summary.links': 'Links',
+  'diff.summary.forms': 'Forms',
+  'diff.summary.documentChanges': 'Document changes',
   'diff.filter.kind': 'Kind',
   'diff.filter.kindTitle': 'Filter by kind',
   'diff.filter.allKinds': 'All kinds',
   'diff.filter.type': 'Type',
   'diff.filter.typeTitle': 'Filter by type',
   'diff.filter.allTypes': 'All types',
+  'diff.resource.type.annotation': 'Annotation',
+  'diff.resource.type.link': 'Link',
+  'diff.resource.type.form': 'Form',
+  'diff.resource.type.metadata': 'Metadata',
+  'diff.resource.type.page-label': 'Page label',
+
+  // --- Document changes (metadata / page labels) ---------------------------
+  'diff.documentChanges.title': 'Document changes',
+  'diff.documentChanges.empty': 'No document changes match this filter.',
+  'diff.documentChanges.goToPage': 'Go to page',
 
   // --- Diff ignore regions ------------------------------------------------
   'diff.region.panelLabel': 'Ignore regions',

@@ -2,20 +2,35 @@ import { describe, expect, it } from 'vitest';
 import { translate, type TranslateFn } from '../../i18n/translate';
 import {
   DIFF_BOX_COLORS,
+  DIFF_CHANGE_TYPE_ORDER,
+  DIFF_FILTER_TYPE_ORDER,
+  DIFF_PAGE_RESOURCE_TYPE_ORDER,
+  DIFF_RESOURCE_TYPE_ORDER,
   buildDiffPageGroups,
   clampDiffZoom,
   collectOverlayBoxes,
   collectPageBoxes,
   computeDiffFitZoom,
   countFilteredChanges,
+  countFilteredDocumentChanges,
+  countPageResourceChanges,
   describeDiffDetails,
+  describeDocumentChange,
   diffBoxRects,
   diffChangePreview,
+  diffChangeTypeLabel,
+  diffDocumentChangePreview,
+  diffLinkTargetPage,
   diffPageLabel,
   diffPageStatusLabel,
+  filterDocumentChanges,
+  findResultPageIndexForPdfPage,
   firstInterestingPageIndex,
   isDiffResultEmpty,
+  isDocumentChangeType,
   isPageGeometryChange,
+  isPageResourceChange,
+  matchesDocumentChangeFilter,
   pageGeometrySummary,
   projectDiffBBox,
   resolveDiffPageJump,
@@ -25,6 +40,7 @@ import {
 } from '../diff-view';
 import {
   makeChange,
+  makeDocumentChange,
   makeIdenticalResult,
   makePage,
   makeResult,
@@ -416,5 +432,381 @@ describe('resolveDiffPageJump', () => {
     expect(resolveDiffPageJump('1', 0)).toBeNull();
     expect(resolveDiffPageJump('1', Number.NaN)).toBeNull();
     expect(resolveDiffPageJump('1', -3)).toBeNull();
+  });
+});
+
+/** A page-level resource change, shaped like the engine's output. */
+const makeResourceChange = (
+  overrides: Parameters<typeof makeChange>[0] = {},
+): ReturnType<typeof makeChange> =>
+  makeChange({
+    type: 'annotation',
+    textOld: 'Old note',
+    textNew: 'New note',
+    details: {
+      resource: 'annotation',
+      identity: 'ann:nm:a1',
+      contents: { old: 'Old note', new: 'New note' },
+    },
+    ...overrides,
+  });
+
+describe('change type order and resource detection', () => {
+  it('orders object types before resource types', () => {
+    expect(DIFF_CHANGE_TYPE_ORDER).toEqual([
+      'word',
+      'char',
+      'rect',
+      'line',
+      'curve',
+      'image',
+      'table',
+      'annotation',
+      'link',
+      'form',
+    ]);
+    // Document-level types are never page change types.
+    expect(DIFF_CHANGE_TYPE_ORDER).not.toContain('metadata');
+    expect(DIFF_CHANGE_TYPE_ORDER).not.toContain('page-label');
+    expect(DIFF_PAGE_RESOURCE_TYPE_ORDER).toEqual(['annotation', 'link', 'form']);
+    expect(DIFF_RESOURCE_TYPE_ORDER).toEqual([
+      'annotation',
+      'link',
+      'form',
+      'metadata',
+      'page-label',
+    ]);
+  });
+
+  it('recognises page resources and document change types', () => {
+    expect(isPageResourceChange(makeResourceChange())).toBe(true);
+    expect(isPageResourceChange(makeChange({ type: 'link' }))).toBe(true);
+    expect(isPageResourceChange(makeChange({ type: 'form' }))).toBe(true);
+    expect(isPageResourceChange(makeChange({ type: 'word' }))).toBe(false);
+    // A document change type never reaches a page change list.
+    expect(isPageResourceChange(makeChange({ type: 'metadata' as never }))).toBe(false);
+
+    expect(isDocumentChangeType('metadata')).toBe(true);
+    expect(isDocumentChangeType('page-label')).toBe(true);
+    expect(isDocumentChangeType('annotation')).toBe(false);
+    expect(isDocumentChangeType('word')).toBe(false);
+  });
+});
+
+describe('resource filters', () => {
+  const pages = [
+    makePage({
+      changes: [
+        makeResourceChange(),
+        makeChange({ type: 'link', details: { resource: 'link' } }),
+        makeChange({ type: 'word' }),
+      ],
+    }),
+    makePage({
+      oldIndex: 2,
+      newIndex: 2,
+      changes: [makeResourceChange({ kind: 'removed', type: 'form' })],
+    }),
+  ];
+
+  it('filters page groups by a resource type', () => {
+    const groups = buildDiffPageGroups(pages, { kind: 'all', type: 'annotation' });
+
+    expect(groups.map((group) => group.pageIndex)).toEqual([0]);
+    expect(groups[0].changes.map((entry) => entry.change.type)).toEqual(['annotation']);
+  });
+
+  it('counts resource changes like object changes', () => {
+    expect(countFilteredChanges(pages, DEFAULT_FILTER)).toBe(4);
+    expect(countFilteredChanges(pages, { kind: 'all', type: 'form' })).toBe(1);
+    expect(countFilteredChanges(pages, { kind: 'all', type: 'link' })).toBe(1);
+    expect(countFilteredChanges(pages, { kind: 'all', type: 'page-label' })).toBe(0);
+  });
+});
+
+describe('collectPageBoxes with resources', () => {
+  it('draws resource changes that carry a bbox', () => {
+    const page = makePage({ changes: [makeResourceChange()] });
+
+    const oldBoxes = collectPageBoxes(page, 'old', null, 0);
+    const newBoxes = collectPageBoxes(page, 'new', null, 0);
+
+    expect(oldBoxes).toHaveLength(1);
+    expect(newBoxes).toHaveLength(1);
+    expect(oldBoxes[0].bbox).toEqual({ x0: 10, y0: 700, x1: 60, y1: 712 });
+    expect(diffBoxRects(oldBoxes, 612, 792)).toHaveLength(1);
+  });
+
+  it('skips a resource change without a bbox on that side', () => {
+    const page = makePage({
+      changes: [makeResourceChange({ oldBBox: null, newBBox: null })],
+    });
+
+    expect(collectPageBoxes(page, 'old', null, 0)).toEqual([]);
+    expect(collectPageBoxes(page, 'new', null, 0)).toEqual([]);
+  });
+});
+
+describe('resource change details', () => {
+  it('shows field pairs but not the resource provenance keys', () => {
+    const rows = describeDiffDetails(
+      makeResourceChange({
+        details: {
+          resource: 'annotation',
+          identity: 'ann:nm:a1',
+          subtype: { old: 'Square', new: 'Circle' },
+          color: { old: [1, 0, 0], new: [0, 0, 1] },
+          opacity: { old: 1, new: 0.5 },
+        },
+      }),
+    );
+
+    // `color` already has a translated label; `subtype`/`opacity` are shown
+    // verbatim until the i18n catalog names them.
+    expect(rows.map((row) => row.label)).toEqual(['subtype', 'Colour', 'opacity']);
+    expect(rows[0]).toEqual({ label: 'subtype', oldValue: 'Square', newValue: 'Circle' });
+    expect(rows[2]).toEqual({ label: 'opacity', oldValue: '1', newValue: '0.5' });
+  });
+
+  it('previews a resource change from its text', () => {
+    expect(diffChangePreview(makeResourceChange())).toBe('New note');
+    expect(
+      diffChangePreview(
+        makeResourceChange({ textOld: null, textNew: null, details: { resource: 'link' } }),
+      ),
+    ).toBe('10, 700 → 60, 712');
+  });
+});
+
+describe('document changes', () => {
+  const metadata = {
+    kind: 'modified' as const,
+    type: 'metadata' as const,
+    page: null,
+    field: 'title',
+    oldValue: 'Old title',
+    newValue: 'New title',
+    details: {},
+  };
+  const pageLabel = {
+    kind: 'modified' as const,
+    type: 'page-label' as const,
+    page: 3,
+    field: 'page-label',
+    oldValue: '1',
+    newValue: '5',
+    details: { start: { old: 1, new: 5 } },
+  };
+
+  it('filters document changes by type only', () => {
+    const changes = [metadata, pageLabel];
+
+    expect(filterDocumentChanges(changes, DEFAULT_FILTER)).toHaveLength(2);
+    expect(filterDocumentChanges(changes, { kind: 'all', type: 'metadata' })).toEqual([metadata]);
+    expect(filterDocumentChanges(changes, { kind: 'all', type: 'page-label' })).toEqual([pageLabel]);
+    // A page-level type never matches a document change.
+    expect(filterDocumentChanges(changes, { kind: 'all', type: 'word' })).toEqual([]);
+    // The kind filter is page-scoped, so a document row survives it.
+    expect(matchesDocumentChangeFilter(metadata, { kind: 'added', type: 'all' })).toBe(true);
+    expect(filterDocumentChanges(undefined, DEFAULT_FILTER)).toEqual([]);
+    expect(countFilteredDocumentChanges(changes, { kind: 'all', type: 'metadata' })).toBe(1);
+    expect(countFilteredDocumentChanges(undefined, DEFAULT_FILTER)).toBe(0);
+  });
+
+  it('renders old/new rows for a metadata field', () => {
+    expect(describeDocumentChange(metadata)).toEqual([
+      { label: 'title', oldValue: 'Old title', newValue: 'New title' },
+    ]);
+    expect(describeDocumentChange({ ...metadata, oldValue: null })).toEqual([
+      { label: 'title', oldValue: '—', newValue: 'New title' },
+    ]);
+  });
+
+  it('renders the label fields of a page label change', () => {
+    expect(describeDocumentChange(pageLabel)).toEqual([
+      { label: 'page-label', oldValue: '1', newValue: '5' },
+      { label: 'start', oldValue: '1', newValue: '5' },
+    ]);
+    expect(diffDocumentChangePreview(pageLabel)).toBe('5');
+    expect(diffDocumentChangePreview(metadata)).toBe('New title');
+    expect(
+      diffDocumentChangePreview({ ...metadata, oldValue: null, newValue: null }),
+    ).toBe('(empty)');
+  });
+
+  it('keeps document changes out of the page groups', () => {
+    const result = makeResult([makePage({ changes: [makeResourceChange()] })]);
+
+    // Document changes live on the result, not in a page change list.
+    expect(buildDiffPageGroups(result.pages, DEFAULT_FILTER)).toHaveLength(1);
+    expect(result.pages[0].changes.every(isPageResourceChange)).toBe(true);
+  });
+});
+
+describe('resource labels, counts and navigation', () => {
+  it('keeps object type labels raw and translates resource labels', () => {
+    const tZh: TranslateFn = (key, params) => translate('zh-CN', key, params);
+
+    expect(diffChangeTypeLabel('word')).toBe('word');
+    expect(diffChangeTypeLabel('annotation')).toBe('Annotation');
+    expect(diffChangeTypeLabel('link')).toBe('Link');
+    expect(diffChangeTypeLabel('form')).toBe('Form');
+    expect(diffChangeTypeLabel('metadata')).toBe('Metadata');
+    expect(diffChangeTypeLabel('page-label')).toBe('Page label');
+
+    expect(diffChangeTypeLabel('word', tZh)).toBe('word');
+    expect(diffChangeTypeLabel('annotation', tZh)).toBe('注释');
+    expect(diffChangeTypeLabel('page-label', tZh)).toBe('页面标签');
+  });
+
+  it('offers every page and document change type in the filter', () => {
+    expect(DIFF_FILTER_TYPE_ORDER).toEqual([
+      ...DIFF_CHANGE_TYPE_ORDER,
+      'metadata',
+      'page-label',
+    ]);
+    expect(DIFF_FILTER_TYPE_ORDER).toContain('annotation');
+    expect(DIFF_FILTER_TYPE_ORDER).toContain('link');
+    expect(DIFF_FILTER_TYPE_ORDER).toContain('form');
+    expect(DIFF_FILTER_TYPE_ORDER).toContain('metadata');
+    expect(DIFF_FILTER_TYPE_ORDER).toContain('page-label');
+  });
+
+  it('counts page resources per type without counting object changes', () => {
+    const pages = [
+      makePage({
+        changes: [
+          makeChange({ type: 'word' }),
+          makeResourceChange(),
+          makeChange({ type: 'link' }),
+        ],
+      }),
+      makePage({
+        oldIndex: 2,
+        newIndex: 2,
+        changes: [makeChange({ type: 'form' }), makeResourceChange({ kind: 'removed' })],
+      }),
+    ];
+
+    expect(countPageResourceChanges(pages)).toEqual({ annotation: 2, link: 1, form: 1 });
+    expect(countPageResourceChanges([])).toEqual({ annotation: 0, link: 0, form: 0 });
+  });
+
+  it('maps a PDF page to the result page that shows it', () => {
+    const pages = [
+      makePage({ oldIndex: 1, newIndex: 1 }),
+      makePage({ oldIndex: 2, newIndex: 3 }),
+      makePage({ oldIndex: null, newIndex: 4, status: 'added', oldSize: null }),
+      makePage({ oldIndex: 5, newIndex: null, status: 'removed', newSize: null }),
+    ];
+
+    // The new side wins when both sides have the page...
+    expect(findResultPageIndexForPdfPage(pages, 1)).toBe(0);
+    expect(findResultPageIndexForPdfPage(pages, 3)).toBe(1);
+    expect(findResultPageIndexForPdfPage(pages, 4)).toBe(2);
+    // ...and a removed page falls back to the old side.
+    expect(findResultPageIndexForPdfPage(pages, 5)).toBe(3);
+    expect(findResultPageIndexForPdfPage(pages, 99)).toBeNull();
+    expect(findResultPageIndexForPdfPage(pages, Number.NaN)).toBeNull();
+  });
+});
+
+describe('resource boxes', () => {
+  it('marks annotation/link/form boxes as resources and object boxes as plain', () => {
+    const page = makePage({
+      changes: [
+        makeChange({ type: 'word' }),
+        makeResourceChange(),
+        makeChange({ type: 'link' }),
+        makeChange({ type: 'form' }),
+      ],
+    });
+
+    const boxes = collectPageBoxes(page, 'old', null, 0);
+    expect(boxes.map((box) => box.resource)).toEqual([false, true, true, true]);
+
+    const rects = diffBoxRects(boxes, 612, 792);
+    expect(rects.map((rect) => rect.resource)).toEqual([false, true, true, true]);
+  });
+
+  it('never draws metadata or page-label rows', () => {
+    const page = makePage({ changes: [makeResourceChange()] });
+    const result = {
+      ...makeResult([page]),
+      documentChanges: [
+        makeDocumentChange(),
+        makeDocumentChange({ type: 'page-label', page: 1, field: 'page-label' }),
+      ],
+    };
+
+    // Document changes carry no bbox and are not part of a page change list, so
+    // the only box is the annotation's.
+    const boxes = collectPageBoxes(result.pages[0], 'old', null, 0);
+    expect(boxes).toHaveLength(1);
+    expect(boxes[0].resource).toBe(true);
+  });
+
+  it('formats a resource rect detail as a readable PDF box', () => {
+    const rows = describeDiffDetails(
+      makeResourceChange({
+        details: {
+          resource: 'annotation',
+          rect: { old: { x0: 1, y0: 2, x1: 3, y1: 4 }, new: { x0: 5, y0: 6, x1: 7, y1: 8 } },
+          color: { old: [1, 0, 0], new: [0, 0, 1] },
+        },
+      }),
+    );
+
+    expect(rows).toEqual([
+      { label: 'rect', oldValue: '1, 2 → 3, 4 pt', newValue: '5, 6 → 7, 8 pt' },
+      { label: 'Colour', oldValue: '1, 0, 0', newValue: '0, 0, 1' },
+    ]);
+  });
+
+  it('joins flat arrays but keeps nested point arrays in their JSON shape', () => {
+    const rows = describeDiffDetails(
+      makeChange({
+        details: {
+          options: { old: ['A', 'B'], new: ['A', 'C'] },
+          flags: { old: [1, 0], new: [0, 1] },
+          points: {
+            old: [[10, 20], [30, 40]],
+            new: [[11, 21], [31, 41]],
+          },
+          segments: {
+            old: [{ x: 1, y: 2 }],
+            new: [{ x: 3, y: 4 }],
+          },
+        },
+      }),
+    );
+
+    expect(rows).toEqual([
+      { label: 'options', oldValue: 'A, B', newValue: 'A, C' },
+      { label: 'flags', oldValue: '1, 0', newValue: '0, 1' },
+      {
+        label: 'Points',
+        oldValue: '[[10,20],[30,40]]',
+        newValue: '[[11,21],[31,41]]',
+      },
+      {
+        label: 'segments',
+        oldValue: '[{"x":1,"y":2}]',
+        newValue: '[{"x":3,"y":4}]',
+      },
+    ]);
+  });
+
+  it('resolves an internal link target page without touching external URIs', () => {
+    const link = (details: Record<string, unknown>): ReturnType<typeof makeChange> =>
+      makeChange({ type: 'link', details: { resource: 'link', ...details } });
+
+    expect(diffLinkTargetPage(link({ internalPage: { old: 2, new: 3 } }))).toBe(3);
+    // A link that stopped being internal falls back to the old destination.
+    expect(diffLinkTargetPage(link({ internalPage: { old: 2, new: null } }))).toBe(2);
+    expect(diffLinkTargetPage(link({ uri: { old: 'a', new: 'b' } }))).toBeNull();
+    expect(diffLinkTargetPage(link({ internalPage: { old: 2.7, new: 3.9 } }))).toBe(3);
+    expect(diffLinkTargetPage(link({ internalPage: { old: '2', new: '3' } }))).toBeNull();
+    expect(diffLinkTargetPage(makeChange({ type: 'annotation' }))).toBeNull();
   });
 });

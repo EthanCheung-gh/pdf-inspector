@@ -8,6 +8,7 @@ import { useI18nStore } from '../../i18n';
 import { useDiffStore } from '../../store/diff-store';
 import {
   makeChange,
+  makeDocumentChange,
   makeIdenticalResult,
   makePage,
   makeResult,
@@ -521,7 +522,7 @@ describe('DiffWorkspace localization', () => {
     expect(within(summary).getByText('删除对象').nextSibling?.textContent).toBe('2');
 
     expect(screen.getByLabelText('按变更类型筛选')).toBeTruthy();
-    expect(screen.getByLabelText('按对象类型筛选')).toBeTruthy();
+    expect(screen.getByLabelText('按类型筛选')).toBeTruthy();
     expect(screen.getByText('4 处变更')).toBeTruthy();
 
     const list = screen.getByTestId('diff-page-list');
@@ -545,14 +546,14 @@ describe('DiffWorkspace localization', () => {
 
     act(() => {
       fireEvent.change(screen.getByLabelText('按变更类型筛选'), { target: { value: 'added' } });
-      fireEvent.change(screen.getByLabelText('按对象类型筛选'), { target: { value: 'table' } });
+      fireEvent.change(screen.getByLabelText('按类型筛选'), { target: { value: 'table' } });
     });
 
     expect(screen.getByText('没有匹配此筛选的变更。')).toBeTruthy();
 
     act(() => {
       fireEvent.change(screen.getByLabelText('按变更类型筛选'), { target: { value: 'all' } });
-      fireEvent.change(screen.getByLabelText('按对象类型筛选'), { target: { value: 'all' } });
+      fireEvent.change(screen.getByLabelText('按类型筛选'), { target: { value: 'all' } });
     });
 
     act(() => {
@@ -704,6 +705,11 @@ describe('DiffWorkspace ignore regions', () => {
       ignoreFonts: false,
       ignoreColors: false,
       ignoreImages: false,
+      ignoreAnnotations: false,
+      ignoreLinks: false,
+      ignoreForms: false,
+      ignoreMetadata: false,
+      ignorePageLabels: false,
       ignoreRegions: [REGION],
     });
     expect(store().result).toBe(reRun);
@@ -1261,5 +1267,369 @@ describe('DiffWorkspace page jump', () => {
     expect(jumpInput().getAttribute('placeholder')).toBe('—');
     expect(goButton().disabled).toBe(true);
     expect(screen.getByTestId('diff-page-jump-status').textContent).toBe('—');
+  });
+});
+
+describe('DiffWorkspace resources and document changes', () => {
+  const annotationChange = (): ReturnType<typeof makeChange> =>
+    makeChange({
+      type: 'annotation',
+      textOld: 'Old note',
+      textNew: 'New note',
+      details: {
+        resource: 'annotation',
+        identity: 'ann:1',
+        contents: { old: 'Old note', new: 'New note' },
+      },
+    });
+  const linkChange = (): ReturnType<typeof makeChange> =>
+    makeChange({
+      type: 'link',
+      textOld: 'https://example.com/old',
+      textNew: 'https://example.com/new',
+      details: {
+        resource: 'link',
+        identity: 'link:1',
+        uri: { old: 'https://example.com/old', new: 'https://example.com/new' },
+      },
+    });
+  const formChange = (): ReturnType<typeof makeChange> =>
+    makeChange({
+      type: 'form',
+      textOld: 'Old value',
+      textNew: 'New value',
+      details: { resource: 'form', identity: 'form:1', value: { old: 'Old value', new: 'New value' } },
+    });
+  const metadata = makeDocumentChange({
+    field: 'title',
+    oldValue: 'Old title',
+    newValue: 'New title',
+  });
+  const pageLabel = makeDocumentChange({
+    type: 'page-label',
+    page: 2,
+    field: 'page-label',
+    oldValue: '1',
+    newValue: '5',
+    details: { start: { old: 1, new: 5 } },
+  });
+
+  const makeResourcesResult = (): ReturnType<typeof makeResult> => {
+    const result = makeResult([
+      makePage({ changes: [annotationChange(), linkChange(), formChange()] }),
+      makePage({ oldIndex: 2, newIndex: 2, status: 'unchanged' }),
+    ]);
+    return {
+      ...result,
+      summary: {
+        ...result.summary,
+        // The fixture counts every change as an object; the engine keeps
+        // resource changes out of the object counters.
+        objectsAdded: 0,
+        objectsRemoved: 0,
+        objectsMoved: 0,
+        objectsModified: 0,
+        documentChanges: 2,
+      },
+      documentChanges: [metadata, pageLabel],
+    };
+  };
+
+  const setup = (result = makeResourcesResult()): void => {
+    act(() => {
+      store().setSource('old', '/docs/old.pdf', 'old.pdf');
+      store().setSource('new', '/docs/new.pdf', 'new.pdf');
+      store().applyResult(result);
+    });
+  };
+
+  const typeSelect = (): HTMLSelectElement =>
+    screen.getByLabelText('Filter by type') as HTMLSelectElement;
+  const pageList = (): HTMLElement => screen.getByTestId('diff-page-list');
+  const documents = (): HTMLElement => screen.getByTestId('diff-document-changes');
+
+  it('shows resource counts and the document change count in the summary', () => {
+    setup();
+    renderWorkspace();
+
+    const summary = screen.getByTestId('diff-summary');
+    expect(within(summary).getByText('Annotations').nextSibling?.textContent).toBe('1');
+    expect(within(summary).getByText('Links').nextSibling?.textContent).toBe('1');
+    expect(within(summary).getByText('Forms').nextSibling?.textContent).toBe('1');
+    expect(within(summary).getByText('Document changes').nextSibling?.textContent).toBe('2');
+    // Object counters still describe object changes only.
+    expect(within(summary).getByText('Objects modified').nextSibling?.textContent).toBe('0');
+  });
+
+  it('offers object, page resource and document types in the type filter', () => {
+    setup();
+    renderWorkspace();
+
+    const select = typeSelect();
+    expect(Array.from(select.options).map((option) => option.value)).toEqual([
+      'all',
+      'word',
+      'char',
+      'rect',
+      'line',
+      'curve',
+      'image',
+      'table',
+      'annotation',
+      'link',
+      'form',
+      'metadata',
+      'page-label',
+    ]);
+    const labels = Array.from(select.options).map((option) => option.textContent);
+    expect(labels).toContain('Annotation');
+    expect(labels).toContain('Link');
+    expect(labels).toContain('Form');
+    expect(labels).toContain('Metadata');
+    expect(labels).toContain('Page label');
+    expect(labels).toContain('word');
+  });
+
+  it('lists page resource changes with a translated type badge and filters them', () => {
+    setup();
+    renderWorkspace();
+
+    const list = pageList();
+    const annotationRow = within(list).getByRole('button', { name: /modified Annotation:/ });
+    expect(within(annotationRow).getByText('Annotation')).toBeTruthy();
+    expect(within(list).getByRole('button', { name: /modified Link:/ })).toBeTruthy();
+    expect(within(list).getByRole('button', { name: /modified Form:/ })).toBeTruthy();
+
+    act(() => {
+      fireEvent.change(typeSelect(), { target: { value: 'annotation' } });
+    });
+
+    expect(within(pageList()).getByRole('button', { name: /modified Annotation:/ })).toBeTruthy();
+    expect(within(pageList()).queryByRole('button', { name: /modified Link:/ })).toBeNull();
+    expect(within(pageList()).queryByRole('button', { name: /modified Form:/ })).toBeNull();
+    // Document rows do not match a page resource type.
+    expect(within(documents()).getByText('No document changes match this filter.')).toBeTruthy();
+  });
+
+  it('lists document changes above the page groups and filters by document type', () => {
+    setup();
+    renderWorkspace();
+
+    expect(within(documents()).getByRole('button', { name: /modified Metadata: New title/ })).toBeTruthy();
+    expect(within(documents()).getByRole('button', { name: /modified Page label: 5/ })).toBeTruthy();
+    // The raw schema field name stays visible and untranslated.
+    expect(within(documents()).getByText('title')).toBeTruthy();
+    expect(within(documents()).getByText('page-label')).toBeTruthy();
+
+    act(() => {
+      fireEvent.change(typeSelect(), { target: { value: 'metadata' } });
+    });
+
+    expect(within(documents()).getByRole('button', { name: /modified Metadata:/ })).toBeTruthy();
+    expect(within(documents()).queryByRole('button', { name: /modified Page label:/ })).toBeNull();
+    expect(screen.getByTestId('diff-document-change-count').textContent).toBe('1');
+    // A document type never matches a page change, so the page list is empty
+    // without showing the global "no changes" message.
+    expect(within(pageList()).queryAllByRole('button')).toHaveLength(0);
+    expect(screen.queryByText('No changes match this filter.')).toBeNull();
+
+    act(() => {
+      fireEvent.change(typeSelect(), { target: { value: 'page-label' } });
+    });
+
+    expect(within(documents()).queryByRole('button', { name: /modified Metadata:/ })).toBeNull();
+    expect(within(documents()).getByRole('button', { name: /modified Page label: 5/ })).toBeTruthy();
+  });
+
+  it('never duplicates a page label as a page change', () => {
+    setup();
+    renderWorkspace();
+
+    expect(within(pageList()).queryByRole('button', { name: /Page label/ })).toBeNull();
+
+    act(() => {
+      fireEvent.change(typeSelect(), { target: { value: 'page-label' } });
+    });
+
+    // The page list has no page-label rows; the document group owns them.
+    expect(within(pageList()).queryAllByRole('button')).toHaveLength(0);
+    expect(within(documents()).getAllByRole('button', { name: /Page label/ })).toHaveLength(1);
+  });
+
+  it('shows document details with old/new values and jumps to a page label', () => {
+    setup();
+    renderWorkspace();
+
+    act(() => {
+      fireEvent.click(within(documents()).getByRole('button', { name: /modified Metadata:/ }));
+    });
+
+    expect(store().documentSelection).toBe(0);
+    expect(store().selection).toBeNull();
+    const metadataDetails = screen.getByTestId('diff-document-details');
+    expect(within(metadataDetails).getByText('title')).toBeTruthy();
+    expect(within(metadataDetails).getByText('Old title')).toBeTruthy();
+    expect(within(metadataDetails).getByText('New title')).toBeTruthy();
+    expect(within(metadataDetails).queryByRole('button', { name: 'Go to page' })).toBeNull();
+
+    act(() => {
+      fireEvent.click(within(documents()).getByRole('button', { name: /modified Page label: 5/ }));
+    });
+
+    expect(store().documentSelection).toBe(1);
+    const labelDetails = screen.getByTestId('diff-document-details');
+    expect(within(labelDetails).getByText('page-label')).toBeTruthy();
+    expect(within(labelDetails).getByText('start')).toBeTruthy();
+
+    act(() => {
+      fireEvent.click(within(labelDetails).getByRole('button', { name: 'Go to page' }));
+    });
+    // Page label 2 resolves to the second result page.
+    expect(store().pageIndex).toBe(1);
+  });
+
+  it('keeps page and document selections mutually exclusive', () => {
+    setup();
+    renderWorkspace();
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /modified Annotation: New note/ }));
+    });
+    expect(store().selection).toEqual({ pageIndex: 0, changeIndex: 0 });
+    expect(store().documentSelection).toBeNull();
+    expect(screen.getByTestId('diff-change-details')).toBeTruthy();
+
+    act(() => {
+      fireEvent.click(within(documents()).getByRole('button', { name: /modified Metadata:/ }));
+    });
+    expect(store().selection).toBeNull();
+    expect(store().documentSelection).toBe(0);
+    expect(screen.getByTestId('diff-document-details')).toBeTruthy();
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /modified Annotation: New note/ }));
+    });
+    expect(store().documentSelection).toBeNull();
+    expect(store().selection).toEqual({ pageIndex: 0, changeIndex: 0 });
+  });
+
+  it('does not claim the documents are identical when only metadata changed', () => {
+    const result = makeResult([makePage({ status: 'unchanged' })]);
+    setup({
+      ...result,
+      summary: { ...result.summary, documentChanges: 1 },
+      documentChanges: [metadata],
+    });
+    renderWorkspace();
+
+    expect(screen.queryByText(/No differences found/)).toBeNull();
+    expect(screen.getByTestId('diff-document-changes')).toBeTruthy();
+    expect(within(pageList()).queryAllByRole('button')).toHaveLength(0);
+  });
+
+  it('hands resource boxes to the panes and object boxes stay plain', () => {
+    setup();
+    renderWorkspace();
+
+    const resourceBoxes = takePanes()[0].boxes;
+    expect(resourceBoxes).toHaveLength(3);
+    expect(resourceBoxes.every((box) => box.resource === true)).toBe(true);
+
+    act(() => {
+      store().applyResult(makeSampleResult());
+    });
+    const objectBoxes = takePanes()[0].boxes;
+    expect(objectBoxes.length).toBeGreaterThan(0);
+    expect(objectBoxes.every((box) => box.resource === false)).toBe(true);
+  });
+
+  it('only points aria-controls at a document list that is actually rendered', () => {
+    setup();
+    renderWorkspace();
+
+    const header = (): HTMLElement =>
+      within(documents()).getByRole('button', { name: /Document changes/ });
+
+    expect(header().getAttribute('aria-controls')).toBe('diff-document-change-list');
+
+    act(() => {
+      fireEvent.click(header());
+    });
+    expect(header().getAttribute('aria-controls')).toBeNull();
+    expect(within(documents()).queryByRole('button', { name: /modified Metadata:/ })).toBeNull();
+
+    act(() => {
+      fireEvent.click(header());
+    });
+    expect(header().getAttribute('aria-controls')).toBe('diff-document-change-list');
+
+    // A filter that hides every document row also hides the list, so the
+    // header must not reference a missing element.
+    act(() => {
+      fireEvent.change(typeSelect(), { target: { value: 'annotation' } });
+    });
+    expect(header().getAttribute('aria-controls')).toBeNull();
+    expect(within(documents()).getByText('No document changes match this filter.')).toBeTruthy();
+  });
+
+  it('jumps to an internal link target without opening an external URI', () => {
+    const link = makeChange({
+      type: 'link',
+      textOld: 'Internal link',
+      textNew: 'Internal link',
+      details: {
+        resource: 'link',
+        identity: 'link:internal',
+        internalPage: { old: 1, new: 2 },
+      },
+    });
+    setup(
+      makeResult([
+        makePage({ changes: [link] }),
+        makePage({ oldIndex: 2, newIndex: 2, status: 'unchanged' }),
+      ]),
+    );
+    renderWorkspace();
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /modified Link: Internal link/ }));
+    });
+
+    const details = screen.getByTestId('diff-change-details');
+    expect(within(details).getByText('internalPage')).toBeTruthy();
+    // The target is text/table content, never an anchor that could open it.
+    expect(within(details).queryByRole('link')).toBeNull();
+
+    act(() => {
+      fireEvent.click(within(details).getByRole('button', { name: 'Go to page' }));
+    });
+    expect(store().pageIndex).toBe(1);
+  });
+
+  it('translates resource counts, document rows and their details', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    setup();
+    renderWorkspace();
+
+    const summary = screen.getByTestId('diff-summary');
+    expect(within(summary).getByText('注释').nextSibling?.textContent).toBe('1');
+    expect(within(summary).getByText('链接').nextSibling?.textContent).toBe('1');
+    expect(within(summary).getByText('表单').nextSibling?.textContent).toBe('1');
+    expect(within(summary).getByText('文档变更').nextSibling?.textContent).toBe('2');
+
+    expect(screen.getByLabelText('按类型筛选')).toBeTruthy();
+    expect(
+      within(pageList()).getByRole('button', { name: /modified 注释: New note/ }),
+    ).toBeTruthy();
+    expect(
+      within(documents()).getByRole('button', { name: /modified 页面标签: 5/ }),
+    ).toBeTruthy();
+
+    act(() => {
+      fireEvent.click(within(documents()).getByRole('button', { name: /modified 页面标签: 5/ }));
+    });
+    const details = screen.getByTestId('diff-document-details');
+    expect(within(details).getByText('页面标签')).toBeTruthy();
+    expect(within(details).getByRole('button', { name: '跳转到页面' })).toBeTruthy();
   });
 });

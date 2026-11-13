@@ -3,11 +3,18 @@ import {
   DEFAULT_DIFF_OPTIONS,
   useDiffStore,
   selectCharacterLevelChanges,
+  selectDiffDocumentChange,
   selectDiffPage,
   selectDiffSelection,
 } from '../diff-store';
 import { usePdfStore } from '../pdf-store';
-import { makeChange, makeSampleResult } from '../../services/__tests__/diff-fixtures';
+import {
+  makeChange,
+  makeDocumentChange,
+  makeResult,
+  makeSampleResult,
+  makePage,
+} from '../../services/__tests__/diff-fixtures';
 
 const store = () => useDiffStore.getState();
 
@@ -453,5 +460,127 @@ describe('diff store visual state', () => {
     expect(store().viewMode).toBe('side-by-side');
     expect(store().visualOpacity).toBe(0.55);
     expect(store().visualStyle).toBe('blend');
+  });
+});
+
+describe('diff store content resources', () => {
+  it('compares every resource by default', () => {
+    expect(DEFAULT_DIFF_OPTIONS).toMatchObject({
+      ignoreAnnotations: false,
+      ignoreLinks: false,
+      ignoreForms: false,
+      ignoreMetadata: false,
+      ignorePageLabels: false,
+    });
+  });
+
+  it('toggles one resource without touching the others', () => {
+    store().setResourceIncluded('annotation', false);
+    store().setResourceIncluded('page-label', false);
+
+    expect(store().options.ignoreAnnotations).toBe(true);
+    expect(store().options.ignorePageLabels).toBe(true);
+    expect(store().options.ignoreLinks).toBe(false);
+    expect(store().options.ignoreForms).toBe(false);
+    expect(store().options.ignoreMetadata).toBe(false);
+
+    store().setResourceIncluded('annotation', true);
+    expect(store().options.ignoreAnnotations).toBe(false);
+  });
+
+  it('maps every resource type to its engine flag', () => {
+    store().setResourceIncluded('link', false);
+    store().setResourceIncluded('form', false);
+    store().setResourceIncluded('metadata', false);
+
+    expect(store().options.ignoreLinks).toBe(true);
+    expect(store().options.ignoreForms).toBe(true);
+    expect(store().options.ignoreMetadata).toBe(true);
+  });
+
+  it('restores the defaults on reset', () => {
+    store().setResourceIncluded('annotation', false);
+    store().setResourceIncluded('metadata', false);
+
+    store().reset();
+
+    expect(store().options.ignoreAnnotations).toBe(false);
+    expect(store().options.ignoreMetadata).toBe(false);
+  });
+});
+
+describe('diff store document selection', () => {
+  const metadata = makeDocumentChange();
+  const pageLabel = makeDocumentChange({
+    type: 'page-label',
+    page: 2,
+    field: 'page-label',
+    oldValue: '1',
+    newValue: '5',
+    details: { start: { old: 1, new: 5 } },
+  });
+
+  const applyWithDocuments = (): void => {
+    store().applyResult({
+      ...makeResult([
+        makePage({ changes: [makeChange()] }),
+        makePage({ oldIndex: 2, newIndex: 2, status: 'unchanged' }),
+      ]),
+      documentChanges: [metadata, pageLabel],
+    });
+  };
+
+  it('selects a document change and resolves it by index', () => {
+    applyWithDocuments();
+
+    store().selectDocumentChange(1);
+
+    expect(store().documentSelection).toBe(1);
+    expect(selectDiffDocumentChange(store())).toEqual({ index: 1, change: pageLabel });
+    // Nothing in the page list is selected.
+    expect(store().selection).toBeNull();
+    expect(selectDiffSelection(store())).toBeNull();
+  });
+
+  it('clears the document selection when a page change is selected', () => {
+    applyWithDocuments();
+    store().selectDocumentChange(0);
+    expect(store().documentSelection).toBe(0);
+
+    store().selectChangeAt(0, 0);
+
+    expect(store().documentSelection).toBeNull();
+    expect(store().selection).toEqual({ pageIndex: 0, changeIndex: 0 });
+  });
+
+  it('clears the page selection when a document change is selected', () => {
+    applyWithDocuments();
+    store().selectChangeAt(0, 0);
+
+    store().selectDocumentChange(0);
+
+    expect(store().selection).toBeNull();
+    expect(store().documentSelection).toBe(0);
+  });
+
+  it('drops the document selection with a new or cleared result', () => {
+    applyWithDocuments();
+    store().selectDocumentChange(0);
+
+    store().applyResult(makeSampleResult());
+    expect(store().documentSelection).toBeNull();
+    expect(selectDiffDocumentChange(store())).toBeNull();
+
+    applyWithDocuments();
+    store().selectDocumentChange(0);
+    store().clearResult();
+    expect(store().documentSelection).toBeNull();
+  });
+
+  it('ignores an index that no document change occupies', () => {
+    applyWithDocuments();
+    store().selectDocumentChange(9);
+
+    expect(selectDiffDocumentChange(store())).toBeNull();
   });
 });

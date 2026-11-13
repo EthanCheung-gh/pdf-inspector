@@ -424,8 +424,40 @@ describe('DiffPdfPane ignore regions', () => {
     expect(onRegionComplete).not.toHaveBeenCalled();
   });
 
-  it('draws existing regions on this page as dashed outlines', async () => {
+  it('strokes resource boxes dashed while object boxes stay solid', async () => {
+    context2d.setLineDash.mockClear();
     renderPane({
+      boxes: [
+        BOXES[0],
+        {
+          ...BOXES[0],
+          key: '0:1:old',
+          kind: 'modified',
+          resource: true,
+          bbox: { x0: 100, y0: 600, x1: 140, y1: 620 },
+        },
+      ],
+    });
+
+    await waitFor(() => expect(context2d.strokeRect).toHaveBeenCalledTimes(2));
+    // The resource box is the only dashed diff box; the object box is stroked
+    // with the default solid pattern.
+    const dashed = context2d.setLineDash.mock.calls.filter(
+      (call) => (call[0] as number[]).join(',') === '4,3',
+    );
+    expect(dashed).toHaveLength(1);
+    expect(context2d.setLineDash).toHaveBeenCalledWith([]);
+  });
+
+  it('does not draw document changes without a page box', async () => {
+    renderPane({ boxes: [] });
+
+    await waitFor(() => expect(screen.getByTestId('diff-pane-page-old')).toBeTruthy());
+    // Metadata/page labels live in the document list, never in a pane.
+    expect(context2d.strokeRect).not.toHaveBeenCalled();
+  });
+
+  it('draws existing regions on this page as dashed outlines', async () => {    renderPane({
       regions: [
         REGION,
         // Another page and another side: neither belongs on this pane.

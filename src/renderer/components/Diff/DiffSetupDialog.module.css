@@ -69,11 +69,22 @@
   display: grid;
   grid-template-columns: 1fr;
   gap: 6px;
+  min-width: 0;
   margin: 10px 0;
   padding: 8px 10px;
   background: var(--pi-bg-panel-alt);
   border: 1px solid var(--pi-border);
   border-radius: var(--pi-radius-md);
+}
+
+/* Heading of the Content group: a compact label above its checkboxes, with no
+ * extra margin so the panel keeps its 6px rhythm. */
+.groupTitle {
+  padding: 0 4px;
+  color: var(--pi-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .toleranceRow {

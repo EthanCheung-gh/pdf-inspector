@@ -2,7 +2,12 @@
  * Shared fixtures for the Diff UI tests: a small result with a changed page, an
  * added page and a removed page, plus helpers to build individual changes.
  */
-import type { DiffChange, DiffPage, DiffResult } from '../../../shared/diff-types';
+import type {
+  DiffChange,
+  DiffDocumentChange,
+  DiffPage,
+  DiffResult,
+} from '../../../shared/diff-types';
 
 export function makeChange(overrides: Partial<DiffChange> = {}): DiffChange {
   return {
@@ -133,4 +138,20 @@ export function makeIdenticalResult(): DiffResult {
     makePage({ status: 'unchanged' }),
     makePage({ oldIndex: 2, newIndex: 2, status: 'unchanged' }),
   ]);
+}
+
+/** One document-level change (metadata field or page label). */
+export function makeDocumentChange(
+  overrides: Partial<DiffDocumentChange> = {},
+): DiffDocumentChange {
+  return {
+    kind: 'modified',
+    type: 'metadata',
+    page: null,
+    field: 'title',
+    oldValue: 'Old title',
+    newValue: 'New title',
+    details: {},
+    ...overrides,
+  };
 }

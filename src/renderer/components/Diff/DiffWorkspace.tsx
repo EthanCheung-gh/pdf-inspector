@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   DiffChange,
+  DiffDocumentChange,
   DiffIgnoreRegion,
+  DiffPage,
   DiffResult,
   DiffSide,
 } from '../../../shared/diff-types';
@@ -16,20 +18,27 @@ import { ipc } from '../../services/ipc-client';
 import { useElapsedSeconds } from '../../hooks/useElapsedSeconds';
 import {
   DIFF_CHANGE_KINDS,
-  DIFF_OBJECT_TYPE_ORDER,
+  DIFF_FILTER_TYPE_ORDER,
   buildDiffPageGroups,
   collectOverlayBoxes,
   collectPageBoxes,
   computeDiffFitZoom,
   countFilteredChanges,
+  countPageResourceChanges,
   describeDiffDetails,
+  describeDocumentChange,
   diffChangePreview,
+  diffChangeTypeLabel,
+  diffDocumentChangePreview,
+  diffLinkTargetPage,
   diffPageLabel,
   diffPageStatusLabel,
+  findResultPageIndexForPdfPage,
   firstInterestingPageIndex,
   formatDiffBBox,
   isDiffFilterActive,
   isDiffResultEmpty,
+  matchesDocumentChangeFilter,
   pageGeometrySummary,
   resolveDiffPageJump,
   suggestDiffJsonFilename,
@@ -106,6 +115,21 @@ const Summary: React.FC<{ result: DiffResult }> = ({ result }) => {
     ['diff.summary.objectsModified', String(summary.objectsModified)],
   ];
 
+  // Resource counters come from the reported changes, so a resource type with
+  // nothing to show keeps the summary compact. Document changes are metadata and
+  // page labels: they never count as page objects.
+  const resources = countPageResourceChanges(result.pages);
+  if (resources.annotation > 0) {
+    items.push(['diff.summary.annotations', String(resources.annotation)]);
+  }
+  if (resources.link > 0) items.push(['diff.summary.links', String(resources.link)]);
+  if (resources.form > 0) items.push(['diff.summary.forms', String(resources.form)]);
+
+  const documentChanges = result.documentChanges?.length ?? summary.documentChanges ?? 0;
+  if (documentChanges > 0) {
+    items.push(['diff.summary.documentChanges', String(documentChanges)]);
+  }
+
   return (
     <dl className={styles.summaryGrid} aria-label={t('diff.summary.label')} data-testid="diff-summary">
       {items.map(([labelKey, value]) => (
@@ -118,12 +142,21 @@ const Summary: React.FC<{ result: DiffResult }> = ({ result }) => {
   );
 };
 
-const ChangeDetails: React.FC<{ change: DiffChange }> = ({ change }) => {
+const ChangeDetails: React.FC<{
+  change: DiffChange;
+  pages: DiffPage[];
+  onGoToPage: (pageIndex: number) => void;
+}> = ({ change, pages, onGoToPage }) => {
   const t = useT();
   const detailRows = describeDiffDetails(change, t);
   const cellChanges = tableCellChanges(change);
   const geometry = pageGeometrySummary(change, t);
   const hasText = Boolean(change.textOld) || Boolean(change.textNew);
+  // Only an internal link target has a page to jump to; an external URI stays
+  // text in the details table and is never opened.
+  const targetPage = diffLinkTargetPage(change);
+  const targetPageIndex =
+    targetPage === null ? null : findResultPageIndexForPdfPage(pages, targetPage);
 
   return (
     <div className={styles.detailBody} data-testid="diff-change-details">
@@ -131,7 +164,7 @@ const ChangeDetails: React.FC<{ change: DiffChange }> = ({ change }) => {
         <span className={styles.kindBadge} data-kind={change.kind}>
           {change.kind}
         </span>
-        <span className={styles.detailType}>{change.type}</span>
+        <span className={styles.detailType}>{diffChangeTypeLabel(change.type, t)}</span>
       </h3>
 
       <dl className={styles.detailList}>
@@ -192,6 +225,22 @@ const ChangeDetails: React.FC<{ change: DiffChange }> = ({ change }) => {
         </table>
       )}
 
+      {targetPage !== null && (
+        <div>
+          <button
+            className={styles.linkButton}
+            type="button"
+            title={t('diff.page.same', { page: targetPage })}
+            onClick={() => {
+              if (targetPageIndex !== null) onGoToPage(targetPageIndex);
+            }}
+            disabled={targetPageIndex === null}
+          >
+            {t('diff.documentChanges.goToPage')}
+          </button>
+        </div>
+      )}
+
       {cellChanges.length > 0 && (
         <table className={styles.detailTable} data-testid="diff-cell-changes">
           <caption className={styles.tableCaption}>{t('diff.detail.tableCells')}</caption>
@@ -224,6 +273,78 @@ const ChangeDetails: React.FC<{ change: DiffChange }> = ({ change }) => {
 };
 
 /**
+ * Details of a document change (metadata field or page label).
+ *
+ * There is no bbox and no page object to show: the value rows are the content.
+ * A page label also offers "Go to page", which is the only navigation from this
+ * panel; metadata has no page and therefore no jump button.
+ */
+const DocumentChangeDetails: React.FC<{
+  change: DiffDocumentChange;
+  pages: DiffPage[];
+  onGoToPage: (pageIndex: number) => void;
+}> = ({ change, pages, onGoToPage }) => {
+  const t = useT();
+  const rows = describeDocumentChange(change, t);
+  const targetPageIndex =
+    change.page === null ? null : findResultPageIndexForPdfPage(pages, change.page);
+
+  return (
+    <div className={styles.detailBody} data-testid="diff-document-details">
+      <h3 className={styles.detailTitle}>
+        <span className={styles.kindBadge} data-kind={change.kind}>
+          {change.kind}
+        </span>
+        <span className={styles.detailType}>{diffChangeTypeLabel(change.type, t)}</span>
+      </h3>
+
+      {change.page !== null && (
+        <dl className={styles.detailList}>
+          <div className={styles.detailRow}>
+            <dt>{t('diff.detail.page')}</dt>
+            <dd>{t('diff.page.same', { page: change.page })}</dd>
+          </div>
+        </dl>
+      )}
+
+      <table className={styles.detailTable}>
+        <thead>
+          <tr>
+            <th scope="col">{t('diff.detail.column')}</th>
+            <th scope="col">{t('diff.side.old')}</th>
+            <th scope="col">{t('diff.side.new')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr key={`${row.label}:${index}`}>
+              <th scope="row">{row.label}</th>
+              <td>{row.oldValue}</td>
+              <td>{row.newValue}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {change.page !== null && (
+        <div>
+          <button
+            className={styles.linkButton}
+            type="button"
+            onClick={() => {
+              if (targetPageIndex !== null) onGoToPage(targetPageIndex);
+            }}
+            disabled={targetPageIndex === null}
+          >
+            {t('diff.documentChanges.goToPage')}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/**
  * The Diff workspace: summary + change list, two synced PDF panes (or one
  * overlay pane) and the details of the selected change.
  *
@@ -245,6 +366,7 @@ export const DiffWorkspace: React.FC = () => {
   const ignoreRegions = useDiffStore((s) => s.options.ignoreRegions);
   const pageIndex = useDiffStore((s) => s.pageIndex);
   const selection = useDiffStore((s) => s.selection);
+  const documentSelection = useDiffStore((s) => s.documentSelection);
   const oldSource = useDiffStore((s) => s.oldSource);
   const newSource = useDiffStore((s) => s.newSource);
   const oldName = useDiffStore((s) => s.oldName);
@@ -264,6 +386,7 @@ export const DiffWorkspace: React.FC = () => {
   const stepPage = useDiffStore((s) => s.stepPage);
   const selectChangeAt = useDiffStore((s) => s.selectChangeAt);
   const selectChange = useDiffStore((s) => s.selectChange);
+  const selectDocumentChange = useDiffStore((s) => s.selectDocumentChange);
   const openSetup = useDiffStore((s) => s.openSetup);
   const exitWorkspace = useDiffStore((s) => s.exitWorkspace);
 
@@ -276,6 +399,8 @@ export const DiffWorkspace: React.FC = () => {
     // fully folded before the reset effect below runs.
     () => new Set(result ? [firstInterestingPageIndex(result.pages)] : []),
   );
+  /** Document changes are one small group above the pages: open by default. */
+  const [documentExpanded, setDocumentExpanded] = useState(true);
   /** Raw text of the "Go to page" field; only digits are acted on. */
   const [pageJump, setPageJump] = useState('');
   const fittedResultRef = useRef<DiffResult | null>(null);
@@ -288,10 +413,36 @@ export const DiffWorkspace: React.FC = () => {
   const page = result?.pages[pageIndex] ?? null;
   const groups = useMemo(() => buildDiffPageGroups(pages, filter), [pages, filter]);
   const filteredCount = useMemo(() => countFilteredChanges(pages, filter), [pages, filter]);
+  /**
+   * Filtered document changes with their raw `result.documentChanges` index, so
+   * a selection keeps pointing at the same row while the type filter changes.
+   * The kind filter never applies: metadata/page labels have no page object.
+   */
+  const filteredDocumentChanges = useMemo(
+    () =>
+      (result?.documentChanges ?? []).reduce<Array<{ change: DiffDocumentChange; index: number }>>(
+        (entries, change, index) => {
+          if (matchesDocumentChangeFilter(change, filter)) entries.push({ change, index });
+          return entries;
+        },
+        [],
+      ),
+    [filter, result],
+  );
+  const filteredDocumentCount = filteredDocumentChanges.length;
+  const documentListVisible = documentExpanded && filteredDocumentCount > 0;
+  const hasDocumentChanges = (result?.documentChanges?.length ?? 0) > 0;
   const selectedChange = useMemo(() => {
     if (!result || !selection) return null;
     return result.pages[selection.pageIndex]?.changes[selection.changeIndex] ?? null;
   }, [result, selection]);
+  // Derive the document change here rather than through a selector that builds
+  // an object: a fresh object on every store read would re-render forever.
+  const selectedDocumentChange = useMemo(() => {
+    if (!result || documentSelection === null) return null;
+    const change = result.documentChanges?.[documentSelection];
+    return change ? { index: documentSelection, change } : null;
+  }, [documentSelection, result]);
 
   const oldBoxes = useMemo(
     () => (page ? collectPageBoxes(page, 'old', selection, pageIndex) : []),
@@ -325,10 +476,22 @@ export const DiffWorkspace: React.FC = () => {
   useEffect(() => {
     if (!result) {
       setExpandedPages(new Set());
+      setDocumentExpanded(true);
       return;
     }
     setExpandedPages(new Set([firstInterestingPageIndex(result.pages)]));
+    // A new result starts with its document changes visible: they are few and
+    // easily missed if the only fold control is at the top of the page list.
+    setDocumentExpanded(true);
   }, [result]);
+
+  // Filtering down to metadata/page labels is a request to inspect document
+  // changes, so their group must not stay folded.
+  useEffect(() => {
+    if (filter.type === 'metadata' || filter.type === 'page-label') {
+      setDocumentExpanded(true);
+    }
+  }, [filter.type]);
 
   // Prev/Next, the page jump and a change selection all move the current page.
   // Its group must be open, or the row the panes are showing would be hidden.
@@ -471,7 +634,10 @@ export const DiffWorkspace: React.FC = () => {
     }
   }, [t]);
 
-  const empty = result ? isDiffResultEmpty(pages) : false;
+  // Metadata-only edits leave every page unchanged, but the documents are not
+  // identical: the empty state must only claim that when no document change
+  // exists either.
+  const empty = result ? isDiffResultEmpty(pages) && !hasDocumentChanges : false;
   // Overlay draws exactly one page, so it must be the side that owns it. An
   // added page has no old side: loading the old document at the new page number
   // would show an unrelated page (or none), so the new source, number and size
@@ -710,9 +876,9 @@ export const DiffWorkspace: React.FC = () => {
                 }
               >
                 <option value="all">{t('diff.filter.allTypes')}</option>
-                {DIFF_OBJECT_TYPE_ORDER.map((type) => (
+                {DIFF_FILTER_TYPE_ORDER.map((type) => (
                   <option key={type} value={type}>
-                    {type}
+                    {diffChangeTypeLabel(type, t)}
                   </option>
                 ))}
               </select>
@@ -808,7 +974,7 @@ export const DiffWorkspace: React.FC = () => {
             </p>
           )}
 
-          {result && !empty && filteredCount === 0 && (
+          {result && !empty && filteredCount === 0 && filteredDocumentCount === 0 && (
             <p className={styles.emptyState} role="status">
               {isDiffFilterActive(filter)
                 ? t('diff.workspace.noFilterMatch')
@@ -897,6 +1063,88 @@ export const DiffWorkspace: React.FC = () => {
             </button>
           </div>
 
+          {/*
+            Document changes (metadata and page labels) sit above the page
+            groups: they are document-scoped, so they are not nested under a
+            page. The type filter applies; the page kind filter does not.
+          */}
+          {result && hasDocumentChanges && (
+            <section
+              className={styles.documentChanges}
+              aria-label={t('diff.documentChanges.title')}
+              data-testid="diff-document-changes"
+            >
+              <button
+                className={styles.documentHeader}
+                type="button"
+                aria-expanded={documentExpanded}
+                aria-controls={documentListVisible ? 'diff-document-change-list' : undefined}
+                onClick={() => setDocumentExpanded((expanded) => !expanded)}
+              >
+                <span
+                  className={styles.chevron}
+                  data-expanded={documentExpanded}
+                  aria-hidden="true"
+                >
+                  ▸
+                </span>
+                <span className={styles.documentTitle}>{t('diff.documentChanges.title')}</span>
+                <span className={styles.pageCount} data-testid="diff-document-change-count">
+                  {filteredDocumentCount}
+                </span>
+              </button>
+
+              {documentExpanded && filteredDocumentCount === 0 && (
+                <p className={styles.documentEmpty}>{t('diff.documentChanges.empty')}</p>
+              )}
+
+              {documentListVisible && (
+                <ul className={styles.documentList} id="diff-document-change-list">
+                  {filteredDocumentChanges.map(({ change, index }) => {
+                    const typeLabel = diffChangeTypeLabel(change.type, t);
+                    const preview = diffDocumentChangePreview(change, t);
+                    const isSelected = documentSelection === index;
+                    return (
+                      <li key={`${change.type}:${change.page ?? 'doc'}:${change.field}:${index}`}>
+                        <button
+                          className={`${styles.changeItem} ${styles.documentItem} ${
+                            isSelected ? styles.changeItemSelected : ''
+                          }`}
+                          type="button"
+                          aria-pressed={isSelected}
+                          aria-label={`${change.kind} ${typeLabel}: ${preview}`}
+                          onClick={() => selectDocumentChange(index)}
+                        >
+                          <span className={styles.kindBadge} data-kind={change.kind}>
+                            {change.kind}
+                          </span>
+                          <span className={styles.changeType}>{typeLabel}</span>
+                          <span className={styles.documentMain}>
+                            <span className={styles.changePreview} title={preview}>
+                              {preview}
+                            </span>
+                            {/* Field names are schema values (title, author, page-label). */}
+                            <span className={styles.documentField} title={change.field}>
+                              {change.field}
+                            </span>
+                          </span>
+                          {change.page !== null && (
+                            <span
+                              className={styles.documentPage}
+                              title={t('diff.page.same', { page: change.page })}
+                            >
+                              #{change.page}
+                            </span>
+                          )}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
+          )}
+
           <ul className={styles.pageList} data-testid="diff-page-list">
             {groups.map((group) => {
               const expanded = expandedPages.has(group.pageIndex);
@@ -958,13 +1206,15 @@ export const DiffWorkspace: React.FC = () => {
                               className={`${styles.changeItem} ${isSelected ? styles.changeItemSelected : ''}`}
                               type="button"
                               aria-pressed={isSelected}
-                              aria-label={`${change.kind} ${change.type}: ${diffChangePreview(change, t)}`}
+                              aria-label={`${change.kind} ${diffChangeTypeLabel(change.type, t)}: ${diffChangePreview(change, t)}`}
                               onClick={() => selectChangeAt(group.pageIndex, changeIndex)}
                             >
                               <span className={styles.kindBadge} data-kind={change.kind}>
                                 {change.kind}
                               </span>
-                              <span className={styles.changeType}>{change.type}</span>
+                              <span className={styles.changeType}>
+                                {diffChangeTypeLabel(change.type, t)}
+                              </span>
                               <span
                                 className={styles.changePreview}
                                 title={diffChangePreview(change, t)}
@@ -1128,16 +1378,24 @@ export const DiffWorkspace: React.FC = () => {
         </div>
 
         <aside className={styles.details} aria-label={t('diff.workspace.changeDetails')}>
-          {selectedChange ? (
-            <ChangeDetails change={selectedChange} />
+          {selectedDocumentChange ? (
+            <DocumentChangeDetails
+              change={selectedDocumentChange.change}
+              pages={pages}
+              onGoToPage={setPageIndex}
+            />
+          ) : selectedChange ? (
+            <ChangeDetails change={selectedChange} pages={pages} onGoToPage={setPageIndex} />
           ) : (
             <p className={styles.hint}>{t('diff.workspace.selectChange')}</p>
           )}
-          {selection && (
+          {(selection || documentSelection !== null) && (
             <button
               className={styles.linkButton}
               type="button"
-              onClick={() => selectChange(null)}
+              onClick={() =>
+                documentSelection !== null ? selectDocumentChange(null) : selectChange(null)
+              }
             >
               {t('diff.workspace.clearSelection')}
             </button>

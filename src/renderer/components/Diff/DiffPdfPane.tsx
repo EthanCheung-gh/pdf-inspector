@@ -446,6 +446,12 @@ export const DiffPdfPane: React.FC<DiffPdfPaneProps> = ({
     if (!viewport || isRotated || layoutWidth <= 0 || layoutHeight <= 0) return;
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
 
+    const dash = (on: boolean, pattern: number[] = [6, 4]): void => {
+      if (typeof context.setLineDash === 'function') {
+        context.setLineDash(on ? pattern : []);
+      }
+    };
+
     for (const rect of diffBoxRects(boxes, layoutWidth, layoutHeight)) {
       context.globalAlpha = rect.selected ? 0.28 : 0.16;
       context.fillStyle = rect.color;
@@ -454,15 +460,13 @@ export const DiffPdfPane: React.FC<DiffPdfPaneProps> = ({
       context.globalAlpha = 1;
       context.strokeStyle = rect.color;
       context.lineWidth = rect.selected ? 2.5 : 1.2;
+      // A resource (annotation/link/form) has no page object outline of its
+      // own, so its box is dashed; object boxes stay solid.
+      dash(rect.resource, [4, 3]);
       context.strokeRect(rect.x, rect.y, rect.width, rect.height);
+      dash(false);
     }
     context.globalAlpha = 1;
-
-    const dash = (on: boolean): void => {
-      if (typeof context.setLineDash === 'function') {
-        context.setLineDash(on ? [6, 4] : []);
-      }
-    };
 
     if (pageSize) {
       context.strokeStyle = REGION_OUTLINE_COLOUR;

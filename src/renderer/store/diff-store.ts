@@ -10,10 +10,12 @@
 import { create } from 'zustand';
 import type {
   DiffChange,
+  DiffDocumentChange,
   DiffIgnoreRegion,
   DiffObjectType,
   DiffOptions,
   DiffPage,
+  DiffResourceType,
   DiffResult,
   DiffSide,
   DiffSource,
@@ -50,6 +52,14 @@ export const DEFAULT_DIFF_OPTIONS: DiffOptions = {
   ignoreColors: false,
   ignoreImages: false,
   ignoreRegions: [],
+  // Page resources are compared by default (unlike character-level object
+  // changes): annotations, links and form widgets are usually few, and metadata
+  // changes are cheap. The dialog's Content group turns each one off.
+  ignoreAnnotations: false,
+  ignoreLinks: false,
+  ignoreForms: false,
+  ignoreMetadata: false,
+  ignorePageLabels: false,
 };
 
 /** A copy of the defaults with its own arrays (see `reset`). */
@@ -80,6 +90,14 @@ export interface DiffState {
   /** Index into `result.pages`; never a PDF page number. */
   pageIndex: number;
   selection: DiffChangeRef | null;
+  /**
+   * Index into `result.documentChanges` (metadata/page-label).
+   *
+   * Document changes live outside the page lists, so their selection is a
+   * separate slot. Selecting one clears the page change selection and vice
+   * versa, so the details pane never has to guess which one it shows.
+   */
+  documentSelection: number | null;
 
   viewMode: DiffViewMode;
   zoom: number;
@@ -108,6 +126,11 @@ export interface DiffState {
    * alone. Word-level changes are reported either way.
    */
   setCharacterLevelChanges: (enabled: boolean) => void;
+  /**
+   * Turn one document resource comparison on or off. The dialog's Content
+   * group and the CLI's `--ignore-*` flags describe the same five switches.
+   */
+  setResourceIncluded: (type: DiffResourceType, included: boolean) => void;
 
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
@@ -118,6 +141,8 @@ export interface DiffState {
   stepPage: (delta: number) => void;
   selectChange: (selection: DiffChangeRef | null) => void;
   selectChangeAt: (pageIndex: number, changeIndex: number) => void;
+  /** Select a document change by its index in `result.documentChanges`. */
+  selectDocumentChange: (index: number | null) => void;
 
   setViewMode: (mode: DiffViewMode) => void;
   setZoom: (zoom: number) => void;
@@ -158,6 +183,7 @@ const initialDiffState = {
   error: null,
   pageIndex: 0,
   selection: null,
+  documentSelection: null,
   viewMode: 'side-by-side' as DiffViewMode,
   zoom: 1,
   filter: { ...DEFAULT_DIFF_FILTER },
@@ -174,6 +200,15 @@ const clampTolerance = (value: number): number => {
 /** True when `char` objects are ignored, i.e. character-level diffs are off. */
 const hasCharIgnore = (ignoreTypes: readonly DiffObjectType[]): boolean =>
   ignoreTypes.includes('char');
+
+/** UI resource name -> the engine's `ignore*` option it controls. */
+const RESOURCE_IGNORE_KEYS: Record<DiffResourceType, keyof DiffOptions> = {
+  annotation: 'ignoreAnnotations',
+  link: 'ignoreLinks',
+  form: 'ignoreForms',
+  metadata: 'ignoreMetadata',
+  'page-label': 'ignorePageLabels',
+};
 
 export const useDiffStore = create<DiffState>((set, get) => ({
   ...initialDiffState,
@@ -221,6 +256,30 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
 
+  setResourceIncluded: (type, included) =>
+    set((state) => {
+      const options: DiffOptions = { ...state.options };
+      const ignore = !included;
+      switch (RESOURCE_IGNORE_KEYS[type]) {
+        case 'ignoreAnnotations':
+          options.ignoreAnnotations = ignore;
+          break;
+        case 'ignoreLinks':
+          options.ignoreLinks = ignore;
+          break;
+        case 'ignoreForms':
+          options.ignoreForms = ignore;
+          break;
+        case 'ignoreMetadata':
+          options.ignoreMetadata = ignore;
+          break;
+        case 'ignorePageLabels':
+          options.ignorePageLabels = ignore;
+          break;
+      }
+      return { options };
+    }),
+
   // A new result always starts at the first page that actually changed and with
   // no selection: a stale selection pointing at the old result's indexes would
   // highlight an unrelated object.
@@ -231,6 +290,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       result,
       pageIndex,
       selection: null,
+      documentSelection: null,
       loading: false,
       error: null,
       filter: { ...DEFAULT_DIFF_FILTER },
@@ -239,7 +299,14 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   },
 
   clearResult: () =>
-    set({ result: null, loading: false, error: null, pageIndex: 0, selection: null }),
+    set({
+      result: null,
+      loading: false,
+      error: null,
+      pageIndex: 0,
+      selection: null,
+      documentSelection: null,
+    }),
 
   setPageIndex: (index) => {
     const state = get();
@@ -259,10 +326,21 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   stepPage: (delta) => get().setPageIndex(get().pageIndex + delta),
 
   selectChange: (selection) =>
-    set(selection ? { selection, pageIndex: selection.pageIndex } : { selection: null }),
+    set(
+      selection
+        ? { selection, pageIndex: selection.pageIndex, documentSelection: null }
+        : { selection: null },
+    ),
 
   selectChangeAt: (pageIndex, changeIndex) =>
     get().selectChange({ pageIndex, changeIndex }),
+
+  selectDocumentChange: (index) =>
+    set(
+      index === null
+        ? { documentSelection: null }
+        : { documentSelection: index, selection: null },
+    ),
 
   setViewMode: (mode) => set({ viewMode: mode }),
   setZoom: (zoom) => set({ zoom: clampDiffZoom(zoom) }),
@@ -328,4 +406,14 @@ export const selectDiffSelection = (
   if (!selection || !state.result) return null;
   const change = state.result.pages[selection.pageIndex]?.changes[selection.changeIndex];
   return change ? { ...selection, change } : null;
+};
+
+/** The selected document change (metadata/page-label) resolved against the result. */
+export const selectDiffDocumentChange = (
+  state: DiffState,
+): { index: number; change: DiffDocumentChange } | null => {
+  const index = state.documentSelection;
+  if (index === null || !state.result?.documentChanges) return null;
+  const change = state.result.documentChanges[index];
+  return change ? { index, change } : null;
 };
