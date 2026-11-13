@@ -261,10 +261,11 @@ python sidecar/cli.py diff old.pdf new.pdf --fail-on modified \
 - **严重级别**：发现分为 `error` / `warning` / `info`，不提供“健康分”。页面提取失败是当前的 `error` 来源；未嵌入字体为 `warning`，Standard 14 字体不会被视为缺失。
 - **分批进度**：文档级检查完成后按每 10 页一批顺序执行页面检查，并实时显示 `Auditing pages N/M…`；批次之间界面保持可用。
 - **独立工作区**：工具栏 `Audit` 打开文档体检工作区（与 Diff 互斥），顶部显示文件与 `Run` / `Re-run`，左侧按严重级别汇总并可按严重级别/类别筛选，中间为发现列表，右侧显示选中发现的说明、证据与修复建议。
+- **基线对比**：每条发现都带稳定指纹（哈希前会归一化指向自身页码的引用），`Baseline…` 可加载上一份 `AuditReport` JSON，摘要区显示 `Baseline: 2 new · 5 existing · 1 fixed`；`New only` 只保留新增与升级的发现，列表行显示 `New` / `Moved` / `Escalated` 徽标，`Clear` 恢复全量。基线只在本机内存中解析；`--baseline-output` 的比较产物与缺少指纹的旧报告都会给出内联错误，而不是被错误比较。
 - **跳转到页面**：带页码的发现提供 `Open page`，点击后关闭 Audit 并在 Inspect 中导航到该页；Inspect 中打开的文档、页码、缩放与选中状态保持不变，`Back to Inspect` 可随时返回。
-- **JSON 导出**：`Export JSON` 保存完整的 `AuditReport`（`schemaVersion: 1`），包含 tool、document、summary 与 findings；CLI `audit --format json` 输出同一 schema。
-- **报告与集成**：CLI 支持 `summary` / `json` / `html` 三种格式，HTML 为单文件、内联 CSS、无脚本；`audit/action.yml` 可在 CI 中运行审计并按 `fail-on` 决定步骤成败。详见 [docs/audit.md](docs/audit.md)。
-- **启发式检查**：审计基于提取出的对象、字体信息、页面框与 catalog 元数据，不做 PDF/A 认证或签名验证，也不做 OCR；旋转页或 CropBox 偏移页上的发现只到页面级。
+- **JSON 导出**：`Export JSON` 保存完整的 `AuditReport`（`schemaVersion: 1`），包含 tool、document、summary 与 findings；每条发现还带 `fingerprint`（新增可选字段，`schemaVersion` 仍为 `1`）。CLI `audit --format json` 输出同一 schema。
+- **质量门禁**：CLI 与 action 支持 `summary` / `json` / `html` / `sarif`，以及基线（`--baseline`、`--baseline-output`）与可过期豁免（`--waivers`）。有基线时只有 `new` 与 `escalated` 会触发 `--fail-on`，因此存量有问题的 PDF 不必先修完才能接入门禁；只是换了页的发现报为 `moved`，不会让门禁失败。`--format sarif` 输出 SARIF 2.1.0，带 `pdfInspectorFinding/v1` 部分指纹、`baselineState`，并把豁免映射为 `suppressions`。详见 [docs/audit.md](docs/audit.md) 与 [docs/ci.md](docs/ci.md)。
+- **启发式检查**：审计基于提取出的对象、字体信息、页面框与 catalog 元数据，不做 PDF/A 或 PDF/UA 认证、不做签名验证、也不做 OCR；它不会上传报告，也不会修改 PDF。旋转页或 CropBox 偏移页上的发现只到页面级。
 
 ### 文档安全与附件
 
@@ -392,7 +393,7 @@ Diff 的示例文件成对生成，可在对比对话框中分别选择 Old/New�
 7. **控制叠加层**：在左侧 `Layers` 标签页开关七类对象、查看当前页计数、使用 Solo 或调整透明度；`F` 可进入专注模式，隐藏左右面板。
 8. **搜索与导出**：`Ctrl/Cmd+F` 打开搜索，输入查询后可用 `Aa` / `W` / `.*` 切换大小写、整词与正则，在结果面板中按页查看 `p.N` 与上下文并点击跳转；`Ctrl/Cmd+K` 打开命令面板执行打开、跳页、主题、语言、面板、Diff/Audit/Raw 等命令。`Export` 导出当前页/整档 JSON/CSV；工具栏的 `视图…`（命令面板中的 `Export view…`）把当前页或选中区域导出为 PNG/SVG；`报告…`（命令面板中的 `Share report…`）生成自包含 HTML 检查报告。
 9. **比较版本**：点击工具栏 `Diff` 选择 Old/New 两份 PDF，按需设置位置容差、忽略项与 `Content` 资源开关后 Compare；在左侧变更列表（含 `Document changes` 行）选择条目查看详情，或在 Side by side / Overlay / Visual 间切换（Visual 可切 Blend/Heatmap/Boxes 并查看像素统计），`Ignore region` 可拖框屏蔽区域后再 `Apply & re-run`；`Export JSON` 保存结果。
-10. **文档体检**：点击工具栏 `Audit` 对当前文档执行整档审计，查看严重级别汇总，按严重级别/类别筛选，选中发现查看证据与建议；需要时点击 `Open page` 跳转到对应页面，或用 `Export JSON` 保存完整报告。切换到 `Resources` 可查看附件、JavaScript、动作、签名、加密与权限；`Refresh` 重新读取，`Export security JSON` 保存完整 `SecurityReport`，`View in Findings` 切回并自动套用 `security` 类别筛选。
+10. **文档体检**：点击工具栏 `Audit` 对当前文档执行整档审计，查看严重级别汇总，按严重级别/类别筛选，选中发现查看证据与建议；需要时点击 `Open page` 跳转到对应页面，或用 `Export JSON` 保存完整报告。`Baseline…` 可加载上一份报告，显示 `new` / `existing` / `moved` / `escalated` / `fixed` 计数，`New only` 只保留新增与升级的发现，`Clear` 清除基线。切换到 `Resources` 可查看附件、JavaScript、动作、签名、加密与权限；`Refresh` 重新读取，`Export security JSON` 保存完整 `SecurityReport`，`View in Findings` 切回并自动套用 `security` 类别筛选。
 11. **查看无障碍与结构树**：在 Audit 中切换到 `Structure` 读取标记结构树与文档事实。使用 `Expand all` / `Collapse all`、`Issues only`，或按角色/Alt 文本搜索；选中节点查看角色、Alt/ActualText、页码与 MCID 详情，再用 `Open page` 跳转到该页，或 `View in Findings` 查看 `structure` 类别的问题。`Refresh` 重新解析，`Export accessibility JSON` 保存完整报告。
 12. **检查注释、链接与表单**：切换到左侧 `Annots`，默认 `Current page` 查看当前页；切到 `Whole document` 建立整档索引（显示 `Indexing annotations N/M…`），用搜索与全局 Kind/Subtype 过滤定位条目，点击行跳页并尽力选中。`Issues` 区汇总断链与表单问题，`External links` 列出可打开的 `http(s)` 目标；`Export` 可把整档索引导出为 JSON/CSV。外部链接需点击 `Open link` 才会打开，内部链接使用 `Go to page N` 跳转；表单字段不能编辑或提交。
 13. **查看原始对象与内容流**：点击工具栏 `Raw` 打开只读工作区，在左侧对象树展开 `Catalog` → `Pages` → 页面 → `Resources`，点击引用在右侧查看对象值；切换到 `Content stream` 按页查看解码后的操作符与操作数。`Back to Inspect` 返回原文档，页码与缩放保持不变。
@@ -447,7 +448,7 @@ python sidecar/cli.py diff web-samples/diff-resources-old.pdf web-samples/diff-r
 
 ### 审计 CLI
 
-文档体检同样可以脱离界面运行，复用与界面相同的检查引擎。CLI 只接受本地 PDF 路径（拒绝 `http(s)` URL），输出摘要、`AuditReport` JSON 或单文件 HTML，并按 `--fail-on` 映射退出码。
+文档体检同样可以脱离界面运行，复用与界面相同的检查引擎。CLI 只接受本地 PDF 路径（拒绝 `http(s)` URL），输出摘要、`AuditReport` JSON、单文件 HTML 或 SARIF 2.1.0，并按 `--fail-on` 映射退出码。
 
 ```bash
 # 直接使用 Python CLI；需要 Python 3.10+ 与 sidecar/requirements.txt
@@ -458,6 +459,18 @@ python sidecar/cli.py audit report.pdf --format html --output report.audit.html
 # 发现 warning/error 时返回 1，适合作为质量门禁
 python sidecar/cli.py audit report.pdf --fail-on warning
 
+# 基线增量门禁：只有新增或升级的发现返回 1
+python sidecar/cli.py audit report.pdf \
+  --baseline ci/pdf-audit-baseline.json \
+  --baseline-output artifacts/audit-comparison.json \
+  --fail-on warning
+
+# 可过期豁免，以及给代码扫描用的 SARIF 2.1.0
+python sidecar/cli.py audit report.pdf \
+  --waivers ci/pdf-audit-waivers.json --fail-on warning
+python sidecar/cli.py audit report.pdf \
+  --format sarif --output artifacts/audit.sarif --sarif-uri docs/report.pdf
+
 # 通过 bin/pdf-inspector.mjs 包装器（安装/链接后可直接调用 pdf-inspector）
 pdf-inspector audit report.pdf
 node bin/pdf-inspector.mjs audit report.pdf --format json --output report.audit.json
@@ -467,14 +480,18 @@ node bin/pdf-inspector.mjs audit report.pdf --format json --output report.audit.
 
 | 选项 | 说明 |
 |------|------|
-| `--format` | 输出格式：`summary`（默认）/ `json` / `html` |
-| `--output PATH` | 把格式化结果同时写入文件；stdout 仍打印摘要 |
+| `--format` | 输出格式：`summary`（默认）/ `json` / `html` / `sarif` |
+| `--output PATH` | 把格式化结果同时写入文件；stdout 仍打印摘要；不能覆盖输入 PDF、基线或豁免文件，也不能与 `--baseline-output` 指向同一个文件 |
+| `--baseline PATH` | 与上一份 `AuditReport` JSON（`audit --format json` 的产物，不是 `--baseline-output` 的比较产物）比较；只有 `new` / `escalated` 计入 `--fail-on` |
+| `--baseline-output PATH` | 写出 `BaselineComparison` JSON（需要同时给 `--baseline`，且必须与 `--output` 不同） |
+| `--waivers PATH` | 可过期豁免策略；被接受的发现不计入门禁，过期项在 stderr 提示 |
+| `--sarif-uri PATH` | SARIF 的 `artifactLocation.uri`，默认用输入参数；只允许与 `--format sarif` 一起使用 |
 | `--fail-on` | 决定哪些发现返回 1；默认 `none`，可选 `error` / `warning` / `none`。`warning` 同时覆盖 errors，`error` 只覆盖 errors |
-| `--quiet` | 不打印人类摘要，只保留 JSON/HTML 输出 |
+| `--quiet` | 不打印人类摘要，只保留 JSON/HTML/SARIF 输出；过期豁免等策略提示仍会写到 stderr |
 
-退出码：`0` 表示没有严重级别命中 `--fail-on`；`1` 表示 `--fail-on` 命中；`2` 表示参数、输入、读取或审计错误。`--fail-on none` 永不返回 1，但输入错误仍返回 2。页面提取失败是当前唯一的 `error` 来源，因此 `--fail-on error` 只会拦截真正不可读的页面。
+退出码：`0` 表示没有严重级别命中 `--fail-on`；`1` 表示 `--fail-on` 命中；`2` 表示参数、输入、读取、审计、基线、豁免或输出错误。`--fail-on none` 永不返回 1，但输入错误仍返回 2。页面提取失败是当前唯一的 `error` 来源，因此 `--fail-on error` 只会拦截真正不可读的页面。
 
-`--format json` 输出 `AuditReport`（`schemaVersion: 1`），包含 `tool` / `document` / `summary` / `findings`；每条发现带类别、严重级别、页码（文档级为 `null`）、标题、说明、证据与建议。输出不含时间戳与绝对路径，顺序稳定，相同 PDF 产生逐字节一致的 JSON。HTML 报告为单文件、内联 CSS、无脚本、无外部资源，所有 PDF 文本均转义。完整 schema、检查项与阈值见 [docs/audit.md](docs/audit.md)。
+`--format json` 输出 `AuditReport`（`schemaVersion: 1`），包含 `tool` / `document` / `summary` / `findings`；每条发现带类别、严重级别、页码（文档级为 `null`）、标题、说明、证据、建议，以及跨运行标识同一问题的 `fingerprint`（哈希前会归一化指向自身页码的引用，因此换页仍是同一个发现，报为 `moved`）。带 `--baseline` 时摘要追加一行 `baseline: N new, N existing, N moved, N escalated, N fixed, N waived`，HTML 报告增加 `Baseline` 小节；带 `--waivers` 时追加 `waivers: N applied, N expired, N unused`。`--format sarif` 把同一份报告映射为 SARIF 2.1.0（`pdfInspectorFinding/v1` 部分指纹、`baselineState`、`suppressions`）。输出不含时间戳与绝对路径、顺序稳定，相同 PDF 产生逐字节一致的 JSON、HTML 与 SARIF。HTML 报告为单文件、内联 CSS、无脚本、无外部资源，所有 PDF 文本均转义。完整 schema、检查项、基线、豁免与阈值见 [docs/audit.md](docs/audit.md)，CI 接法见 [docs/ci.md](docs/ci.md)。
 
 ### 安全 CLI
 
@@ -546,14 +563,18 @@ HTML 报告是单文件、内联 CSS、无脚本、无外部资源：
 - uses: <owner>/pdf-inspector/audit@v1
   with:
     path: docs/report.pdf
-    fail-on: error
-    format: html
-    report-path: artifacts/pdf-audit.html
+    fail-on: warning
+    format: sarif
+    sarif-path: artifacts/pdf-audit.sarif
+    sarif-uri: docs/report.pdf          # 仓库相对路径，供代码扫描使用
+    baseline-path: ci/pdf-audit-baseline.json
+    baseline-output-path: artifacts/pdf-audit-comparison.json
+    waivers-path: ci/pdf-audit-waivers.json
     # 需要 JSON 时可同时指定；会额外执行一次 CLI 生成该 artifact
     # json-path: artifacts/pdf-audit.json
 ```
 
-action 默认 `fail-on: error`、`format: summary`，支持 `summary` / `json` / `html`；`json-path` / `report-path` 指定 JSON/HTML payload 的文件路径（`format` 选中对应格式且未指定路径时写入 runner 临时目录），payload 不写入步骤日志。输出 `exit-code` / `json-path` / `report-path`，并把退出码、`fail-on` 与 artifact 路径写入步骤摘要。非零退出码会先写入输出再让步骤失败，因此后续步骤仍可读取结果。仓库内使用 `uses: ./audit`，完整输入、输出与示例见 [docs/audit.md](docs/audit.md)。
+action 默认 `fail-on: error`、`format: summary`，支持 `summary` / `json` / `html` / `sarif`；`json-path` / `report-path` / `sarif-path` 指定 JSON/HTML/SARIF payload 的文件路径（`format` 选中对应格式且未指定路径时写入 runner 临时目录），payload 不写入步骤日志。`baseline-path` 与仓库里提交的 `AuditReport`（`audit --format json` 的产物，不是比较产物）比较，因此只有新增或升级的发现会让步骤失败；`baseline-output-path` 写出比较产物，且不能与 `json-path` / `report-path` / `sarif-path` 相同；`waivers-path` 加载可过期豁免；`sarif-uri` 设置 SARIF 的 artifact uri（只允许与 `format: sarif` 一起使用）。本地的基线或豁免文件不存在，或比较产物与其它 artifact 路径冲突时，步骤会在审计开始前直接失败。输出 `exit-code` / `json-path` / `report-path` / `sarif-path`，并把退出码、`fail-on`、格式与 artifact 路径写入步骤摘要。非零退出码会先写入输出再让步骤失败，因此后续步骤仍可读取结果。仓库内使用 `uses: ./audit`，完整输入与输出见 [docs/audit.md](docs/audit.md)，代码扫描 workflow 见 [docs/ci.md](docs/ci.md)。
 
 ## 架构
 
@@ -621,8 +642,11 @@ pdf-inspector/
 │   ├── diff.py            # 对象级 diff 引擎
 │   ├── report.py          # Diff 摘要与自包含 HTML 报告
 │   ├── raw.py             # 原始对象图与内容流序列化（有界、只读）
-│   ├── audit.py           # 文档审计引擎（检查项、排序、AuditReport）
+│   ├── audit.py           # 文档审计引擎（检查项、排序、发现指纹、AuditReport）
 │   ├── audit_report.py    # 审计摘要与单文件 HTML 报告
+│   ├── audit_sarif.py     # 审计报告的 SARIF 2.1.0 渲染
+│   ├── baseline.py        # 基线加载与 AuditReport 比较
+│   ├── waivers.py         # 可过期豁免的解析、匹配与过期判断
 │   ├── security.py        # 只读的文档安全资源采集
 │   ├── security_report.py # 安全摘要与单文件 HTML 报告
 │   ├── accessibility.py   # 只读的 tagged PDF 结构采集
@@ -638,7 +662,7 @@ pdf-inspector/
 │   ├── generate-icon.js
 │   └── freeze-sidecar.sh
 ├── docs/
-│   ├── audit.md           # 文档体检：检查项、AuditReport schema、CLI 与 action
+│   ├── audit.md           # 文档体检：检查项、AuditReport schema、基线、豁免、SARIF、CLI 与 action
 │   ├── security.md        # 文档安全：资源、上限、SecurityReport schema、CLI
 │   ├── accessibility.md   # 无障碍：结构树、检查项、上限、AccessibilityReport schema、CLI
 │   ├── annotations.md     # 注释、链接与表单：整档索引、健康检查、JSON/CSV 导出与只读限制
@@ -649,7 +673,7 @@ pdf-inspector/
 │   ├── export.md          # 对象 JSON/CSV、PNG/SVG 视图导出与自包含 HTML 报告
 │   ├── themes-i18n.md     # 主题注册表、Light/System、i18n 目录与持久化
 │   ├── diff.md            # Diff：页面对齐、视觉模式、忽略区域与文档资源
-│   ├── ci.md              # Diff CLI 与 GitHub Action
+│   ├── ci.md              # Diff 与审计的 CI：CLI、action、基线、豁免、SARIF
 │   ├── packaging.md       # 打包说明
 │   ├── images/            # README 截图
 │   └── superpowers/       # 设计与实施文档（specs / plans）
@@ -678,7 +702,7 @@ npx vitest run
 
 `npx tsc -b` 使用项目引用，会同时检查 main、preload、renderer 与 shared。提交前建议执行上面的全部命令。
 
-CI 由 `.github/workflows/ci.yml` 定义：在推送到 `main`、推送 `v*` 标签、Pull Request 及手动触发时，执行上述类型检查与测试，并构建桌面端、Web 前端、Web 后端及生成演示 PDF；此外还有 diff CLI、diff action、audit CLI、audit action、security CLI 与 accessibility CLI（摘要、JSON、HTML 及 `--fail-on warning` 阈值）的端到端任务。
+CI 由 `.github/workflows/ci.yml` 定义：在推送到 `main`、推送 `v*` 标签、Pull Request 及手动触发时，执行上述类型检查与测试，并构建桌面端、Web 前端、Web 后端及生成演示 PDF；此外还有 diff CLI、diff action、audit CLI、audit action（含基线比较与 SARIF 结构）、security CLI 与 accessibility CLI（摘要、JSON、HTML 及 `--fail-on warning` 阈值）的端到端任务。
 
 ## 打包发布
 
@@ -718,6 +742,7 @@ npm run dist:linux       # Linux
 - 文档体检不做 PDF/A 合规认证，也不验证数字签名；“未标记 PDF”只是诊断提示，不代表合规结论。
 - 文档体检不做 OCR，也不识别扫描页中的文字；扫描页只能得到“有图片但无可提取文本”的提示。
 - 旋转页或 CropBox 偏移页上的审计发现只到页面级，无法给出对象级高亮；带页码的发现仍可跳转到对应页面。
+- 审计指纹对 `category` / `title` / `detail` / `evidence` 求哈希，并在哈希前归一化指向自身页码的引用（`Page 3` / `page 3` 变成 `Page #` / `page #`），因此哈希文本只引用自身页码的页面级发现换页报为 `moved` 而不是 `new` + `fixed`；`p. 3`、`PAGE 3`、`Pages 3` 不做归一化，而在 `evidence` 中列出多个页码的聚合型发现仍然依赖页码。有意修改检查器措辞仍会让已有基线与豁免失配，需要用当前版本重新生成基线。豁免另有固定到期日，匹配不到任何发现时计为 `unused`，不会悄悄变成永久例外；过期豁免提示即使加了 `--quiet` 也会写到 stderr。界面的基线只在本机内存中加载，会拒绝比较产物与缺少指纹的旧报告，也不读取豁免文件，因此那里的 `waived` 始终为 `0`。
 - 文档体检按 10 页一批串行执行（与字体分析相同），超大文档需要较长时间；页面提取失败是当前唯一的 `error` 来源。CLI 与 action 同样需要 Python 3.10+ 与 sidecar 依赖，且只接受本地路径，打包后的桌面应用不包含 CLI。
 - 文档安全与附件检查是只读且启发式的：不执行 JavaScript、不跟随动作、不打开或解压附件、不解密流，也不验证签名。附件大小、MIME 与日期来自 PDF 元数据，可能缺失或不可信；签名只报告“存在”（`verified: false`）。资源枚举有上限，畸形对象会降级为 `null` 或被跳过。
 - 注释、链接与表单的整档索引按 10 页一批顺序读取，超大文档需要较长时间；单页读取失败会中止整次索引并显示该页错误，`Retry` 从头重建，没有断点续建或部分结果。索引期间翻页与当前页检查仍可用。

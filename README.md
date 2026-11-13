@@ -267,10 +267,11 @@ python sidecar/cli.py diff old.pdf new.pdf --fail-on modified \
 - **Severities:** findings are `error` / `warning` / `info`; there is no health score. Page extraction failure is the current `error` source. Unembedded fonts are warnings, and Standard 14 fonts are not treated as missing.
 - **Batched progress:** after document-level checks, page checks run sequentially in 10-page batches with `Auditing pages N/M…`; the UI stays usable between batches.
 - **Dedicated workspace:** the toolbar `Audit` button opens the audit workspace (mutually exclusive with Diff). The header shows the file and `Run` / `Re-run`; the left side summarizes by severity and supports severity/category filters; the middle lists findings; the right shows the selected finding's explanation, evidence, and recommendation.
+- **Baseline comparison:** every finding carries a stable fingerprint (references to its own page are normalized before hashing), so `Baseline…` can load a previous `AuditReport` JSON and show `Baseline: 2 new · 5 existing · 1 fixed`. `New only` keeps new and escalated findings, rows get `New` / `Moved` / `Escalated` badges, and `Clear` returns to the full list. The file is parsed in memory only; the `--baseline-output` comparison artifact and legacy reports without fingerprints are rejected with an inline message instead of being compared wrongly.
 - **Jump to page:** findings with a page number offer `Open page`, which closes Audit and navigates Inspect to that page. The Inspect document, page, zoom, and selection remain unchanged, and `Back to Inspect` returns at any time.
-- **JSON export:** `Export JSON` writes the full `AuditReport` (`schemaVersion: 1`) with tool, document, summary, and findings. CLI `audit --format json` uses the same schema.
-- **Reports and integration:** CLI supports `summary` / `json` / `html`. HTML is a single file with inline CSS and no scripts. `audit/action.yml` runs the audit in CI and uses `fail-on` to decide the step result. See [docs/audit.md](docs/audit.md).
-- **Heuristic checks:** audit uses extracted objects, font information, page boxes, and catalog metadata. It does not certify PDF/A, verify signatures, or perform OCR. Findings on rotated or CropBox-offset pages are page-level only.
+- **JSON export:** `Export JSON` writes the full `AuditReport` (`schemaVersion: 1`) with tool, document, summary, and findings; each finding also carries a `fingerprint` (additive, `schemaVersion` stays `1`). CLI `audit --format json` uses the same schema.
+- **Quality gates:** CLI and action support `summary` / `json` / `html` / `sarif`, a baseline (`--baseline`, `--baseline-output`), and expiring waivers (`--waivers`). With a baseline only `new` and `escalated` findings trip `--fail-on`, so an existing PDF can adopt the gate without being rewritten first; a finding that merely moved to another page is `moved` and does not fail. `--format sarif` emits SARIF 2.1.0 for code scanning, with `pdfInspectorFinding/v1` partial fingerprints, `baselineState`, and `suppressions` from waivers. See [docs/audit.md](docs/audit.md) and [docs/ci.md](docs/ci.md).
+- **Heuristic checks:** audit uses extracted objects, font information, page boxes, and catalog metadata. It does not certify PDF/A or PDF/UA, verify signatures, or perform OCR, and it never uploads a report or modifies the PDF. Findings on rotated or CropBox-offset pages are page-level only.
 
 ### Document security and attachments
 
@@ -398,7 +399,7 @@ Diff samples are generated in old/new pairs and can be selected in the compariso
 7. **Control overlays:** use `Layers` to toggle the seven object types, see current-page counts, use Solo, and adjust opacity. Press `F` for Focus mode.
 8. **Search and export:** `Ctrl/Cmd+F` opens search; use `Aa` / `W` / `.*` for case, whole-word, and regex; browse `p.N` rows with context and click to jump. `Ctrl/Cmd+K` opens the command palette for open, jump, theme, language, panel, Diff/Audit/Raw, export, and clear commands. `Export` writes current-page or whole-document JSON/CSV; the toolbar's `View…` (`Export view…` in the command palette) writes the current page or selected region as PNG/SVG; `Report…` (`Share report…` in the palette) writes a self-contained HTML inspection report.
 9. **Compare revisions:** click `Diff`, choose Old/New PDFs, adjust position tolerance, ignores, and the `Content` resource switches, then Compare. Select changes in the left list (including `Document changes` rows) or switch Side by side / Overlay / Visual (Visual supports Blend/Heatmap/Boxes and pixel stats). `Ignore region` lets you mask a region, then `Apply & re-run`; `Export JSON` saves the result.
-10. **Audit a document:** click `Audit` to run whole-document checks, review the severity summary, filter by severity/category, inspect evidence and recommendations, use `Open page` when available, or `Export JSON` for the full report. Switch to `Resources` for attachments, JavaScript, actions, signatures, encryption, and permissions; use `Refresh` to re-read, `Export security JSON` for the full `SecurityReport`, or `View in Findings` to jump back with the `security` category filter.
+10. **Audit a document:** click `Audit` to run whole-document checks, review the severity summary, filter by severity/category, inspect evidence and recommendations, use `Open page` when available, or `Export JSON` for the full report. `Baseline…` loads a previous report to show `new` / `existing` / `moved` / `escalated` / `fixed` counts, and `New only` keeps new and escalated findings; `Clear` drops it. Switch to `Resources` for attachments, JavaScript, actions, signatures, encryption, and permissions; use `Refresh` to re-read, `Export security JSON` for the full `SecurityReport`, or `View in Findings` to jump back with the `security` category filter.
 11. **Review accessibility and structure:** with Audit open, switch to `Structure` to read the tagged structure tree and document facts. Use `Expand all` / `Collapse all`, `Issues only`, or search by role/Alt text; select a node for role, Alt/ActualText, page, and MCID details, then `Open page` to jump to the page or `View in Findings` for the `structure` findings. `Refresh` reparses the document, and `Export accessibility JSON` saves the full report.
 12. **Inspect annotations, links, and forms:** open `Annots` (default `Current page`), switch to `Whole document` to build the index (`Indexing annotations N/M…`), use search and global Kind/Subtype filters, and click rows to jump and select when possible. `Issues` summarizes broken links and form issues; `External links` lists openable `http(s)` targets. `Export` writes the index as JSON/CSV. External links require `Open link`; internal links use `Go to page N`; form fields are read-only.
 13. **Inspect raw objects and content streams:** click `Raw` to open the read-only workspace. Expand `Catalog` → `Pages` → a page → `Resources` in the tree, and click references to inspect values on the right. Switch to `Content stream` for decoded operators and operands. `Back to Inspect` returns with page and zoom unchanged.
@@ -453,7 +454,7 @@ Exit codes: `0` means no differences, or all differences were excluded by `--fai
 
 ### Audit CLI
 
-Document audit also runs outside the UI and reuses the same check engine. The CLI accepts local PDF paths only (rejecting `http(s)` URLs), writes a summary, `AuditReport` JSON, or single-file HTML, and maps `--fail-on` to an exit code.
+Document audit also runs outside the UI and reuses the same check engine. The CLI accepts local PDF paths only (rejecting `http(s)` URLs), writes a summary, `AuditReport` JSON, single-file HTML, or SARIF 2.1.0, and maps `--fail-on` to an exit code.
 
 ```bash
 # Direct Python CLI; requires Python 3.10+ and sidecar/requirements.txt
@@ -464,6 +465,18 @@ python sidecar/cli.py audit report.pdf --format html --output report.audit.html
 # Return 1 when warnings/errors are found, for a quality gate
 python sidecar/cli.py audit report.pdf --fail-on warning
 
+# Baseline-relative gate: only new or escalated findings return 1
+python sidecar/cli.py audit report.pdf \
+  --baseline ci/pdf-audit-baseline.json \
+  --baseline-output artifacts/audit-comparison.json \
+  --fail-on warning
+
+# Expiring waivers, and SARIF 2.1.0 for code scanning
+python sidecar/cli.py audit report.pdf \
+  --waivers ci/pdf-audit-waivers.json --fail-on warning
+python sidecar/cli.py audit report.pdf \
+  --format sarif --output artifacts/audit.sarif --sarif-uri docs/report.pdf
+
 # Through the bin/pdf-inspector.mjs wrapper (install/link it to call pdf-inspector)
 pdf-inspector audit report.pdf
 node bin/pdf-inspector.mjs audit report.pdf --format json --output report.audit.json
@@ -473,14 +486,18 @@ Common options:
 
 | Option | Description |
 |--------|-------------|
-| `--format` | Output format: `summary` (default) / `json` / `html` |
-| `--output PATH` | Write the formatted result to a file as well; stdout still prints the summary |
+| `--format` | Output format: `summary` (default) / `json` / `html` / `sarif` |
+| `--output PATH` | Write the formatted result to a file as well; stdout still prints the summary. Cannot overwrite the input PDF, the baseline, or the waiver file, and cannot be the same file as `--baseline-output` |
+| `--baseline PATH` | Compare against a previous `AuditReport` JSON (the `audit --format json` output, not the `--baseline-output` comparison); only `new` / `escalated` findings count for `--fail-on` |
+| `--baseline-output PATH` | Write the `BaselineComparison` JSON (requires `--baseline`, and must differ from `--output`) |
+| `--waivers PATH` | Expiring waiver policy; accepted findings never count for `--fail-on`, expired ones are reported on stderr |
+| `--sarif-uri PATH` | SARIF `artifactLocation.uri` (default: the input argument); only valid with `--format sarif` |
 | `--fail-on` | Choose which findings return 1; default `none`; values `error` / `warning` / `none`. `warning` includes errors; `error` includes only errors |
-| `--quiet` | Suppress the human summary and keep only JSON/HTML output |
+| `--quiet` | Suppress the human summary and keep only JSON/HTML/SARIF output; policy notices such as expired waivers still go to stderr |
 
-Exit codes: `0` means no finding reached `--fail-on`; `1` means it matched; `2` means an argument, input, read, or audit error. `--fail-on none` never returns 1, but input errors still return 2. Page extraction failure is the only current `error` source, so `--fail-on error` only blocks truly unreadable pages.
+Exit codes: `0` means no finding reached `--fail-on`; `1` means it matched; `2` means an argument, input, read, audit, baseline, waiver, or output error. `--fail-on none` never returns 1, but input errors still return 2. Page extraction failure is the only current `error` source, so `--fail-on error` only blocks truly unreadable pages.
 
-`--format json` emits `AuditReport` (`schemaVersion: 1`) with `tool` / `document` / `summary` / `findings`; each finding has category, severity, page (`null` for document-level), title, description, evidence, and recommendation. Output has no timestamps or absolute paths and is stable, so the same PDF produces byte-identical JSON. HTML reports are single-file with inline CSS, no scripts, no external resources, and all PDF text escaped. See [docs/audit.md](docs/audit.md) for the full schema, checks, and thresholds.
+`--format json` emits `AuditReport` (`schemaVersion: 1`) with `tool` / `document` / `summary` / `findings`; each finding has category, severity, page (`null` for document-level), title, description, evidence, recommendation, and a `fingerprint` that identifies the same problem across runs (references to the finding's own page are normalized before hashing, so a page move stays the same finding and is reported as `moved`). With `--baseline` the summary gains a `baseline: N new, N existing, N moved, N escalated, N fixed, N waived` line and the HTML report gains a `Baseline` section; with `--waivers` it gains a `waivers: N applied, N expired, N unused` line. `--format sarif` maps the same report to SARIF 2.1.0 (`pdfInspectorFinding/v1` partial fingerprints, `baselineState`, `suppressions`). Output has no timestamps or absolute paths and is stable, so the same PDF produces byte-identical JSON, HTML, and SARIF. HTML reports are single-file with inline CSS, no scripts, no external resources, and all PDF text escaped. See [docs/audit.md](docs/audit.md) for the full schema, checks, baselines, waivers, and thresholds, and [docs/ci.md](docs/ci.md) for CI wiring.
 
 ### Security CLI
 
@@ -552,14 +569,18 @@ The repository also provides an audit composite action ([`audit/action.yml`](aud
 - uses: <owner>/pdf-inspector/audit@v1
   with:
     path: docs/report.pdf
-    fail-on: error
-    format: html
-    report-path: artifacts/pdf-audit.html
+    fail-on: warning
+    format: sarif
+    sarif-path: artifacts/pdf-audit.sarif
+    sarif-uri: docs/report.pdf          # repository-relative, for code scanning
+    baseline-path: ci/pdf-audit-baseline.json
+    baseline-output-path: artifacts/pdf-audit-comparison.json
+    waivers-path: ci/pdf-audit-waivers.json
     # Add a JSON artifact too; this runs the CLI one extra time
     # json-path: artifacts/pdf-audit.json
 ```
 
-The action defaults to `fail-on: error` and `format: summary`, and supports `summary` / `json` / `html`. `json-path` / `report-path` set the JSON/HTML payload path (when the selected format has no path, it goes to the runner temp directory); payloads are not written to the step log. Outputs are `exit-code` / `json-path` / `report-path`, and the exit code, `fail-on`, and artifact paths are written to the step summary. A non-zero exit code is written to outputs before the step fails, so later steps can still read the result. The repository uses `uses: ./audit`; see [docs/audit.md](docs/audit.md) for inputs, outputs, and examples.
+The action defaults to `fail-on: error` and `format: summary`, and supports `summary` / `json` / `html` / `sarif`. `json-path` / `report-path` / `sarif-path` set the JSON/HTML/SARIF payload path (when the selected format has no path, it goes to the runner temp directory); payloads are not written to the step log. `baseline-path` compares against a committed `AuditReport` (`audit --format json` output, not the comparison artifact) so only new or escalated findings fail the step, `baseline-output-path` writes the comparison and must differ from `json-path` / `report-path` / `sarif-path`, `waivers-path` loads an expiring waiver policy, and `sarif-uri` sets the SARIF artifact uri (only with `format: sarif`). A missing local baseline or waiver file, or a comparison output that collides with another artifact path, fails the step before the audit runs. Outputs are `exit-code` / `json-path` / `report-path` / `sarif-path`, and the exit code, `fail-on`, format, and artifact paths are written to the step summary. A non-zero exit code is written to outputs before the step fails, so later steps can still read the result. The repository uses `uses: ./audit`; see [docs/audit.md](docs/audit.md) for inputs and outputs and [docs/ci.md](docs/ci.md) for a code-scanning workflow.
 
 ## Architecture
 
@@ -627,8 +648,11 @@ pdf-inspector/
 │   ├── diff.py            # Object-level diff engine
 │   ├── report.py          # Diff summary and self-contained HTML report
 │   ├── raw.py             # Bounded, read-only raw object and content-stream serializer
-│   ├── audit.py           # Audit engine (checks, ordering, AuditReport)
+│   ├── audit.py           # Audit engine (checks, ordering, finding fingerprints, AuditReport)
 │   ├── audit_report.py    # Audit summary and single-file HTML report
+│   ├── audit_sarif.py     # SARIF 2.1.0 rendering for audit reports
+│   ├── baseline.py        # Baseline loading and AuditReport comparison
+│   ├── waivers.py         # Expiring waiver parsing, matching and expiry
 │   ├── security.py        # Read-only document security resource collector
 │   ├── security_report.py # Security summary and single-file HTML report
 │   ├── accessibility.py   # Read-only tagged-PDF structure collector
@@ -644,7 +668,7 @@ pdf-inspector/
 │   ├── generate-icon.js
 │   └── freeze-sidecar.sh
 ├── docs/
-│   ├── audit.md           # Audit: checks, AuditReport schema, CLI, and action
+│   ├── audit.md           # Audit: checks, AuditReport schema, baselines, waivers, SARIF, CLI, action
 │   ├── security.md        # Security: resources, limits, SecurityReport schema, CLI
 │   ├── accessibility.md   # Accessibility: structure tree, checks, limits, AccessibilityReport schema, CLI
 │   ├── annotations.md     # Annotations: whole-document index, health checks, JSON/CSV, read-only limits
@@ -655,7 +679,7 @@ pdf-inspector/
 │   ├── export.md          # Object JSON/CSV, PNG/SVG view export, self-contained HTML report
 │   ├── themes-i18n.md     # Theme registry, Light/System, i18n catalogs, persistence
 │   ├── diff.md            # Diff: page alignment, Visual mode, ignore regions, document resources
-│   ├── ci.md              # Diff CLI and GitHub Action
+│   ├── ci.md              # Diff and audit CI: CLIs, actions, baselines, waivers, SARIF
 │   ├── packaging.md       # Packaging notes
 │   ├── images/            # README screenshots
 │   └── superpowers/       # Design and implementation notes (specs / plans)
@@ -686,7 +710,7 @@ npx vitest run
 
 `npx tsc -b` uses project references and checks main, preload, renderer, and shared together. Run all of the commands above before submitting.
 
-CI is defined in `.github/workflows/ci.yml`. It runs on pushes to `main`, `v*` tags, pull requests, and manual dispatch; it runs the type checks and tests above, builds the desktop app, Web frontend, and Web backend, generates demo PDFs, and includes end-to-end jobs for the diff CLI/action, audit CLI/action, security CLI, and accessibility CLI (summary, JSON, HTML, and the `--fail-on warning` threshold).
+CI is defined in `.github/workflows/ci.yml`. It runs on pushes to `main`, `v*` tags, pull requests, and manual dispatch; it runs the type checks and tests above, builds the desktop app, Web frontend, and Web backend, generates demo PDFs, and includes end-to-end jobs for the diff CLI/action, audit CLI/action (including baseline comparison and SARIF structure), security CLI, and accessibility CLI (summary, JSON, HTML, and the `--fail-on warning` threshold).
 
 ## Packaging
 
@@ -730,6 +754,7 @@ Packaged builds include the frozen sidecar, so end users do not need Python. PyI
 - Audit does not certify PDF/A compliance or verify digital signatures; an “untagged PDF” finding is diagnostic, not a compliance conclusion.
 - Audit does not perform OCR or recognize text on scanned pages; scanned pages only get the “image but no extractable text” hint.
 - Audit findings on rotated pages or CropBox-offset pages are page-level only and cannot highlight objects; findings with page numbers can still jump to the page.
+- Audit fingerprints hash `category` / `title` / `detail` / `evidence` after normalizing references to the finding's own page (`Page 3` / `page 3` become `Page #` / `page #`), so a page-scoped finding whose hashed text names only its own page is `moved` rather than `new` + `fixed`; `p. 3`, `PAGE 3`, and `Pages 3` are not normalized, and aggregate findings that list several pages in `evidence` remain page-dependent. Intentionally rewording a check still makes existing baselines and waivers stop matching, so regenerate the baseline with the current version after such a change. Waivers additionally expire on a fixed date and are counted as `unused` once they match nothing, so they cannot silently become permanent; an expired-waiver notice is printed on stderr even with `--quiet`. The UI loads baselines in memory only, rejects the comparison artifact and legacy fingerprints, and does not read waiver files, so `waived` is always `0` there.
 - Audit runs sequentially in 10-page batches (like font analysis) and can take a long time on very large documents; page extraction failure is the only current `error` source. CLI and action also require Python 3.10+ and sidecar dependencies, accept local paths only, and are not included in the packaged desktop app.
 - Security inspection is read-only and heuristic: it never executes JavaScript, follows actions, opens or extracts attachments, decrypts streams, or verifies signatures. Attachment size, MIME type, and dates are PDF metadata and may be missing or wrong; signatures are reported as present only (`verified: false`). The inventory is capped, and malformed objects degrade to `null` or are skipped.
 - The whole-document annotation index reads in 10-page batches and can take a long time on very large documents. A single-page read failure aborts the whole index and shows that page's error; `Retry` starts over with no resume or partial results. Paging and current-page inspection remain available during indexing.
