@@ -74,12 +74,127 @@ def _page(*draws):
 
 
 def _pdf(path: Path, *pages, pagesize=letter) -> str:
-    canvas = rl_canvas.Canvas(str(path), pagesize=pagesize)
+    # invariant=1 keeps the info dictionary deterministic: resource comparison
+    # runs by default, so a creation timestamp would show up as a metadata change.
+    canvas = rl_canvas.Canvas(str(path), pagesize=pagesize, invariant=1)
     for draw in pages:
         draw(canvas)
         canvas.showPage()
     canvas.save()
     return str(path)
+
+
+# --- minimal resource PDFs ---------------------------------------------------
+#
+# Reportlab cannot easily write an arbitrary /Annots array or /PageLabels, so the
+# resource fixtures are written by hand: one empty page, optional annotations and
+# an optional info dictionary. Empty content keeps the object diff empty, which
+# makes every change in these fixtures a resource change.
+
+
+def _content_stream(data: bytes) -> bytes:
+    return b'<< /Length %d >>\nstream\n' % len(data) + data + b'\nendstream'
+
+
+def _pdf_text(text: str) -> bytes:
+    data = text.encode('utf-8')
+    data = data.replace(b'\\', b'\\\\').replace(b'(', b'\\(').replace(b')', b'\\)')
+    return b'(' + data + b')'
+
+
+def _resource_pdf(
+    path: Path,
+    *,
+    annots=(),
+    info: bytes | None = None,
+    page_labels: bytes | None = None,
+) -> str:
+    """One empty page plus optional annots, catalog page labels and info dict."""
+    bodies: dict[int, bytes] = {}
+    next_number = 5
+    annot_numbers: list[int] = []
+    for body in annots:
+        annot_numbers.append(next_number)
+        bodies[next_number] = body
+        next_number += 1
+    info_number = None
+    if info is not None:
+        info_number = next_number
+        bodies[info_number] = info
+        next_number += 1
+    labels_number = None
+    if page_labels is not None:
+        labels_number = next_number
+        bodies[labels_number] = page_labels
+        next_number += 1
+
+    catalog = b'<< /Type /Catalog /Pages 2 0 R'
+    if labels_number is not None:
+        catalog += b' /PageLabels %d 0 R' % labels_number
+    bodies[1] = catalog + b' >>'
+    bodies[2] = b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>'
+    page = b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R'
+    if annot_numbers:
+        page += (
+            b' /Annots ['
+            + b' '.join(b'%d 0 R' % number for number in annot_numbers)
+            + b']'
+        )
+    bodies[3] = page + b' >>'
+    bodies[4] = _content_stream(b'')
+
+    out = bytearray(b'%PDF-1.4\n')
+    offsets = []
+    for number in range(1, next_number):
+        offsets.append(len(out))
+        out += b'%d 0 obj\n' % number + bodies[number] + b'\nendobj\n'
+    xref_position = len(out)
+    out += b'xref\n0 %d\n' % next_number
+    out += b'0000000000 65535 f \n'
+    for offset in offsets:
+        out += b'%010d 00000 n \n' % offset
+    trailer = b'<< /Size %d /Root 1 0 R ' % next_number
+    if info_number is not None:
+        trailer += b'/Info %d 0 R ' % info_number
+    out += b'trailer\n' + trailer + b'>>\nstartxref\n%d\n%%%%EOF\n' % xref_position
+    path.write_bytes(bytes(out))
+    return str(path)
+
+
+def _annotation(nm: str, contents: str, rect: bytes = b'[100 200 300 400]') -> bytes:
+    return (
+        b'<< /Type /Annot /Subtype /Square /Rect '
+        + rect
+        + b' /NM '
+        + _pdf_text(nm)
+        + b' /Contents '
+        + _pdf_text(contents)
+        + b' >>'
+    )
+
+
+def _uri_link(nm: str, uri: str, rect: bytes = b'[10 10 110 30]') -> bytes:
+    return (
+        b'<< /Type /Annot /Subtype /Link /Rect '
+        + rect
+        + b' /NM '
+        + _pdf_text(nm)
+        + b' /A << /S /URI /URI '
+        + _pdf_text(uri)
+        + b' >> >>'
+    )
+
+
+def _widget(name: str, value: str, rect: bytes = b'[100 500 300 520]') -> bytes:
+    return (
+        b'<< /Type /Annot /Subtype /Widget /Rect '
+        + rect
+        + b' /FT /Tx /T '
+        + _pdf_text(name)
+        + b' /V '
+        + _pdf_text(value)
+        + b' >>'
+    )
 
 
 @pytest.fixture(scope='module')
@@ -128,6 +243,73 @@ def docs(tmp_path_factory):
         'a4': build('a4.pdf', _page(_draw_text('Resized')), pagesize=A4),
         'not_pdf': str(not_pdf),
         'broken': str(broken),
+        # Resource-only pairs (empty page content): every change is a resource or
+        # document change, never an object change.
+        'mixed_old': _resource_pdf(
+            root / 'mixed_old.pdf',
+            annots=[
+                _annotation('a1', 'Old note'),
+                _uri_link('l1', 'https://example.com/old'),
+                _widget('person', 'Alice'),
+            ],
+            info=b'<< /Title (Old title) >>',
+            page_labels=b'<< /Nums [0 << /S /r >>] >>',
+        ),
+        'mixed_new': _resource_pdf(
+            root / 'mixed_new.pdf',
+            annots=[
+                _annotation('a1', 'New note'),
+                _uri_link('l1', 'https://example.com/new'),
+                _widget('person', 'Bob'),
+            ],
+            info=b'<< /Title (New title) >>',
+            page_labels=b'<< /Nums [0 << /S /D /St 5 >>] >>',
+        ),
+        'meta_old': _resource_pdf(
+            root / 'meta_old.pdf', info=b'<< /Title (Old title) >>'
+        ),
+        'meta_new': _resource_pdf(
+            root / 'meta_new.pdf', info=b'<< /Title (New title) >>'
+        ),
+        'res_added_old': _resource_pdf(root / 'res_added_old.pdf'),
+        'res_added_new': _resource_pdf(
+            root / 'res_added_new.pdf', annots=[_annotation('a1', 'Fresh note')]
+        ),
+        'res_removed_old': _resource_pdf(
+            root / 'res_removed_old.pdf', annots=[_annotation('a1', 'Gone note')]
+        ),
+        'res_removed_new': _resource_pdf(root / 'res_removed_new.pdf'),
+        'labels_old': _resource_pdf(
+            root / 'labels_old.pdf', page_labels=b'<< /Nums [0 << /S /r >>] >>'
+        ),
+        'labels_new': _resource_pdf(
+            root / 'labels_new.pdf', page_labels=b'<< /Nums [0 << /S /D /St 5 >>] >>'
+        ),
+        'res_moved_old': _resource_pdf(
+            root / 'res_moved_old.pdf',
+            annots=[_annotation('m1', 'Note', rect=b'[100 200 300 400]')],
+        ),
+        'res_moved_new': _resource_pdf(
+            root / 'res_moved_new.pdf',
+            annots=[_annotation('m1', 'Note', rect=b'[120 220 320 420]')],
+        ),
+        # 501 annotations on one page: the collector keeps the first 500 and
+        # flags the result as incomplete. The dropped annotation is the only
+        # difference between the two files.
+        'cap_old': _resource_pdf(
+            root / 'cap_old.pdf',
+            annots=[
+                *(_annotation(f'a{index}', f'Note {index}') for index in range(500)),
+                _annotation('last', 'Old last'),
+            ],
+        ),
+        'cap_new': _resource_pdf(
+            root / 'cap_new.pdf',
+            annots=[
+                *(_annotation(f'a{index}', f'Note {index}') for index in range(500)),
+                _annotation('last', 'New last'),
+            ],
+        ),
     }
 
 
@@ -141,6 +323,14 @@ PAIRS = {
     'page_added': ('one_page', 'two_pages'),
     'reordered': ('two_pages', 'swapped_pages'),
     'geometry': ('letter', 'a4'),
+    # resource/document-change pairs
+    'resources': ('mixed_old', 'mixed_new'),
+    'metadata': ('meta_old', 'meta_new'),
+    'resource_added': ('res_added_old', 'res_added_new'),
+    'resource_removed': ('res_removed_old', 'res_removed_new'),
+    'page_labels': ('labels_old', 'labels_new'),
+    'resource_moved': ('res_moved_old', 'res_moved_new'),
+    'resource_cap': ('cap_old', 'cap_new'),
 }
 
 
@@ -196,6 +386,11 @@ def test_json_output_matches_contract(docs):
         'ignoreFonts',
         'ignoreColors',
         'ignoreImages',
+        'ignoreAnnotations',
+        'ignoreLinks',
+        'ignoreForms',
+        'ignoreMetadata',
+        'ignorePageLabels',
         'ignoreRegions',
     }
 
@@ -244,6 +439,11 @@ def test_json_options_flags_are_forwarded(docs):
         '--ignore-fonts',
         '--ignore-colors',
         '--ignore-images',
+        '--ignore-annotations',
+        '--ignore-links',
+        '--ignore-forms',
+        '--ignore-metadata',
+        '--ignore-page-labels',
     )
 
     assert data['options'] == {
@@ -253,6 +453,11 @@ def test_json_options_flags_are_forwarded(docs):
         'ignoreFonts': True,
         'ignoreColors': True,
         'ignoreImages': True,
+        'ignoreAnnotations': True,
+        'ignoreLinks': True,
+        'ignoreForms': True,
+        'ignoreMetadata': True,
+        'ignorePageLabels': True,
         'ignoreRegions': [],
     }
     assert all(
@@ -260,6 +465,19 @@ def test_json_options_flags_are_forwarded(docs):
         for page in data['pages']
         for change in page['changes']
     )
+
+
+def test_json_options_echo_resource_defaults_as_false(docs):
+    data = _json_result(docs, 'changed')
+
+    for key in (
+        'ignoreAnnotations',
+        'ignoreLinks',
+        'ignoreForms',
+        'ignoreMetadata',
+        'ignorePageLabels',
+    ):
+        assert data['options'][key] is False
 
 
 # --- summary output ---------------------------------------------------------
@@ -685,6 +903,507 @@ def test_summary_reports_ignored_regions(docs, tmp_path):
     assert '  - old page 1 / new page 1: (90, 690) - (200, 720)' in result.stdout
     assert 'changes: none - documents match' in result.stdout
     assert 'ignored regions: 0' in run_pair(docs, 'changed', '--fail-on', 'none').stdout
+
+
+# --- resource changes -------------------------------------------------------
+
+RESOURCE_IGNORE_ARGS = (
+    '--ignore-annotations',
+    '--ignore-links',
+    '--ignore-forms',
+    '--ignore-metadata',
+    '--ignore-page-labels',
+)
+
+
+def test_cli_parser_exposes_resource_ignore_flags():
+    parser = cli.build_parser()
+
+    args = parser.parse_args(['diff', 'old.pdf', 'new.pdf', *RESOURCE_IGNORE_ARGS])
+    assert args.ignore_annotations is True
+    assert args.ignore_links is True
+    assert args.ignore_forms is True
+    assert args.ignore_metadata is True
+    assert args.ignore_page_labels is True
+
+    defaults = parser.parse_args(['diff', 'old.pdf', 'new.pdf'])
+    assert defaults.ignore_annotations is False
+    assert defaults.ignore_links is False
+    assert defaults.ignore_forms is False
+    assert defaults.ignore_metadata is False
+    assert defaults.ignore_page_labels is False
+
+
+def test_build_options_forwards_resource_ignore_flags():
+    parser = cli.build_parser()
+
+    options = cli._build_options(
+        parser.parse_args(
+            [
+                'diff',
+                'old.pdf',
+                'new.pdf',
+                '--ignore-annotations',
+                '--ignore-metadata',
+            ]
+        )
+    )
+    assert options.ignore_annotations is True
+    assert options.ignore_metadata is True
+    assert options.ignore_links is False
+    assert options.ignore_forms is False
+    assert options.ignore_page_labels is False
+
+    defaults = cli._build_options(parser.parse_args(['diff', 'old.pdf', 'new.pdf']))
+    assert defaults.ignore_annotations is False
+    assert defaults.ignore_links is False
+    assert defaults.ignore_forms is False
+    assert defaults.ignore_metadata is False
+    assert defaults.ignore_page_labels is False
+
+
+def test_help_documents_resource_ignore_flags():
+    result = run_cli('diff', '--help')
+
+    assert result.returncode == 0
+    for flag in RESOURCE_IGNORE_ARGS:
+        assert flag in result.stdout
+    assert 'annotations' in result.stdout
+    assert 'page labels' in result.stdout
+
+
+def test_json_reports_resource_and_document_changes(docs):
+    data = _json_result(docs, 'resources')
+
+    assert data['summary']['resourcesModified'] == 3
+    assert data['summary']['resourcesAdded'] == 0
+    assert data['summary']['resourcesRemoved'] == 0
+    assert data['summary']['resourcesMoved'] == 0
+    assert data['summary']['documentChanges'] == 2
+    assert 'resourcesTruncated' not in data['summary']
+    assert data['truncated'] is False
+    assert {change['type'] for page in data['pages'] for change in page['changes']} == {
+        'annotation',
+        'link',
+        'form',
+    }
+    assert {change['type'] for change in data['documentChanges']} == {
+        'metadata',
+        'page-label',
+    }
+    # Resources never enter the object counters.
+    assert data['summary']['objectsModified'] == 0
+    assert data['summary']['objectsAdded'] == 0
+
+
+def test_json_keeps_resource_counters_absent_for_object_only_runs(docs):
+    data = _json_result(docs, 'changed')
+
+    for key in ('resourcesAdded', 'resourcesRemoved', 'resourcesModified', 'documentChanges'):
+        assert key not in data['summary']
+    assert 'documentChanges' not in data
+
+
+def test_summary_reports_resource_and_document_change_counts(docs):
+    result = run_pair(docs, 'resources', '--fail-on', 'none')
+
+    assert result.returncode == 0, result.stderr
+    assert 'resources: 0 added, 0 removed, 3 modified, 0 moved' in result.stdout
+    assert 'document changes: 2' in result.stdout
+    assert 'annotation modified "Old note" -> "New note"' in result.stdout
+    assert 'metadata title modified "Old title" -> "New title"' in result.stdout
+    assert 'page-label page-label modified "i" -> "5" (page 1)' in result.stdout
+
+
+def test_summary_omits_resource_counts_for_object_only_runs(docs):
+    result = run_pair(docs, 'changed', '--fail-on', 'none')
+
+    assert 'resources:' not in result.stdout
+    assert 'document changes:' not in result.stdout
+
+
+@pytest.mark.parametrize(
+    'flag, hidden',
+    [
+        ('--ignore-annotations', 'annotation'),
+        ('--ignore-links', 'link'),
+        ('--ignore-forms', 'form'),
+    ],
+)
+def test_ignore_resource_flags_remove_only_their_type(docs, flag, hidden):
+    data = _json_result(docs, 'resources', flag)
+
+    types = {
+        change['type'] for page in data['pages'] for change in page['changes']
+    }
+    assert hidden not in types
+    assert types
+    # Document changes are independent of the page resource switches.
+    assert data['summary']['documentChanges'] == 2
+
+
+def test_ignore_metadata_flag_removes_metadata_changes(docs):
+    default = _json_result(docs, 'metadata')
+    assert [(change['type'], change['field']) for change in default['documentChanges']] == [
+        ('metadata', 'title')
+    ]
+
+    ignored = _json_result(docs, 'metadata', '--ignore-metadata')
+    assert 'documentChanges' not in ignored
+    assert 'documentChanges' not in ignored['summary']
+
+
+def test_ignore_page_labels_flag_removes_label_changes(docs):
+    default = _json_result(docs, 'page_labels')
+    assert {change['type'] for change in default['documentChanges']} == {'page-label'}
+
+    ignored = _json_result(docs, 'page_labels', '--ignore-page-labels')
+    assert 'documentChanges' not in ignored
+    assert 'documentChanges' not in ignored['summary']
+
+
+def test_json_reports_moved_resources(docs):
+    data = _json_result(docs, 'resource_moved')
+
+    changed = [change for page in data['pages'] for change in page['changes']]
+    assert [(change['kind'], change['type']) for change in changed] == [
+        ('moved', 'annotation')
+    ]
+    # The counter matches the move in the page list: no more "0/0/0 with a move".
+    assert data['summary']['resourcesMoved'] == 1
+    assert data['summary']['resourcesModified'] == 0
+    assert data['summary']['objectsMoved'] == 0
+    assert data['truncated'] is False
+
+
+def test_summary_reports_moved_resources(docs):
+    result = run_pair(docs, 'resource_moved', '--fail-on', 'none')
+
+    assert result.returncode == 0, result.stderr
+    assert 'resources: 0 added, 0 removed, 0 modified, 1 moved' in result.stdout
+    assert 'annotation moved' in result.stdout
+
+
+def test_json_flags_collector_caps_as_truncation(docs):
+    data = _json_result(docs, 'resource_cap')
+
+    # The 501st annotation is dropped on both sides, so nothing is reported.
+    assert data['pages'][0]['changes'] == []
+    assert data['truncated'] is True
+    assert data['summary']['changesTruncated'] is True
+    assert data['summary']['resourcesTruncated'] is True
+    assert data['summary']['objectsModified'] == 0
+
+    # Ignoring the capped kind means it was not compared: no false alarm.
+    ignored = _json_result(docs, 'resource_cap', '--ignore-annotations')
+    assert ignored['truncated'] is False
+    assert ignored['summary']['changesTruncated'] is False
+    assert 'resourcesTruncated' not in ignored['summary']
+
+
+def test_summary_and_html_report_collector_truncation(docs):
+    summary = run_pair(docs, 'resource_cap', '--fail-on', 'none')
+
+    assert summary.returncode == 0, summary.stderr
+    assert 'note: resource comparison is incomplete' in summary.stdout
+
+    html = run_pair(
+        docs, 'resource_cap', '--format', 'html', '--fail-on', 'none'
+    ).stdout
+    assert '<th scope="row">Resources truncated</th><td>true</td>' in html
+    # A clean resource run shows neither warning row nor note.
+    clean = run_pair(docs, 'resources', '--fail-on', 'none').stdout
+    assert 'Resources truncated' not in clean
+    assert 'note: resource comparison is incomplete' not in clean
+
+
+@pytest.mark.parametrize(
+    'pair, fail_on, expected',
+    [
+        # Resource-only changes are content changes for any/added/removed/modified.
+        ('resources', 'any', 1),
+        ('resources', 'modified', 1),
+        ('resources', 'added', 0),
+        ('resources', 'removed', 0),
+        ('resources', 'page-count', 0),
+        ('resources', 'reordered', 0),
+        ('resources', 'none', 0),
+        ('resource_added', 'any', 1),
+        ('resource_added', 'added', 1),
+        ('resource_added', 'modified', 0),
+        ('resource_added', 'removed', 0),
+        ('resource_removed', 'any', 1),
+        ('resource_removed', 'removed', 1),
+        ('resource_removed', 'added', 0),
+        ('resource_removed', 'modified', 0),
+        # A moved resource is a modification for --fail-on purposes.
+        ('resource_moved', 'any', 1),
+        ('resource_moved', 'modified', 1),
+        ('resource_moved', 'added', 0),
+        ('resource_moved', 'removed', 0),
+        ('resource_moved', 'page-count', 0),
+        # Metadata-only changes are document changes: modified, never page-count.
+        ('metadata', 'any', 1),
+        ('metadata', 'modified', 1),
+        ('metadata', 'added', 0),
+        ('metadata', 'removed', 0),
+        ('metadata', 'page-count', 0),
+        ('metadata', 'reordered', 0),
+        ('page_labels', 'modified', 1),
+        ('page_labels', 'any', 1),
+        ('page_labels', 'page-count', 0),
+    ],
+)
+def test_fail_on_includes_resources_and_document_changes(docs, pair, fail_on, expected):
+    result = run_pair(docs, pair, '--fail-on', fail_on, '--quiet')
+
+    assert result.returncode == expected, result.stderr
+    if expected:
+        assert 'fail-on' in result.stderr
+    else:
+        assert result.stderr == ''
+
+
+def test_fail_on_modified_mentions_resource_and_document_counts(docs):
+    result = run_pair(docs, 'resources', '--fail-on', 'modified', '--quiet')
+
+    assert result.returncode == 1
+    assert '3 resource(s) modified/moved' in result.stderr
+    assert '2 document change(s)' in result.stderr
+    assert result.stderr.strip().count('\n') == 0
+
+
+def test_fail_on_any_mentions_resource_and_document_counts(docs):
+    result = run_pair(docs, 'metadata', '--fail-on', 'any', '--quiet')
+
+    assert result.returncode == 1
+    assert '0 resource change(s)' in result.stderr
+    assert '1 document change(s)' in result.stderr
+    assert 'detected (fail-on any)' in result.stderr
+
+
+def test_fail_on_added_and_removed_mention_resource_counts(docs):
+    added = run_pair(docs, 'resource_added', '--fail-on', 'added', '--quiet')
+    assert added.returncode == 1
+    assert 'plus 1 resource(s) added' in added.stderr
+
+    removed = run_pair(docs, 'resource_removed', '--fail-on', 'removed', '--quiet')
+    assert removed.returncode == 1
+    assert 'plus 1 resource(s) removed' in removed.stderr
+
+
+def _summary_only_result(summary, **overrides):
+    result = {
+        'options': {},
+        'old': {'pages': 1},
+        'new': {'pages': 1},
+        'summary': {
+            'pagesAdded': 0,
+            'pagesRemoved': 0,
+            'pagesChanged': 0,
+            'pagesReordered': 0,
+            'objectsAdded': 0,
+            'objectsRemoved': 0,
+            'objectsMoved': 0,
+            'objectsModified': 0,
+            **summary,
+        },
+        'pages': [],
+    }
+    result.update(overrides)
+    return result
+
+
+def test_failure_reason_reports_resource_only_changes():
+    summary = {
+        'resourcesAdded': 2,
+        'resourcesRemoved': 1,
+        'resourcesModified': 4,
+        'documentChanges': 3,
+    }
+
+    any_reason = cli.failure_reason(_summary_only_result(summary), 'any')
+    assert any_reason == (
+        '0 object change(s), 0 page change(s), 7 resource change(s) and '
+        '3 document change(s) detected (fail-on any)'
+    )
+    assert cli.failure_reason(_summary_only_result(summary), 'added') == (
+        '0 page(s) and 0 object(s) added plus 2 resource(s) added (fail-on added)'
+    )
+    assert cli.failure_reason(_summary_only_result(summary), 'removed') == (
+        '0 page(s) and 0 object(s) removed plus 1 resource(s) removed '
+        '(fail-on removed)'
+    )
+    assert cli.failure_reason(_summary_only_result(summary), 'modified') == (
+        '0 object(s) modified and 0 moved plus 4 resource(s) modified/moved '
+        'and 3 document change(s) (fail-on modified)'
+    )
+    # Resources never change the page-count/reordered semantics.
+    assert cli.failure_reason(_summary_only_result(summary), 'page-count') is None
+    assert cli.failure_reason(_summary_only_result(summary), 'reordered') is None
+    assert cli.failure_reason(_summary_only_result(summary), 'none') is None
+
+
+def test_failure_reason_counts_moved_resources_from_page_changes():
+    result = _summary_only_result(
+        {'resourcesAdded': 0, 'resourcesRemoved': 0, 'resourcesModified': 0},
+        pages=[
+            {
+                'oldIndex': 1,
+                'newIndex': 1,
+                'status': 'changed',
+                'changes': [
+                    {
+                        'kind': 'moved',
+                        'type': 'annotation',
+                        'oldPage': 1,
+                        'newPage': 1,
+                        'details': {'resource': 'annotation'},
+                    }
+                ],
+            }
+        ],
+    )
+
+    reason = cli.failure_reason(result, 'modified')
+
+    assert reason == (
+        '0 object(s) modified and 0 moved plus 1 resource(s) modified/moved '
+        '(fail-on modified)'
+    )
+    assert cli.failure_reason(result, 'any') is not None
+
+
+def test_failure_reason_prefers_the_moved_resource_counter():
+    # The engine emits ``resourcesMoved``; the page list is only a fallback, so
+    # a move must never be counted twice.
+    result = _summary_only_result(
+        {'resourcesMoved': 2},
+        pages=[
+            {
+                'oldIndex': 1,
+                'newIndex': 1,
+                'status': 'changed',
+                'changes': [
+                    {'kind': 'moved', 'type': 'annotation', 'details': {}},
+                    {'kind': 'moved', 'type': 'link', 'details': {}},
+                ],
+            }
+        ],
+    )
+
+    reason = cli.failure_reason(result, 'modified')
+
+    assert '2 resource(s) modified/moved' in reason
+    assert '4 resource(s)' not in reason
+
+
+def test_failure_reason_keeps_legacy_object_messages():
+    result = _summary_only_result({'objectsModified': 1})
+
+    assert cli.failure_reason(result, 'modified') == (
+        '1 object(s) modified and 0 moved (fail-on modified)'
+    )
+    assert cli.failure_reason(result, 'any') == (
+        '1 object change(s) and 0 page change(s) detected (fail-on any)'
+    )
+
+
+def test_failure_reason_reads_document_changes_without_a_summary_counter():
+    result = _summary_only_result(
+        {},
+        documentChanges=[
+            {
+                'kind': 'modified',
+                'type': 'metadata',
+                'page': None,
+                'field': 'title',
+                'oldValue': 'Old',
+                'newValue': 'New',
+                'details': {},
+            }
+        ],
+    )
+
+    assert '1 document change(s)' in cli.failure_reason(result, 'modified')
+    assert '1 document change(s)' in cli.failure_reason(result, 'any')
+
+
+def test_html_report_renders_document_changes_and_resource_badges(docs):
+    result = run_pair(docs, 'resources', '--format', 'html', '--fail-on', 'none')
+
+    assert result.returncode == 0, result.stderr
+    html = result.stdout
+    assert 'Document changes' in html
+    assert '<table class="document-changes">' in html
+    assert 'metadata/page-label change(s)' in html
+    assert 'Old title' in html and 'New title' in html
+    assert 'page 1' in html
+    for label in ('Annotation', 'Link', 'Form', 'Metadata', 'Page label'):
+        assert f'<span class="badge badge-resource">{label}</span>' in html
+    # A page with resource changes is not described as object-only.
+    assert '<caption>Changes</caption>' in html
+    assert 'No object changes.' not in html
+    # Resource details render through the existing details block.
+    assert 'ann:nm:a1' in html
+    assert 'Old note' in html and 'New note' in html
+
+
+def test_html_summary_cards_include_resource_counts(docs):
+    html = run_pair(docs, 'resources', '--format', 'html', '--fail-on', 'none').stdout
+
+    assert '<th scope="row">Resources added</th><td>0</td>' in html
+    assert '<th scope="row">Resources removed</th><td>0</td>' in html
+    assert '<th scope="row">Resources modified</th><td>3</td>' in html
+    assert '<th scope="row">Document changes</th><td>2</td>' in html
+
+
+def test_html_report_omits_resource_blocks_for_object_only_runs(docs):
+    html = run_pair(docs, 'changed', '--format', 'html', '--fail-on', 'none').stdout
+
+    assert 'Document changes' not in html
+    assert '<table class="document-changes">' not in html
+    assert '<th scope="row">Resources added</th>' not in html
+    assert '<caption>Object changes</caption>' in html
+
+
+def test_summary_and_html_show_resource_ignore_options(docs):
+    summary = run_pair(docs, 'resources', '--ignore-links', '--fail-on', 'none')
+
+    assert summary.returncode == 0, summary.stderr
+    assert 'ignoreLinks=true' in summary.stdout
+    assert 'ignoreAnnotations=false' in summary.stdout
+    assert 'ignorePageLabels=false' in summary.stdout
+
+    html = run_pair(
+        docs, 'resources', '--ignore-links', '--format', 'html', '--fail-on', 'none'
+    ).stdout
+    assert '<th scope="row">Ignore links</th><td class="mono">true</td>' in html
+    assert '<th scope="row">Ignore annotations</th><td class="mono">false</td>' in html
+    assert '<th scope="row">Ignore metadata</th><td class="mono">false</td>' in html
+
+
+def test_action_exposes_resource_ignore_inputs():
+    text = (REPO_ROOT / 'action.yml').read_text(encoding='utf-8')
+
+    for name, flag, env_name in (
+        ('ignore-annotations', '--ignore-annotations', 'INPUT_IGNORE_ANNOTATIONS'),
+        ('ignore-links', '--ignore-links', 'INPUT_IGNORE_LINKS'),
+        ('ignore-forms', '--ignore-forms', 'INPUT_IGNORE_FORMS'),
+        ('ignore-metadata', '--ignore-metadata', 'INPUT_IGNORE_METADATA'),
+        ('ignore-page-labels', '--ignore-page-labels', 'INPUT_IGNORE_PAGE_LABELS'),
+    ):
+        assert f'\n  {name}:\n' in text
+        # Each switch is validated and appended to every CLI pass.
+        assert env_name in text
+        assert flag in text
+
+    assert "must be true or false" in text
+    # Defaults keep the existing behaviour: every resource kind is compared.
+    assert text.count("default: 'false'") == 5
+    # Existing inputs and outputs are untouched.
+    for legacy in ('  fail-on:\n', '  ignore-regions:\n', 'json-path', 'report-path', 'exit-code'):
+        assert legacy in text
 
 
 

@@ -13,7 +13,9 @@ from main import SidecarSession  # noqa: E402
 
 
 def _write_pdf(path: Path, words, pagesize=letter) -> str:
-    canvas = rl_canvas.Canvas(str(path), pagesize=pagesize)
+    # invariant=1 keeps the info dictionary deterministic: document metadata is
+    # compared by default, so a creation timestamp must not vary between runs.
+    canvas = rl_canvas.Canvas(str(path), pagesize=pagesize, invariant=1)
     for word in words:
         # Set the font per page: setting it once before the loop makes the first
         # page carry an extra text-object setup, so its content stream differs
@@ -134,6 +136,11 @@ def test_diff_documents_forwards_snake_case_options_and_echoes_camel_case(
         "ignoreFonts": True,
         "ignoreColors": True,
         "ignoreImages": False,
+        "ignoreAnnotations": False,
+        "ignoreLinks": False,
+        "ignoreForms": False,
+        "ignoreMetadata": False,
+        "ignorePageLabels": False,
         "ignoreRegions": [],
     }
     # Ignoring words must actually reach the engine: a text-only change on a
@@ -257,6 +264,86 @@ def test_diff_documents_rejects_camel_case_and_unknown_options(old_pdf, new_pdf)
 
     assert response["error"].startswith("Unknown diff option(s): positionTolerance")
     assert "position_tolerance" in response["error"]
+    # The valid list documents the resource switches too, so a camelCase typo is
+    # easy to correct.
+    assert "ignore_annotations" in response["error"]
+    assert "ignore_page_labels" in response["error"]
+
+
+RESOURCE_IGNORE_FLAGS = (
+    "ignore_annotations",
+    "ignore_links",
+    "ignore_forms",
+    "ignore_metadata",
+    "ignore_page_labels",
+)
+
+# snake_case RPC key -> camelCase option echoed in the result.
+_RESOURCE_ECHO_KEYS = {
+    "ignore_annotations": "ignoreAnnotations",
+    "ignore_links": "ignoreLinks",
+    "ignore_forms": "ignoreForms",
+    "ignore_metadata": "ignoreMetadata",
+    "ignore_page_labels": "ignorePageLabels",
+}
+
+
+@pytest.mark.parametrize("flag", RESOURCE_IGNORE_FLAGS)
+def test_diff_documents_accepts_each_resource_ignore_flag(old_pdf, new_pdf, flag):
+    response = _diff(SidecarSession(), old_pdf, new_pdf, {flag: True})
+
+    assert "error" not in response
+    result = response["result"]
+    assert result["summary"]["pagesAdded"] == 1
+    # The applied switch is echoed with its camelCase contract name, so a JSON
+    # consumer can reproduce the run.
+    assert result["options"][_RESOURCE_ECHO_KEYS[flag]] is True
+    for other in set(RESOURCE_IGNORE_FLAGS) - {flag}:
+        assert result["options"][_RESOURCE_ECHO_KEYS[other]] is False
+
+
+@pytest.mark.parametrize("flag", RESOURCE_IGNORE_FLAGS)
+def test_diff_documents_rejects_non_boolean_resource_flags(old_pdf, new_pdf, flag):
+    # A JSON `"false"` string is truthy in Python; the RPC rejects it instead of
+    # silently ignoring the resource.
+    response = _diff(SidecarSession(), old_pdf, new_pdf, {flag: "false"})
+
+    assert response["error"] == f'"{flag}" must be a boolean'
+
+
+def test_diff_documents_rejects_a_non_boolean_legacy_flag(old_pdf, new_pdf):
+    response = _diff(SidecarSession(), old_pdf, new_pdf, {"ignore_fonts": 1})
+
+    assert response["error"] == '"ignore_fonts" must be a boolean'
+
+
+def _titled_pdf(path: Path, title: str) -> str:
+    canvas = rl_canvas.Canvas(str(path), pagesize=letter, invariant=1)
+    canvas.setTitle(title)
+    canvas.setFont("Helvetica", 12)
+    canvas.drawString(72, 720, "alphaword")
+    canvas.showPage()
+    canvas.save()
+    return str(path)
+
+
+def test_diff_documents_forwards_ignore_metadata_to_the_engine(tmp_path):
+    old = _titled_pdf(tmp_path / "old.pdf", "Old title")
+    new = _titled_pdf(tmp_path / "new.pdf", "New title")
+
+    default = _diff(SidecarSession(), old, new)["result"]
+    assert [(change["type"], change["field"]) for change in default["documentChanges"]] == [
+        ("metadata", "title")
+    ]
+    assert default["summary"]["documentChanges"] == 1
+
+    ignored = _diff(
+        SidecarSession(), old, new, {"ignore_metadata": True}
+    )["result"]
+    assert "documentChanges" not in ignored
+    assert "documentChanges" not in ignored["summary"]
+    assert ignored["options"]["ignoreMetadata"] is True
+    assert default["options"]["ignoreMetadata"] is False
 
 
 def test_diff_documents_requires_an_options_object(old_pdf, new_pdf):

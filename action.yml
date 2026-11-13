@@ -33,6 +33,36 @@ inputs:
       options.ignoreRegions.
     required: false
     default: ''
+  ignore-annotations:
+    description: >-
+      Set to true to skip the annotation comparison (comments, highlights and
+      other markup). Defaults to false so annotation changes are reported.
+    required: false
+    default: 'false'
+  ignore-links:
+    description: >-
+      Set to true to skip the link comparison (URI targets and internal
+      destinations). Defaults to false.
+    required: false
+    default: 'false'
+  ignore-forms:
+    description: >-
+      Set to true to skip the form widget comparison (field values, defaults and
+      options). Defaults to false.
+    required: false
+    default: 'false'
+  ignore-metadata:
+    description: >-
+      Set to true to skip the document metadata comparison (title, author,
+      subject, keywords, creator, producer, dates, language). Defaults to false.
+    required: false
+    default: 'false'
+  ignore-page-labels:
+    description: >-
+      Set to true to skip the page label (/PageLabels) comparison. Defaults to
+      false.
+    required: false
+    default: 'false'
   format:
     description: >-
       Primary output used for the step summary and default artifact path:
@@ -89,6 +119,11 @@ runs:
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_IGNORE_REGIONS: ${{ inputs.ignore-regions }}
+        INPUT_IGNORE_ANNOTATIONS: ${{ inputs.ignore-annotations }}
+        INPUT_IGNORE_LINKS: ${{ inputs.ignore-links }}
+        INPUT_IGNORE_FORMS: ${{ inputs.ignore-forms }}
+        INPUT_IGNORE_METADATA: ${{ inputs.ignore-metadata }}
+        INPUT_IGNORE_PAGE_LABELS: ${{ inputs.ignore-page-labels }}
       run: |
         set -euo pipefail
 
@@ -140,6 +175,26 @@ runs:
           fi
         fi
 
+        # Resource switches are boolean-like strings: true or false (any case).
+        # An unset/empty value means false, so callers that predate the inputs
+        # keep the default "compare every resource" behaviour.
+        for pair in \
+          "ignore-annotations:${INPUT_IGNORE_ANNOTATIONS:-false}" \
+          "ignore-links:${INPUT_IGNORE_LINKS:-false}" \
+          "ignore-forms:${INPUT_IGNORE_FORMS:-false}" \
+          "ignore-metadata:${INPUT_IGNORE_METADATA:-false}" \
+          "ignore-page-labels:${INPUT_IGNORE_PAGE_LABELS:-false}"; do
+          label="${pair%%:*}"
+          value="${pair#*:}"
+          lowered="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+          case "$lowered" in
+            '' | true | false) ;;
+            *)
+              error "input '$label' must be true or false (got '$value')"
+              ;;
+          esac
+        done
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
@@ -168,6 +223,11 @@ runs:
         INPUT_JSON_PATH: ${{ inputs.json-path }}
         INPUT_REPORT_PATH: ${{ inputs.report-path }}
         INPUT_IGNORE_REGIONS: ${{ inputs.ignore-regions }}
+        INPUT_IGNORE_ANNOTATIONS: ${{ inputs.ignore-annotations }}
+        INPUT_IGNORE_LINKS: ${{ inputs.ignore-links }}
+        INPUT_IGNORE_FORMS: ${{ inputs.ignore-forms }}
+        INPUT_IGNORE_METADATA: ${{ inputs.ignore-metadata }}
+        INPUT_IGNORE_PAGE_LABELS: ${{ inputs.ignore-page-labels }}
         RUNNER_TEMP_DIR: ${{ runner.temp }}
       run: |
         set -uo pipefail
@@ -218,6 +278,24 @@ runs:
           args+=("${region_args[@]}")
         fi
 
+        # Resource switches apply to every pass for the same reason: the primary
+        # run, the secondary JSON/HTML artifacts and the step summary counts must
+        # all compare the same resource kinds.
+        resource_args=()
+        add_resource_flag() {
+          local value="$1" flag="$2"
+          value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+          if [ "$value" = "true" ]; then
+            resource_args+=("$flag")
+          fi
+        }
+        add_resource_flag "${INPUT_IGNORE_ANNOTATIONS:-false}" --ignore-annotations
+        add_resource_flag "${INPUT_IGNORE_LINKS:-false}" --ignore-links
+        add_resource_flag "${INPUT_IGNORE_FORMS:-false}" --ignore-forms
+        add_resource_flag "${INPUT_IGNORE_METADATA:-false}" --ignore-metadata
+        add_resource_flag "${INPUT_IGNORE_PAGE_LABELS:-false}" --ignore-page-labels
+        args+=(${resource_args[@]+"${resource_args[@]}"})
+
         echo "::group::python ${cli} ${args[*]}"
         # GitHub's bash shell enables `-e`; a non-zero diff exit is expected
         # when --fail-on matches, so capture it instead of aborting before the
@@ -245,7 +323,8 @@ runs:
           ensure_parent "$path"
           python "$cli" diff "$INPUT_OLD" "$INPUT_NEW" \
             --format "$payload_format" --output "$path" --fail-on none --quiet \
-            ${region_args[@]+"${region_args[@]}"}
+            ${region_args[@]+"${region_args[@]}"} \
+            ${resource_args[@]+"${resource_args[@]}"}
         }
 
         if [ "$format" != "json" ] && [ -n "$INPUT_JSON_PATH" ]; then
@@ -284,7 +363,8 @@ runs:
           set +e
           python "$cli" diff "$INPUT_OLD" "$INPUT_NEW" \
             --format json --output "$summary_json" --fail-on none --quiet \
-            ${region_args[@]+"${region_args[@]}"}
+            ${region_args[@]+"${region_args[@]}"} \
+            ${resource_args[@]+"${resource_args[@]}"}
           status=$?
           set -e
           if [ "$status" -ne 0 ] || [ ! -s "$summary_json" ]; then

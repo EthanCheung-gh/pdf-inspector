@@ -53,7 +53,10 @@ def _page(*draws):
 
 def _pdf(path: Path, *pages, pagesize=letter) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
-    canvas = rl_canvas.Canvas(str(path), pagesize=pagesize)
+    # invariant=1 keeps the info dictionary deterministic: resources are compared
+    # by default, so a creation timestamp would turn every report into a metadata
+    # change.
+    canvas = rl_canvas.Canvas(str(path), pagesize=pagesize, invariant=1)
     for draw in pages:
         draw(canvas)
         canvas.showPage()
@@ -67,7 +70,15 @@ def _diff(tmp_path, old_pages, new_pages, old_page_size=letter, new_page_size=le
     return diff_files(old, new)
 
 
-def _minimal_result(changes, *, status='changed', old_pages=1, new_pages=1, reordered=False):
+def _minimal_result(
+    changes,
+    *,
+    status='changed',
+    old_pages=1,
+    new_pages=1,
+    reordered=False,
+    document_changes=None,
+):
     """Contract-shaped DiffResult with hand-written changes for escaping tests."""
     paired = status not in ('added', 'removed')
     summary = {
@@ -106,7 +117,22 @@ def _minimal_result(changes, *, status='changed', old_pages=1, new_pages=1, reor
                 'changes': changes,
             }
         ],
+        **({'documentChanges': document_changes} if document_changes is not None else {}),
     }
+
+
+def _document_change(**overrides):
+    change = {
+        'kind': 'modified',
+        'type': 'metadata',
+        'page': None,
+        'field': 'title',
+        'oldValue': 'Old title',
+        'newValue': 'New title',
+        'details': {},
+    }
+    change.update(overrides)
+    return change
 
 
 def _change(**overrides):
@@ -166,6 +192,16 @@ def test_render_html_escapes_details_and_cell_changes():
     assert '&lt;script&gt;danger&lt;/script&gt;' in report
     assert 'safe &amp; sound' in report
     assert '&lt;img src=x onerror=alert(1)&gt;' in report
+
+
+def test_render_html_renders_one_sided_details_as_none():
+    change = _change(details={'opacity': {'old': None, 'new': 0.5}})
+
+    report = render_html(_minimal_result([change]))
+
+    # A page-label `start` change often has no old value: spell out "none"
+    # instead of rendering a bare arrow.
+    assert '(none) -&gt; 0.5' in report
 
 
 def test_render_html_is_self_contained(tmp_path):
@@ -435,6 +471,263 @@ def test_ignored_region_helpers_tolerate_partial_results():
     assert region_page_label({'oldPage': None, 'newPage': 4}) == 'new page 4'
     assert region_page_label({'oldPage': 4, 'newPage': None}) == 'old page 4'
     assert region_page_label({}) == 'page ?'
+
+
+# --- document changes and resources ----------------------------------------
+
+
+def _resource_change(**overrides):
+    change = _change(
+        type='annotation',
+        textOld='Old note',
+        textNew='New note',
+        details={
+            'resource': 'annotation',
+            'identity': 'ann:nm:a1',
+            'contents': {'old': 'Old note', 'new': 'New note'},
+        },
+    )
+    change.update(overrides)
+    return change
+
+
+def test_render_html_renders_the_document_changes_section():
+    result = _minimal_result(
+        [],
+        status='unchanged',
+        document_changes=[
+            _document_change(),
+            _document_change(
+                type='page-label',
+                page=3,
+                field='page-label',
+                oldValue='1',
+                newValue='5',
+                details={'start': {'old': 1, 'new': 5}},
+            ),
+        ],
+    )
+
+    report = render_html(result)
+
+    assert 'Document changes' in report
+    assert '<table class="document-changes">' in report
+    assert 'metadata/page-label change(s)' in report
+    assert '<th>Page</th><th>Field</th>' in report
+    assert 'page 1' not in report  # metadata rows carry no page number
+    assert 'page 3' in report
+    assert 'title' in report and 'page-label' in report
+    assert 'Old title' in report and 'New title' in report
+    assert 'Metadata' in report and 'Page label' in report
+    # The section is a plain table: no anchors, no scripts, escaped values.
+    assert ' href=' not in report
+    assert '<script' not in report
+    # A metadata-only change leaves the page unchanged.
+    assert 'Unchanged' in report
+
+
+def test_render_html_escapes_document_change_values():
+    result = _minimal_result(
+        [],
+        status='unchanged',
+        document_changes=[
+            _document_change(
+                field='<script>field</script>',
+                oldValue='<img src=x onerror=alert(1)>',
+                newValue='"new" & <b>',
+                details={'start': {'old': '<i>', 'new': '<u>'}},
+            )
+        ],
+    )
+
+    report = render_html(result)
+
+    assert '<script' not in report
+    assert '<img src=x' not in report
+    assert '<i>' not in report and '<u>' not in report
+    assert '&lt;script&gt;field&lt;/script&gt;' in report
+    assert '&lt;img src=x onerror=alert(1)&gt;' in report
+    assert '&quot;new&quot; &amp; &lt;b&gt;' in report
+
+
+def test_render_html_has_no_document_changes_section_without_the_field(tmp_path):
+    result = _diff(
+        tmp_path,
+        [_page(_draw_text('Alpha'))],
+        [_page(_draw_text('Beta'))],
+    )
+
+    report = render_html(result)
+
+    assert 'documentChanges' not in result
+    assert 'Document changes' not in report
+    assert '<table class="document-changes">' not in report
+    assert '<th scope="row">Resources added</th>' not in report
+
+
+def test_render_html_summary_cards_include_resource_counts():
+    result = _minimal_result([])
+    result['summary'].update(
+        {
+            'resourcesAdded': 1,
+            'resourcesRemoved': 0,
+            'resourcesModified': 2,
+            'resourcesMoved': 3,
+            'documentChanges': 3,
+        }
+    )
+
+    report = render_html(result)
+
+    assert '<th scope="row">Resources added</th><td>1</td>' in report
+    assert '<th scope="row">Resources removed</th><td>0</td>' in report
+    assert '<th scope="row">Resources modified</th><td>2</td>' in report
+    assert '<th scope="row">Resources moved</th><td>3</td>' in report
+    assert '<th scope="row">Document changes</th><td>3</td>' in report
+    # Object counters keep their historical meaning.
+    assert '<th scope="row">Total object changes</th><td>0</td>' in report
+    # Complete runs show no truncation rows.
+    assert 'Resources truncated' not in report
+    assert 'Changes truncated' not in report
+
+
+def test_render_html_summary_flags_truncation():
+    result = _minimal_result([])
+    result['summary'].update(
+        {'changesTruncated': True, 'resourcesTruncated': True}
+    )
+
+    report = render_html(result)
+
+    assert '<th scope="row">Changes truncated</th><td>true</td>' in report
+    assert '<th scope="row">Resources truncated</th><td>true</td>' in report
+
+
+def test_render_html_resource_changes_get_a_type_badge_and_details():
+    result = _minimal_result([_resource_change()])
+
+    report = render_html(result)
+
+    assert '<span class="badge badge-resource">Annotation</span>' in report
+    assert '<span class="badge badge-modified">modified</span>' in report
+    assert '<caption>Changes</caption>' in report
+    assert 'Object changes</caption>' not in report
+    # Resource details render through the existing escaped details block.
+    assert 'ann:nm:a1' in report
+    assert 'resource' in report and 'identity' in report
+    assert 'Old note' in report and 'New note' in report
+
+
+def test_render_html_object_rows_keep_their_plain_type():
+    result = _minimal_result([_change()])
+
+    report = render_html(result)
+
+    assert '<td>word</td>' in report
+    assert 'badge badge-resource' not in report
+    assert '<caption>Object changes</caption>' in report
+
+
+def test_render_html_resource_blocks_are_deterministic():
+    result = _minimal_result(
+        [_resource_change()],
+        document_changes=[_document_change()],
+    )
+    result['summary'].update(
+        {'resourcesAdded': 0, 'resourcesRemoved': 0, 'resourcesModified': 1, 'documentChanges': 1}
+    )
+
+    first = render_html(result)
+    second = render_html(copy.deepcopy(result))
+
+    assert first == second
+
+
+def test_format_summary_reports_resources_and_document_changes():
+    result = _minimal_result(
+        [_resource_change()],
+        document_changes=[
+            _document_change(),
+            _document_change(
+                type='page-label',
+                page=3,
+                field='page-label',
+                oldValue='1',
+                newValue='5',
+            ),
+        ],
+    )
+    result['summary'].update(
+        {
+            'resourcesAdded': 0,
+            'resourcesRemoved': 0,
+            'resourcesModified': 1,
+            'resourcesMoved': 0,
+            'documentChanges': 2,
+        }
+    )
+
+    summary = format_summary(result)
+
+    assert 'resources: 0 added, 0 removed, 1 modified, 0 moved' in summary
+    assert 'document changes: 2' in summary
+    assert 'document change details: 2 total, showing 2' in summary
+    assert '1. metadata title modified "Old title" -> "New title"' in summary
+    assert '2. page-label page-label modified "1" -> "5" (page 3)' in summary
+    assert 'page 1: annotation modified "Old note" -> "New note"' in summary
+
+
+def test_format_summary_omits_resource_counts_for_object_only_results():
+    summary = format_summary(_minimal_result([_change()]))
+
+    assert 'resources:' not in summary
+    assert 'document changes:' not in summary
+    assert 'note:' not in summary
+
+
+def test_format_summary_notes_truncated_results():
+    result = _minimal_result([_change()])
+    result['summary']['changesTruncated'] = True
+    result['summary']['resourcesTruncated'] = True
+
+    summary = format_summary(result)
+
+    assert 'note: change lists are incomplete' in summary
+    assert 'note: resource comparison is incomplete' in summary
+
+
+def test_format_summary_document_only_change_does_not_claim_a_match():
+    result = _minimal_result([], status='unchanged', document_changes=[_document_change()])
+    result['summary'].update(
+        {'resourcesAdded': 0, 'resourcesRemoved': 0, 'resourcesModified': 0, 'documentChanges': 1}
+    )
+
+    summary = format_summary(result)
+
+    assert 'metadata title modified' in summary
+    assert NO_CHANGES_TEXT not in summary
+
+
+def test_render_html_options_show_resource_switches():
+    result = _minimal_result([_change()])
+    result['options'].update({'ignoreMetadata': True, 'ignorePageLabels': False})
+
+    report = render_html(result)
+
+    assert '<th scope="row">Ignore annotations</th><td class="mono">false</td>' in report
+    assert '<th scope="row">Ignore links</th><td class="mono">false</td>' in report
+    assert '<th scope="row">Ignore forms</th><td class="mono">false</td>' in report
+    assert '<th scope="row">Ignore metadata</th><td class="mono">true</td>' in report
+    assert '<th scope="row">Ignore page labels</th><td class="mono">false</td>' in report
+    # Older payloads without the fields still render the rows as false.
+    assert 'ignoreMetadata=true' in format_summary(result)
+    assert 'ignorePageLabels=false' in format_summary(_minimal_result([_change()]))
+
+
+def test_render_html_options_show_resource_switches_without_the_fields():
+    report = render_html(_minimal_result([_change()]))
+
+    assert '<th scope="row">Ignore annotations</th><td class="mono">false</td>' in report
 
 
 # --- determinism ------------------------------------------------------------

@@ -27,6 +27,31 @@ export const DIFF_OBJECT_TYPES = [
 
 export type DiffObjectType = (typeof DIFF_OBJECT_TYPES)[number];
 
+/**
+ * Document resource types, reported after every object type.
+ *
+ * `annotation`/`link`/`form` changes live in `DiffPage.changes` next to object
+ * changes (the engine gives them the same shape); `metadata`/`page-label`
+ * changes are document-level and only appear in `DiffResult.documentChanges`.
+ */
+export const DIFF_RESOURCE_TYPES = [
+  'annotation',
+  'link',
+  'form',
+  'metadata',
+  'page-label',
+] as const;
+
+export type DiffResourceType = (typeof DIFF_RESOURCE_TYPES)[number];
+
+/** Page-level resource types: the ones a page change list can carry. */
+export const DIFF_PAGE_RESOURCE_TYPES = ['annotation', 'link', 'form'] as const;
+
+export type DiffPageResourceType = (typeof DIFF_PAGE_RESOURCE_TYPES)[number];
+
+/** Everything `DiffChange.type` can be: object types plus resource types. */
+export type DiffChangeType = DiffObjectType | DiffResourceType;
+
 export type DiffChangeKind = 'added' | 'removed' | 'moved' | 'modified';
 
 export type DiffPageStatus = 'added' | 'removed' | 'changed' | 'unchanged';
@@ -63,6 +88,20 @@ export interface DiffOptions {
    * intersecting changes, the PDFs themselves are never modified.
    */
   ignoreRegions: DiffIgnoreRegion[];
+  /**
+   * Skip the matching page-level resource comparison (default `false`).
+   *
+   * Annotations, links and form widgets are compared by default because their
+   * counts are usually small — unlike character-level object diffs. The CLI
+   * exposes the same switches as `--ignore-annotations`/`--ignore-links`/…
+   */
+  ignoreAnnotations?: boolean;
+  ignoreLinks?: boolean;
+  ignoreForms?: boolean;
+  /** Skip the document metadata comparison (default `false`). */
+  ignoreMetadata?: boolean;
+  /** Skip the page label (`/PageLabels`) comparison (default `false`). */
+  ignorePageLabels?: boolean;
 }
 
 /** Request-side options: every field is optional and defaults in the engine. */
@@ -180,7 +219,7 @@ export function isChangeIgnoredByRegions(
 
 export interface DiffChange {
   kind: DiffChangeKind;
-  type: DiffObjectType;
+  type: DiffChangeType;
   /** 1-based page number, or `null` when the object exists only on the new side. */
   oldPage: number | null;
   newPage: number | null;
@@ -188,7 +227,34 @@ export interface DiffChange {
   newBBox: DiffBBox | null;
   textOld: string | null;
   textNew: string | null;
-  /** font/size/color/hash/cell changes; `cellChanges` for tables. */
+  /**
+   * font/size/color/hash/cell changes; `cellChanges` for tables.
+   *
+   * Resource changes add `resource` (the kind), `identity` (the engine's stable
+   * pairing key) and one `{ old, new }` pair per differing field (`contents`,
+   * `uri`, `value`, `color`, `rect`, …).
+   */
+  details: Record<string, unknown>;
+}
+
+/**
+ * A document-level change: metadata field or page label.
+ *
+ * These never enter `DiffPage.changes`, so a metadata-only edit leaves every
+ * page `unchanged`; they carry no bbox and are therefore unaffected by ignore
+ * regions.
+ */
+export interface DiffDocumentChange {
+  kind: DiffChangeKind;
+  /** `metadata` for the info dictionary/`/Lang`, `page-label` for `/PageLabels`. */
+  type: 'metadata' | 'page-label';
+  /** 1-based page number for a page label; always `null` for metadata. */
+  page: number | null;
+  /** Metadata field name (`title`, `author`, …) or `page-label`. */
+  field: string;
+  oldValue: string | null;
+  newValue: string | null;
+  /** Label style/prefix/start differences; empty for metadata. */
   details: Record<string, unknown>;
 }
 
@@ -240,20 +306,48 @@ export interface DiffSummary {
   objectsMoved: number;
   objectsModified: number;
   /**
-   * True when the engine hit its `MAX_DIFF_CHANGES` safety cap and the change
-   * lists are incomplete. The counts above then describe the changes that were
-   * kept, and `DiffResult.truncated` carries the same flag.
+   * True when the engine hit its `MAX_DIFF_CHANGES` safety cap (or a resource
+   * collector cap, see `resourcesTruncated`) and the result is incomplete. The
+   * counts above then describe the changes that were kept, and
+   * `DiffResult.truncated` carries the same flag.
    */
   changesTruncated: boolean;
+  /**
+   * Resource counters (annotations, links, form widgets).
+   *
+   * The object counters above never include resource changes, and the shared
+   * change cap covers both. All resource fields are additive and optional: the
+   * engine only emits them when the run compared resources and found something,
+   * so an object-only result keeps its historical shape. Treat a missing
+   * counter as `0`.
+   */
+  resourcesAdded?: number;
+  resourcesRemoved?: number;
+  resourcesModified?: number;
+  /** Page-level resources reported as moved (paired by `/NM` identity). */
+  resourcesMoved?: number;
+  /** Length of `DiffResult.documentChanges`. */
+  documentChanges?: number;
+  /**
+   * True when a compared resource block was capped or could not be read.
+   *
+   * The collector bounds annotations (500/page, 5000/document), forms (2000),
+   * metadata and page labels. Hitting a cap makes the resource comparison
+   * incomplete: the engine then also sets `truncated`/`changesTruncated`, and
+   * this flag says the resource side specifically is the incomplete part.
+   * Absent means "not truncated".
+   */
+  resourcesTruncated?: boolean;
 }
 
 /**
  * Top-level diff payload.
  *
  * `schemaVersion` stays `1`: page match metadata (`DiffPage.match`,
- * `DiffSummary.pagesReordered`) and the change cap (`DiffResult.truncated`,
- * `DiffSummary.changesTruncated`) are additive, so consumers that ignore the
- * new fields keep working unchanged.
+ * `DiffSummary.pagesReordered`), the change cap (`DiffResult.truncated`,
+ * `DiffSummary.changesTruncated`) and the document resources
+ * (`DiffResult.documentChanges`, the `DiffSummary` resource counters) are
+ * additive, so consumers that ignore the new fields keep working unchanged.
  */
 export interface DiffResult {
   schemaVersion: 1;
@@ -262,8 +356,19 @@ export interface DiffResult {
   old: DiffDocumentInfo;
   new: DiffDocumentInfo;
   summary: DiffSummary;
-  /** Mirrors `summary.changesTruncated`; true when the change list was capped. */
+  /**
+   * Mirrors `summary.changesTruncated`; true when the change lists (or a
+   * compared resource block) were capped or incomplete.
+   */
   truncated: boolean;
+  /**
+   * Metadata and page label changes.
+   *
+   * Optional and only present when something changed: page-level resources
+   * (annotations/links/forms) live in `pages[].changes`, so a page label is
+   * never reported twice. Treat a missing field as an empty list.
+   */
+  documentChanges?: DiffDocumentChange[];
   pages: DiffPage[];
 }
 
@@ -312,6 +417,11 @@ export interface DiffRpcOptions {
   ignore_colors?: boolean;
   ignore_images?: boolean;
   ignore_regions?: DiffRpcIgnoreRegion[];
+  ignore_annotations?: boolean;
+  ignore_links?: boolean;
+  ignore_forms?: boolean;
+  ignore_metadata?: boolean;
+  ignore_page_labels?: boolean;
 }
 
 /**
@@ -352,6 +462,21 @@ export function diffOptionsToRpc(options?: DiffOptionsInput | null): DiffRpcOpti
       new_page: region.newPage,
       bbox: { ...region.bbox },
     }));
+  }
+  if (options.ignoreAnnotations !== undefined) {
+    rpc.ignore_annotations = options.ignoreAnnotations;
+  }
+  if (options.ignoreLinks !== undefined) {
+    rpc.ignore_links = options.ignoreLinks;
+  }
+  if (options.ignoreForms !== undefined) {
+    rpc.ignore_forms = options.ignoreForms;
+  }
+  if (options.ignoreMetadata !== undefined) {
+    rpc.ignore_metadata = options.ignoreMetadata;
+  }
+  if (options.ignorePageLabels !== undefined) {
+    rpc.ignore_page_labels = options.ignorePageLabels;
   }
   return rpc;
 }

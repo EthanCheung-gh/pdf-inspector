@@ -63,6 +63,9 @@ FAIL_ON_CHOICES = ('any', 'added', 'removed', 'modified', 'page-count', 'reorder
 AUDIT_FAIL_ON_CHOICES = ('error', 'warning', 'none')
 TEXT_TOLERANCE_CHOICES = ('exact', 'normalized', 'case-insensitive')
 
+# Page-level change types that are resources rather than PDF objects.
+RESOURCE_CHANGE_TYPES = ('annotation', 'link', 'form')
+
 # Only the first kilobyte of a PDF may legally contain the header.
 _PDF_HEADER_WINDOW = 1024
 
@@ -140,7 +143,8 @@ def build_parser() -> argparse.ArgumentParser:
         default='any',
         help=(
             'which difference exits 1 (default: any). "added"/"removed" cover '
-            'objects and pages, "modified" covers modified and moved objects, '
+            'objects, pages and resources, "modified" covers modified and moved '
+            'objects/resources plus document changes (metadata, page labels), '
             '"page-count" covers page insert/remove, page-count and page geometry '
             'changes, "reordered" covers paired pages that moved to a different '
             'page number, "none" never fails'
@@ -183,6 +187,31 @@ def build_parser() -> argparse.ArgumentParser:
         '--ignore-images',
         action='store_true',
         help='ignore image objects (same as --ignore-types image)',
+    )
+    diff_parser.add_argument(
+        '--ignore-annotations',
+        action='store_true',
+        help='ignore annotation changes (comments, highlights, markup)',
+    )
+    diff_parser.add_argument(
+        '--ignore-links',
+        action='store_true',
+        help='ignore link changes (URI targets, internal destinations)',
+    )
+    diff_parser.add_argument(
+        '--ignore-forms',
+        action='store_true',
+        help='ignore form widget changes (field values, defaults, options)',
+    )
+    diff_parser.add_argument(
+        '--ignore-metadata',
+        action='store_true',
+        help='ignore document metadata changes (title, author, dates, language)',
+    )
+    diff_parser.add_argument(
+        '--ignore-page-labels',
+        action='store_true',
+        help='ignore page label (/PageLabels) changes',
     )
     diff_parser.add_argument(
         '--ignore-regions',
@@ -382,6 +411,11 @@ def _build_options(args: argparse.Namespace) -> DiffOptions:
         ignore_colors=bool(args.ignore_colors),
         ignore_images=bool(args.ignore_images),
         ignore_regions=regions,
+        ignore_annotations=bool(args.ignore_annotations),
+        ignore_links=bool(args.ignore_links),
+        ignore_forms=bool(args.ignore_forms),
+        ignore_metadata=bool(args.ignore_metadata),
+        ignore_page_labels=bool(args.ignore_page_labels),
     )
 
 
@@ -547,14 +581,36 @@ def _reject_input_overwrite(path_arg: str, input_paths: Sequence[Path]) -> None:
             continue
 
 
+def _moved_resource_count(result: Mapping[str, Any]) -> int:
+    """Page-level resource changes reported as ``moved``.
+
+    ``summary`` counts added/removed/modified resources only, so a moved
+    annotation/link/form has to be read from the page change lists. Metadata and
+    page labels never appear in a page list; they are counted by
+    ``summary.documentChanges``.
+    """
+    total = 0
+    for page in result.get('pages') or ():
+        if not isinstance(page, Mapping):
+            continue
+        for change in page.get('changes') or ():
+            if (
+                isinstance(change, Mapping)
+                and change.get('kind') == 'moved'
+                and change.get('type') in RESOURCE_CHANGE_TYPES
+            ):
+                total += 1
+    return total
+
+
 def failure_reason(result: Mapping[str, Any], fail_on: str) -> Optional[str]:
     """Return a one-line reason when ``fail_on`` matches, else ``None``.
 
-    ``added``/``removed`` count pages as well as objects; ``modified`` covers
-    modified and moved objects (the contract has no separate ``moved`` mode);
-    ``page-count`` covers page insert/remove, page-count and page geometry
-    changes; ``reordered`` covers paired pages reported at a different ordinal
-    position (``summary.pagesReordered``).
+    ``added``/``removed`` count pages, objects and resources; ``modified``
+    covers modified/moved objects, modified/moved resources and document
+    changes (metadata and page labels); ``page-count`` covers page insert/remove,
+    page-count and page geometry changes; ``reordered`` covers paired pages
+    reported at a different ordinal position (``summary.pagesReordered``).
     """
     if fail_on == 'none':
         return None
@@ -579,30 +635,77 @@ def failure_reason(result: Mapping[str, Any], fail_on: str) -> Optional[str]:
     objects_removed = count('objectsRemoved')
     objects_moved = count('objectsMoved')
     objects_modified = count('objectsModified')
+    resources_added = count('resourcesAdded')
+    resources_removed = count('resourcesRemoved')
+    resources_modified = count('resourcesModified')
+    # A moved resource is not in the summary counters; a synthetic result may
+    # also omit the counter while still carrying the list.
+    if summary.get('documentChanges') is None:
+        listed_changes = result.get('documentChanges')
+        if isinstance(listed_changes, Sequence) and not isinstance(
+            listed_changes, (str, bytes)
+        ):
+            document_changes = len(listed_changes)
+        else:
+            document_changes = 0
+    else:
+        document_changes = count('documentChanges')
+    # A moved resource is in the summary counter when the engine emitted it;
+    # synthetic/older payloads only carry the page change lists. Read exactly one
+    # source so a move is never counted twice.
+    if summary.get('resourcesMoved') is None:
+        resources_moved = _moved_resource_count(result)
+    else:
+        resources_moved = count('resourcesMoved')
 
     if fail_on == 'any':
         object_total = objects_added + objects_removed + objects_moved + objects_modified
         page_total = pages_added + pages_removed + pages_changed
-        if object_total or page_total:
+        resource_total = (
+            resources_added + resources_removed + resources_modified + resources_moved
+        )
+        if object_total or page_total or resource_total or document_changes:
+            if not (resource_total or document_changes):
+                # Legacy message for an object/page-only run.
+                return (
+                    f'{object_total} object change(s) and {page_total} page change(s) '
+                    'detected (fail-on any)'
+                )
             return (
-                f'{object_total} object change(s) and {page_total} page change(s) '
-                'detected (fail-on any)'
+                f'{object_total} object change(s), {page_total} page change(s), '
+                f'{resource_total} resource change(s) and {document_changes} document '
+                'change(s) detected (fail-on any)'
             )
     elif fail_on == 'added':
-        if pages_added or objects_added:
-            return f'{pages_added} page(s) and {objects_added} object(s) added (fail-on added)'
+        if pages_added or objects_added or resources_added:
+            reason = f'{pages_added} page(s) and {objects_added} object(s) added'
+            if resources_added:
+                reason += f' plus {resources_added} resource(s) added'
+            return reason + ' (fail-on added)'
     elif fail_on == 'removed':
-        if pages_removed or objects_removed:
-            return (
-                f'{pages_removed} page(s) and {objects_removed} object(s) removed '
-                '(fail-on removed)'
-            )
+        if pages_removed or objects_removed or resources_removed:
+            reason = f'{pages_removed} page(s) and {objects_removed} object(s) removed'
+            if resources_removed:
+                reason += f' plus {resources_removed} resource(s) removed'
+            return reason + ' (fail-on removed)'
     elif fail_on == 'modified':
-        if objects_modified or objects_moved:
-            return (
-                f'{objects_modified} object(s) modified and {objects_moved} moved '
-                '(fail-on modified)'
-            )
+        if (
+            objects_modified
+            or objects_moved
+            or resources_modified
+            or resources_moved
+            or document_changes
+        ):
+            reason = f'{objects_modified} object(s) modified and {objects_moved} moved'
+            extras = []
+            resource_total = resources_modified + resources_moved
+            if resource_total:
+                extras.append(f'{resource_total} resource(s) modified/moved')
+            if document_changes:
+                extras.append(f'{document_changes} document change(s)')
+            if extras:
+                reason += ' plus ' + ' and '.join(extras)
+            return reason + ' (fail-on modified)'
     elif fail_on == 'page-count':
         try:
             old_pages = int(old.get('pages') or 0)

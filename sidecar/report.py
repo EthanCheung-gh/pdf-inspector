@@ -34,6 +34,39 @@ SUMMARY_ROWS = (
 # Object-change kinds, in the order the diff engine reports them.
 KIND_ORDER = ('added', 'removed', 'modified', 'moved')
 
+# Page-level resource change types and their human labels. Metadata/page-label
+# rows are document changes, but share the badge/label rendering.
+RESOURCE_TYPE_LABELS = {
+    'annotation': 'Annotation',
+    'link': 'Link',
+    'form': 'Form',
+    'metadata': 'Metadata',
+    'page-label': 'Page label',
+}
+
+# Summary counters of the resource/document-change block (all optional).
+RESOURCE_SUMMARY_KEYS = (
+    'resourcesAdded',
+    'resourcesRemoved',
+    'resourcesModified',
+    'resourcesMoved',
+    'documentChanges',
+    'resourcesTruncated',
+)
+RESOURCE_SUMMARY_ROWS = (
+    ('resourcesAdded', 'Resources added'),
+    ('resourcesRemoved', 'Resources removed'),
+    ('resourcesModified', 'Resources modified'),
+    ('resourcesMoved', 'Resources moved'),
+    ('documentChanges', 'Document changes'),
+)
+
+# Incompleteness flags: only rendered when true, so a complete run stays quiet.
+TRUNCATION_SUMMARY_ROWS = (
+    ('changesTruncated', 'Changes truncated'),
+    ('resourcesTruncated', 'Resources truncated'),
+)
+
 NO_CHANGES_TEXT = 'changes: none - documents match'
 
 # Cells rendered per table change before the remainder is summarised.
@@ -79,6 +112,7 @@ code, .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo,
 .badge-modified { background: #e7effd; color: #1f4fa8; }
 .badge-moved { background: #fdeedd; color: #9a4b06; }
 .badge-unchanged { background: #eef0f4; color: #4a5261; }
+.badge-resource { background: #efe7fd; color: #5b2ca0; }
 .geometry { margin: 0 0 6px; padding: 8px 12px; background: #f7f9fc; border: 1px solid #e1e5ec; border-radius: 6px; }
 .geometry p { margin: 0 0 4px; }
 .geometry p:last-child { margin-bottom: 0; }
@@ -169,7 +203,11 @@ def _detail_scalar(value: Any) -> str:
         old = value.get('old')
         new = value.get('new')
         if 'old' in value and 'new' in value:
-            return f'{_detail_scalar(old)} -> {_detail_scalar(new)}'
+            # A one-sided change pairs one value with null; spell that out so a
+            # page-label detail never reads like a truncated arrow.
+            old_text = '(none)' if old is None else _detail_scalar(old)
+            new_text = '(none)' if new is None else _detail_scalar(new)
+            return f'{old_text} -> {new_text}'
         if set(value) == {'width', 'height'}:
             return _size_text(value)
         return json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
@@ -235,6 +273,50 @@ def _all_changes(result: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
         yield change
 
 
+def _iter_document_changes(result: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Metadata/page-label entries of ``documentChanges`` (empty when absent)."""
+    changes = result.get('documentChanges') or ()
+    if isinstance(changes, (str, bytes)) or not isinstance(changes, Sequence):
+        return []
+    return [change for change in changes if isinstance(change, Mapping)]
+
+
+def _has_resource_summary(summary: Mapping[str, Any]) -> bool:
+    """True when the payload carries the additive resource counters."""
+    return any(summary.get(key) is not None for key in RESOURCE_SUMMARY_KEYS)
+
+
+def _count_or_zero(summary: Mapping[str, Any], key: str) -> int:
+    """Optional counter as an int; a missing/invalid value reads as 0."""
+    try:
+        return int(summary.get(key) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _resource_summary_text(summary: Mapping[str, Any]) -> str:
+    """One-line resource/document-change counts for the plain-text summary."""
+    return (
+        'resources: '
+        f'{_count_or_zero(summary, "resourcesAdded")} added, '
+        f'{_count_or_zero(summary, "resourcesRemoved")} removed, '
+        f'{_count_or_zero(summary, "resourcesModified")} modified, '
+        f'{_count_or_zero(summary, "resourcesMoved")} moved'
+    )
+
+
+def _truncation_notes(summary: Mapping[str, Any]) -> list[str]:
+    """Warning lines for an incomplete result (empty for a complete run)."""
+    notes = []
+    if summary.get('changesTruncated'):
+        notes.append('note: change lists are incomplete (safety cap reached)')
+    if summary.get('resourcesTruncated'):
+        notes.append(
+            'note: resource comparison is incomplete (collector cap or unreadable block)'
+        )
+    return notes
+
+
 def page_geometry_changed(result: Mapping[str, Any]) -> bool:
     """True when any change carries page-level geometry details."""
     return any(
@@ -285,6 +367,33 @@ def change_title(change: Mapping[str, Any]) -> str:
     return title
 
 
+def _document_change_title(change: Mapping[str, Any]) -> str:
+    """One line for a metadata/page-label change.
+
+    Example: ``metadata title modified "Old" -> "New"`` or
+    ``page-label page-label modified "1" -> "5" (page 3)``.
+    """
+    type_ = _text(change.get('type'))
+    kind = _text(change.get('kind'))
+    field = _text(change.get('field'))
+    old_value = change.get('oldValue')
+    new_value = change.get('newValue')
+
+    title = f'{type_} {field} {kind}'.strip()
+    if kind == 'modified' and (old_value is not None or new_value is not None):
+        if old_value != new_value:
+            title += f' "{_shorten(old_value)}" -> "{_shorten(new_value)}"'
+        else:
+            title += f' "{_shorten(old_value)}"'
+    elif kind == 'added' and new_value is not None:
+        title += f' "{_shorten(new_value)}"'
+    elif kind == 'removed' and old_value is not None:
+        title += f' "{_shorten(old_value)}"'
+    if type_ == 'page-label' and change.get('page') is not None:
+        title += f' (page {_fmt_int(change.get("page"))})'
+    return title
+
+
 def _options_text(options: Mapping[str, Any]) -> str:
     ignored = options.get('ignoreTypes') or []
     ignore_text = ', '.join(str(item) for item in ignored) if ignored else 'none'
@@ -294,7 +403,12 @@ def _options_text(options: Mapping[str, Any]) -> str:
         f'ignoreTypes={ignore_text}, '
         f'ignoreFonts={_detail_scalar(bool(options.get("ignoreFonts")))}, '
         f'ignoreColors={_detail_scalar(bool(options.get("ignoreColors")))}, '
-        f'ignoreImages={_detail_scalar(bool(options.get("ignoreImages")))}'
+        f'ignoreImages={_detail_scalar(bool(options.get("ignoreImages")))}, '
+        f'ignoreAnnotations={_detail_scalar(bool(options.get("ignoreAnnotations")))}, '
+        f'ignoreLinks={_detail_scalar(bool(options.get("ignoreLinks")))}, '
+        f'ignoreForms={_detail_scalar(bool(options.get("ignoreForms")))}, '
+        f'ignoreMetadata={_detail_scalar(bool(options.get("ignoreMetadata")))}, '
+        f'ignorePageLabels={_detail_scalar(bool(options.get("ignorePageLabels")))}'
     )
 
 
@@ -359,14 +473,37 @@ def format_summary(
         f'{_fmt_int(summary.get("objectsMoved"))} moved, '
         f'{_fmt_int(summary.get("objectsModified"))} modified'
     )
+    # Resource counters are additive: an object-only payload keeps its
+    # historical summary without empty resource lines.
+    if _has_resource_summary(summary):
+        lines.append(_resource_summary_text(summary))
+        lines.append(f'document changes: {_fmt_int(summary.get("documentChanges"))}')
+    lines.extend(_truncation_notes(summary))
     lines.append('')
 
     changes = list(_iter_page_changes(result))
-    if not changes:
+    documents = _iter_document_changes(result)
+    if not changes and not documents:
         lines.append(NO_CHANGES_TEXT)
         return '\n'.join(lines) + '\n'
 
     limit = max(int(max_changes), 0)
+    if documents:
+        shown_documents = documents[:limit]
+        lines.append(
+            f'document change details: {len(documents)} total, '
+            f'showing {len(shown_documents)}'
+        )
+        for index, change in enumerate(shown_documents, start=1):
+            lines.append(f'  {index}. {_document_change_title(change)}')
+        remaining_documents = len(documents) - len(shown_documents)
+        if remaining_documents:
+            lines.append(f'  ... {remaining_documents} more document change(s)')
+    if not changes:
+        if not documents:
+            lines.append(NO_CHANGES_TEXT)
+        return '\n'.join(lines) + '\n'
+
     shown = changes[:limit] if limit else []
     lines.append(f'changes: {len(changes)} total, showing {len(shown)}')
     for index, (page, change) in enumerate(shown, start=1):
@@ -389,6 +526,15 @@ def _status_badge(status: str) -> str:
     label = STATUS_LABELS.get(status, status)
     css_kind = status if status in ('added', 'removed', 'unchanged') else 'modified'
     return f'<span class="badge badge-{_esc(css_kind)}">{_esc(label)}</span>'
+
+
+def _type_badge(type_: Any) -> str:
+    """Change-type cell: resource types get a labelled badge, objects stay plain."""
+    text = _text(type_)
+    label = RESOURCE_TYPE_LABELS.get(text)
+    if label is None:
+        return _esc(text)
+    return f'<span class="badge badge-resource">{_esc(label)}</span>'
 
 
 def _render_page_geometry(geometry: Mapping[str, Any]) -> str:
@@ -515,10 +661,25 @@ def _render_summary_table(result: Mapping[str, Any]) -> str:
         f'<td>{_esc(_fmt_int(summary.get(key)))}</td></tr>'
         for key, label in SUMMARY_ROWS
     ]
+    # The resource counters are additive: legacy/object-only payloads keep the
+    # historical table without empty resource rows.
+    if _has_resource_summary(summary):
+        rows.extend(
+            f'<tr><th scope="row">{_esc(label)}</th>'
+            f'<td>{_esc(_fmt_int(_count_or_zero(summary, key)))}</td></tr>'
+            for key, label in RESOURCE_SUMMARY_ROWS
+        )
     rows.append(
         '<tr><th scope="row">Total object changes</th>'
         f'<td>{_esc(_fmt_int(_total_changes(result)))}</td></tr>'
     )
+    # An incomplete run must not read like a clean one; complete runs keep the
+    # historical table.
+    for key, label in TRUNCATION_SUMMARY_ROWS:
+        if summary.get(key):
+            rows.append(
+                f'<tr><th scope="row">{_esc(label)}</th><td>true</td></tr>'
+            )
     rows.append(
         '<tr><th scope="row">Ignored regions</th>'
         f'<td>{_esc(_fmt_int(ignored_region_count(result)))}</td></tr>'
@@ -547,6 +708,11 @@ def _render_options_table(result: Mapping[str, Any]) -> str:
         ('Ignore fonts', _detail_scalar(bool(options.get('ignoreFonts')))),
         ('Ignore colors', _detail_scalar(bool(options.get('ignoreColors')))),
         ('Ignore images', _detail_scalar(bool(options.get('ignoreImages')))),
+        ('Ignore annotations', _detail_scalar(bool(options.get('ignoreAnnotations')))),
+        ('Ignore links', _detail_scalar(bool(options.get('ignoreLinks')))),
+        ('Ignore forms', _detail_scalar(bool(options.get('ignoreForms')))),
+        ('Ignore metadata', _detail_scalar(bool(options.get('ignoreMetadata')))),
+        ('Ignore page labels', _detail_scalar(bool(options.get('ignorePageLabels')))),
     )
     body = [
         f'<tr><th scope="row">{_esc(label)}</th><td class="mono">{_esc(value)}</td></tr>'
@@ -604,7 +770,7 @@ def _render_change_rows(changes: Sequence[Mapping[str, Any]]) -> str:
             '<tr>'
             f'<td>{index}</td>'
             f'<td>{_badge(_text(change.get("kind")))}</td>'
-            f'<td>{_esc(change.get("type"))}</td>'
+            f'<td>{_type_badge(change.get("type"))}</td>'
             f'<td>{_esc(change.get("oldPage"))}</td>'
             f'<td>{_esc(change.get("newPage"))}</td>'
             f'<td>{_render_text_cell(change)}</td>'
@@ -618,6 +784,75 @@ def _render_change_rows(changes: Sequence[Mapping[str, Any]]) -> str:
 
 def _page_index_text(value: Any) -> str:
     return '-' if value is None else _fmt_int(value)
+
+
+def _render_document_value_cell(change: Mapping[str, Any]) -> str:
+    """Old/new value cell of a metadata/page-label row (escaped)."""
+    old_value = change.get('oldValue')
+    new_value = change.get('newValue')
+    if old_value is not None and new_value is not None:
+        if old_value == new_value:
+            return f'<code>{_esc(old_value)}</code>'
+        return f'<code>{_esc(old_value)}</code> &rarr; <code>{_esc(new_value)}</code>'
+    if new_value is not None:
+        return f'<code>{_esc(new_value)}</code>'
+    if old_value is not None:
+        return f'<code>{_esc(old_value)}</code>'
+    return '<span class="muted">&mdash;</span>'
+
+
+def _render_document_changes(result: Mapping[str, Any]) -> str:
+    """The ``Document changes`` section (metadata and page labels).
+
+    Returns an empty string when the payload has no ``documentChanges`` field,
+    so an object-only report renders exactly as it did before resources existed.
+    """
+    if 'documentChanges' not in result:
+        return ''
+    changes = _iter_document_changes(result)
+    parts = [
+        '<h2 id="document-changes">Document changes</h2>',
+        f'<p class="muted">{len(changes)} metadata/page-label change(s). These carry '
+        'no page box, so ignore regions never mask them.</p>',
+    ]
+    if not changes:
+        parts.append('<p class="empty">No document changes.</p>')
+        return ''.join(parts)
+
+    rows = []
+    for index, change in enumerate(changes, start=1):
+        page = change.get('page')
+        page_cell = '<span class="muted">&mdash;</span>' if page is None else _esc(
+            f'page {_fmt_int(page)}'
+        )
+        rows.append(
+            '<tr>'
+            f'<td>{index}</td>'
+            f'<td>{_badge(_text(change.get("kind")))}</td>'
+            f'<td>{_type_badge(change.get("type"))}</td>'
+            f'<td>{page_cell}</td>'
+            f'<td class="mono">{_esc(change.get("field"))}</td>'
+            f'<td>{_render_document_value_cell(change)}</td>'
+            f'<td>{_render_details(change.get("details") or {})}</td>'
+            '</tr>'
+        )
+    parts.extend(
+        [
+            '<div class="table-wrap">',
+            '<table class="document-changes">',
+            '<caption>Document changes</caption>',
+            '<thead><tr>'
+            '<th>#</th><th>Kind</th><th>Type</th><th>Page</th><th>Field</th>'
+            '<th>Old &rarr; new</th><th>Details</th>'
+            '</tr></thead>',
+            '<tbody>',
+            *rows,
+            '</tbody>',
+            '</table>',
+            '</div>',
+        ]
+    )
+    return ''.join(parts)
 
 
 def _render_page_table(pages: Sequence[Mapping[str, Any]]) -> str:
@@ -688,11 +923,15 @@ def _render_page_section(page: Mapping[str, Any], position: int) -> str:
 
     parts = [f'<section class="page page-{_esc(status)}">', heading, size_line]
     if changes:
+        has_resources = any(
+            _text(change.get('type')) in RESOURCE_TYPE_LABELS for change in changes
+        )
+        caption = 'Changes' if has_resources else 'Object changes'
         parts.extend(
             [
                 '<div class="table-wrap">',
                 '<table class="changes">',
-                '<caption>Object changes</caption>',
+                f'<caption>{caption}</caption>',
                 '<thead><tr>'
                 '<th>#</th><th>Kind</th><th>Type</th><th>Old page</th><th>New page</th>'
                 '<th>Text</th><th>Old bounding box</th><th>New bounding box</th>'
@@ -717,6 +956,7 @@ def render_html(result: Mapping[str, Any]) -> str:
     version = _text(tool.get('version')) or '0.0.0'
     schema_version = _fmt_int(result.get('schemaVersion'))
     pages = list(_iter_pages(result))
+    document_changes_html = _render_document_changes(result)
 
     lines = [
         '<!DOCTYPE html>',
@@ -744,10 +984,18 @@ def render_html(result: Mapping[str, Any]) -> str:
         f'<p class="muted">{ignored_region_count(result)} region(s) masked; changes '
         'intersecting them are omitted from this report.</p>',
         _render_ignore_region_table(result),
-        '<h2 id="pages">Pages</h2>',
-        f'<p class="muted">{len(pages)} page section(s)</p>',
-        _render_page_table(pages),
     ]
+    # Document-level changes sit between the ignore-region block and the page
+    # sections: they belong to the document, not to any one page.
+    if document_changes_html:
+        lines.append(document_changes_html)
+    lines.extend(
+        [
+            '<h2 id="pages">Pages</h2>',
+            f'<p class="muted">{len(pages)} page section(s)</p>',
+            _render_page_table(pages),
+        ]
+    )
     for position, page in enumerate(pages, start=1):
         lines.append(_render_page_section(page, position))
     lines.extend(

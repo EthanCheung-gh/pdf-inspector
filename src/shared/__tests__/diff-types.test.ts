@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import type { DiffBBox, DiffPage, DiffResult, DiffSummary } from '../diff-types';
+import type {
+  DiffBBox,
+  DiffChange,
+  DiffChangeType,
+  DiffDocumentChange,
+  DiffPage,
+  DiffResult,
+  DiffSummary,
+} from '../diff-types';
 import {
+  DIFF_OBJECT_TYPES,
+  DIFF_RESOURCE_TYPES,
   diffOptionsToRpc,
   ignoreBBoxIntersects,
   isChangeIgnoredByRegions,
@@ -248,5 +258,250 @@ describe('isFileSource', () => {
   it('recognises a browser File', () => {
     const file = new File(['%PDF-1.7'], 'a.pdf', { type: 'application/pdf' });
     expect(isFileSource(file)).toBe(true);
+  });
+});
+
+describe('resource change contract', () => {
+  const annotationChange: DiffChange = {
+    kind: 'modified',
+    type: 'annotation',
+    oldPage: 1,
+    newPage: 1,
+    oldBBox: BOX,
+    newBBox: BOX,
+    textOld: 'Old note',
+    textNew: 'New note',
+    details: {
+      resource: 'annotation',
+      identity: 'ann:nm:a1',
+      contents: { old: 'Old note', new: 'New note' },
+    },
+  };
+
+  it('lists object types before resource types', () => {
+    expect(DIFF_RESOURCE_TYPES).toEqual(['annotation', 'link', 'form', 'metadata', 'page-label']);
+    // Object types keep their historical order; resources follow them.
+    expect(DIFF_OBJECT_TYPES[0]).toBe('word');
+    expect(DIFF_RESOURCE_TYPES).not.toContain('word');
+  });
+
+  it('accepts a page-level resource change in the page change list', () => {
+    const page: DiffPage = {
+      oldIndex: 1,
+      newIndex: 1,
+      status: 'changed',
+      oldSize: { width: 612, height: 792 },
+      newSize: { width: 612, height: 792 },
+      match: { score: 1, reordered: false },
+      changes: [annotationChange],
+    };
+
+    expect(page.changes[0].type).toBe('annotation');
+    expect(page.changes[0].details.identity).toBe('ann:nm:a1');
+    // A resource change is still a `DiffChange`: page grouping and the box
+    // projection keep working without a separate code path.
+    expect(page.changes[0].oldBBox).toEqual(BOX);
+  });
+
+  it('keeps every page-level change type inside DiffChangeType', () => {
+    const types: DiffChangeType[] = [
+      'word',
+      'char',
+      'rect',
+      'line',
+      'curve',
+      'image',
+      'table',
+      'annotation',
+      'link',
+      'form',
+    ];
+
+    expect(types).toHaveLength(DIFF_OBJECT_TYPES.length + 3);
+  });
+
+  it('carries metadata and page labels as document changes', () => {
+    const documentChanges: DiffDocumentChange[] = [
+      {
+        kind: 'modified',
+        type: 'metadata',
+        page: null,
+        field: 'title',
+        oldValue: 'Old title',
+        newValue: 'New title',
+        details: {},
+      },
+      {
+        kind: 'modified',
+        type: 'page-label',
+        page: 3,
+        field: 'page-label',
+        oldValue: '1',
+        newValue: '5',
+        details: { start: { old: 1, new: 5 } },
+      },
+    ];
+    const result: DiffResult = {
+      schemaVersion: 1,
+      tool: { name: 'pdf-inspector', version: '0.3.3' },
+      options: {
+        positionTolerance: 1,
+        textTolerance: 'normalized',
+        ignoreTypes: [],
+        ignoreFonts: false,
+        ignoreColors: false,
+        ignoreImages: false,
+        ignoreRegions: [],
+      },
+      old: { pages: 3, sha256: 'a'.repeat(64) },
+      new: { pages: 3, sha256: 'b'.repeat(64) },
+      summary: {
+        pagesAdded: 0,
+        pagesRemoved: 0,
+        pagesChanged: 0,
+        pagesReordered: 0,
+        objectsAdded: 0,
+        objectsRemoved: 0,
+        objectsMoved: 0,
+        objectsModified: 0,
+        changesTruncated: false,
+        resourcesAdded: 0,
+        resourcesRemoved: 0,
+        resourcesModified: 0,
+        resourcesMoved: 0,
+        documentChanges: 2,
+      },
+      truncated: false,
+      documentChanges,
+      pages: [],
+    };
+
+    expect(result.documentChanges).toHaveLength(2);
+    expect(result.documentChanges?.[1].page).toBe(3);
+    expect(result.summary.resourcesMoved).toBe(0);
+    // Additive fields survive a JSON round trip unchanged.
+    expect(JSON.parse(JSON.stringify(result))).toEqual(result);
+  });
+
+  it('carries moved resources and collector truncation as optional counters', () => {
+    const summary: DiffSummary = {
+      pagesAdded: 0,
+      pagesRemoved: 0,
+      pagesChanged: 1,
+      pagesReordered: 0,
+      objectsAdded: 0,
+      objectsRemoved: 0,
+      objectsMoved: 0,
+      objectsModified: 0,
+      changesTruncated: true,
+      resourcesAdded: 0,
+      resourcesRemoved: 0,
+      resourcesModified: 0,
+      resourcesMoved: 1,
+      documentChanges: 0,
+      resourcesTruncated: true,
+    };
+
+    // A moved resource is counted: no "0/0/0 while listing a move".
+    expect(summary.resourcesMoved).toBe(1);
+    // A collector cap means the resource comparison is incomplete, and the
+    // generic truncation flag is set at the same time.
+    expect(summary.resourcesTruncated).toBe(true);
+    expect(summary.changesTruncated).toBe(true);
+    expect(JSON.parse(JSON.stringify(summary))).toEqual(summary);
+  });
+
+  it('keeps the resource counters optional for an object-only payload', () => {
+    const legacy: DiffSummary = {
+      pagesAdded: 0,
+      pagesRemoved: 0,
+      pagesChanged: 1,
+      pagesReordered: 0,
+      objectsAdded: 0,
+      objectsRemoved: 0,
+      objectsMoved: 0,
+      objectsModified: 1,
+      changesTruncated: false,
+    };
+    const result: DiffResult = {
+      schemaVersion: 1,
+      tool: { name: 'pdf-inspector', version: '0.3.3' },
+      options: {
+        positionTolerance: 1,
+        textTolerance: 'normalized',
+        ignoreTypes: [],
+        ignoreFonts: false,
+        ignoreColors: false,
+        ignoreImages: false,
+        ignoreRegions: [],
+      },
+      old: { pages: 1, sha256: 'a'.repeat(64) },
+      new: { pages: 1, sha256: 'b'.repeat(64) },
+      summary: legacy,
+      truncated: false,
+      pages: [],
+    };
+
+    expect(result.summary.resourcesAdded).toBeUndefined();
+    expect(result.summary.resourcesMoved).toBeUndefined();
+    expect(result.summary.resourcesTruncated).toBeUndefined();
+    expect(result.documentChanges).toBeUndefined();
+    // A consumer reads a missing counter as zero.
+    expect(result.summary.resourcesModified ?? 0).toBe(0);
+    // ... and a missing truncation flag as "complete".
+    expect(result.summary.resourcesTruncated ?? false).toBe(false);
+  });
+});
+
+describe('resource ignore options', () => {
+  it('accepts the five resource flags as optional request options', () => {
+    // Every field is optional, so an empty request stays valid.
+    expect(diffOptionsToRpc({})).toEqual({});
+    expect(diffOptionsToRpc({ ignoreAnnotations: false })).toEqual({
+      ignore_annotations: false,
+    });
+  });
+
+  it('forwards every resource flag to the snake_case RPC options', () => {
+    expect(
+      diffOptionsToRpc({
+        ignoreAnnotations: true,
+        ignoreLinks: true,
+        ignoreForms: true,
+        ignoreMetadata: true,
+        ignorePageLabels: true,
+      }),
+    ).toEqual({
+      ignore_annotations: true,
+      ignore_links: true,
+      ignore_forms: true,
+      ignore_metadata: true,
+      ignore_page_labels: true,
+    });
+  });
+
+  it('forwards only the resource flags that were provided', () => {
+    const rpc = diffOptionsToRpc({ ignoreLinks: true, ignorePageLabels: false });
+
+    expect(rpc).toEqual({ ignore_links: true, ignore_page_labels: false });
+    expect(rpc.ignore_annotations).toBeUndefined();
+    expect(rpc.ignore_forms).toBeUndefined();
+    expect(rpc.ignore_metadata).toBeUndefined();
+  });
+
+  it('keeps resource flags alongside the object options', () => {
+    expect(
+      diffOptionsToRpc({
+        positionTolerance: 2,
+        ignoreTypes: ['char'],
+        ignoreFonts: true,
+        ignoreAnnotations: true,
+      }),
+    ).toEqual({
+      position_tolerance: 2,
+      ignore_types: ['char'],
+      ignore_fonts: true,
+      ignore_annotations: true,
+    });
   });
 });

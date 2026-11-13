@@ -112,6 +112,24 @@ _DIFF_OPTION_FIELDS = (
     'ignore_colors',
     'ignore_images',
     'ignore_regions',
+    'ignore_annotations',
+    'ignore_links',
+    'ignore_forms',
+    'ignore_metadata',
+    'ignore_page_labels',
+)
+
+# Boolean options. A JSON ``"false"`` string would be truthy in Python, so the
+# RPC rejects non-boolean values instead of silently ignoring the resource.
+_DIFF_BOOLEAN_FIELDS = (
+    'ignore_fonts',
+    'ignore_colors',
+    'ignore_images',
+    'ignore_annotations',
+    'ignore_links',
+    'ignore_forms',
+    'ignore_metadata',
+    'ignore_page_labels',
 )
 
 
@@ -141,6 +159,11 @@ def _parse_diff_options(raw: Any) -> DiffOptions:
     ignore_regions = raw.get('ignore_regions')
     if ignore_regions is not None and not isinstance(ignore_regions, (list, tuple)):
         raise RpcError('"ignore_regions" must be an array of regions')
+
+    for name in _DIFF_BOOLEAN_FIELDS:
+        value = raw.get(name)
+        if value is not None and not isinstance(value, bool):
+            raise RpcError(f'"{name}" must be a boolean')
 
     try:
         return DiffOptions(**raw)
