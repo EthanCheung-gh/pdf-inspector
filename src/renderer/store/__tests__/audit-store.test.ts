@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type {
-  AuditDocumentInfo,
-  AuditDocumentResult,
-  AuditFinding,
-  AuditPagesResult,
+import {
+  buildAuditReport,
+  type AuditDocumentInfo,
+  type AuditDocumentResult,
+  type AuditFinding,
+  type AuditPagesResult,
+  type AuditReport,
 } from '../../../shared/audit-types';
 
 const auditIpc = vi.hoisted(() => ({
@@ -78,6 +80,29 @@ function deferred<T>(): Deferred<T> {
 }
 
 const store = () => useAuditStore.getState();
+
+/** A valid 32-character lowercase hex fingerprint, distinct per `seed`. */
+function fingerprint(seed: number | string): string {
+  const hex = typeof seed === 'number' ? seed.toString(16) : seed;
+  return hex.padStart(32, '0').slice(-32).toLowerCase();
+}
+
+/** A baseline `AuditReport` file the user could have saved from an earlier run. */
+function baselineReport(findings: AuditFinding[], pages = 2): AuditReport {
+  return buildAuditReport(makeDocument(pages), findings, TOOL);
+}
+
+function baselineFile(report: AuditReport, name = 'baseline.json'): File {
+  return new File([JSON.stringify(report)], name, { type: 'application/json' });
+}
+
+/** Run one audit that reports exactly `findings`, so the store has a report. */
+async function auditFindings(findings: AuditFinding[], pages = 2): Promise<void> {
+  auditIpc.auditDocument.mockResolvedValue(documentResult(pages, findings));
+  auditIpc.auditPages.mockResolvedValue(pagesResult([]));
+  store().open('/docs/report.pdf', 'report.pdf');
+  await settle();
+}
 
 /** Drain the microtasks of an `open()`-started run (the store never awaits it). */
 async function settle(): Promise<void> {
@@ -343,6 +368,10 @@ describe('audit store file lifecycle', () => {
       error: null,
       selected: null,
       filter: { severity: 'all', category: 'all' },
+      baseline: null,
+      comparison: null,
+      baselineError: null,
+      baselineOnly: false,
     });
   });
 });
@@ -483,5 +512,261 @@ describe('audit store selection and filter', () => {
 
     store().selectFinding(null);
     expect(store().selected).toBeNull();
+  });
+});
+
+describe('audit store baseline', () => {
+  const existing = makeFinding({
+    category: 'fonts',
+    severity: 'warning',
+    page: null,
+    title: 'Font not embedded: Inter',
+    fingerprint: fingerprint(1),
+  });
+  const other = makeFinding({
+    category: 'images',
+    severity: 'warning',
+    page: 2,
+    title: 'Low DPI image',
+    fingerprint: fingerprint(2),
+  });
+
+  it('loads a valid baseline and compares it with the current report', async () => {
+    await auditFindings([existing, other]);
+
+    await store().loadBaselineFile(baselineFile(baselineReport([existing]), 'previous audit.json'));
+
+    expect(store().baseline?.fileName).toBe('previous audit.json');
+    expect(store().baseline?.report.findings).toHaveLength(1);
+    expect(store().comparison?.summary).toEqual({
+      new: 1,
+      existing: 1,
+      moved: 0,
+      escalated: 0,
+      fixed: 0,
+      waived: 0,
+    });
+    expect(store().baselineError).toBeNull();
+    expect(store().baselineOnly).toBe(false);
+  });
+
+  it('keeps the previous baseline when the JSON is broken', async () => {
+    await auditFindings([existing]);
+    await store().loadBaselineFile(baselineFile(baselineReport([existing]), 'good.json'));
+    const baseline = store().baseline;
+    const comparison = store().comparison;
+
+    await store().loadBaselineFile(
+      new File(['{ "schemaVersion": 1, '], 'broken.json', { type: 'application/json' }),
+    );
+
+    expect(store().baselineError).toContain('not valid JSON');
+    expect(store().baseline).toBe(baseline);
+    expect(store().comparison).toBe(comparison);
+    // A baseline failure is never the audit-run failure.
+    expect(store().error).toBeNull();
+    expect(store().report).not.toBeNull();
+  });
+
+  it('rejects a wrong schema version and keeps the loaded baseline', async () => {
+    await auditFindings([existing]);
+    await store().loadBaselineFile(baselineFile(baselineReport([existing]), 'good.json'));
+    const baseline = store().baseline;
+
+    await store().loadBaselineFile(
+      new File([JSON.stringify({ schemaVersion: 2, findings: [] })], 'v2.json'),
+    );
+
+    expect(store().baselineError).toContain('"schemaVersion": 1');
+    expect(store().baseline).toBe(baseline);
+  });
+
+  it('rejects a legacy baseline without fingerprints and says how to regenerate it', async () => {
+    await auditFindings([existing]);
+
+    await store().loadBaselineFile(
+      baselineFile(
+        baselineReport([{ ...existing, fingerprint: undefined }]),
+        'legacy.json',
+      ),
+    );
+
+    expect(store().baselineError).toContain('Regenerate the baseline with the current CLI');
+    expect(store().baseline).toBeNull();
+    expect(store().comparison).toBeNull();
+  });
+
+  it('rejects a fingerprint that is not 32 lowercase hex characters', async () => {
+    await auditFindings([existing]);
+
+    await store().loadBaselineFile(
+      baselineFile(baselineReport([{ ...existing, fingerprint: 'NOT-A-FINGERPRINT' }])),
+    );
+
+    expect(store().baselineError).not.toBeNull();
+    expect(store().baseline).toBeNull();
+  });
+
+  it('recomputes the comparison after a re-run and keeps the baseline', async () => {
+    await auditFindings([existing]);
+    await store().loadBaselineFile(baselineFile(baselineReport([existing, other])));
+    expect(store().comparison?.summary).toEqual({
+      new: 0,
+      existing: 1,
+      moved: 0,
+      escalated: 0,
+      fixed: 1,
+      waived: 0,
+    });
+
+    // The re-run reports the fixed baseline finding and adds a third one.
+    auditIpc.auditDocument.mockResolvedValue(
+      documentResult(2, [
+        existing,
+        other,
+        makeFinding({ category: 'pages', severity: 'info', title: 'Page 2 is blank', fingerprint: fingerprint(3) }),
+      ]),
+    );
+    await store().runAudit();
+
+    expect(store().baseline).not.toBeNull();
+    expect(store().comparison?.summary).toEqual({
+      new: 1,
+      existing: 2,
+      moved: 0,
+      escalated: 0,
+      fixed: 0,
+      waived: 0,
+    });
+  });
+
+  it('keeps the baseline and clears the comparison when the report is gone', async () => {
+    await auditFindings([existing]);
+    await store().loadBaselineFile(baselineFile(baselineReport([existing])));
+
+    // Opening another document drops the report; the baseline belongs to the
+    // previous document, so both the baseline and its comparison go.
+    auditIpc.auditDocument.mockResolvedValue(documentResult(0));
+    store().open('/docs/other.pdf', 'other.pdf');
+
+    expect(store().baseline).toBeNull();
+    expect(store().comparison).toBeNull();
+    await settle();
+    expect(store().fileName).toBe('other.pdf');
+  });
+
+  it('clears the baseline on a document switch but keeps it on a same-file reopen', async () => {
+    await auditFindings([existing]);
+    await store().loadBaselineFile(baselineFile(baselineReport([existing])));
+    store().setBaselineOnly(true);
+
+    store().close();
+    store().open('/docs/report.pdf', 'report.pdf');
+    expect(store().baseline).not.toBeNull();
+    expect(store().comparison).not.toBeNull();
+    // `close` keeps state like the report does, `New only` included.
+    expect(store().baselineOnly).toBe(true);
+
+    auditIpc.auditDocument.mockResolvedValue(documentResult(0));
+    store().open('/docs/other.pdf', 'other.pdf');
+    expect(store().baseline).toBeNull();
+    expect(store().comparison).toBeNull();
+    expect(store().baselineError).toBeNull();
+    expect(store().baselineOnly).toBe(false);
+    await settle();
+  });
+
+  it('clears the baseline state on reset', async () => {
+    await auditFindings([existing]);
+    await store().loadBaselineFile(baselineFile(baselineReport([existing])));
+    store().setBaselineOnly(true);
+
+    store().reset();
+
+    expect(store()).toMatchObject({
+      baseline: null,
+      comparison: null,
+      baselineError: null,
+      baselineOnly: false,
+    });
+  });
+
+  it('clears the baseline, the toggle and a pending error', async () => {
+    await auditFindings([existing]);
+    await store().loadBaselineFile(baselineFile(baselineReport([existing])));
+    store().setBaselineOnly(true);
+    await store().loadBaselineFile(new File(['nope'], 'bad.json'));
+    expect(store().baselineError).not.toBeNull();
+
+    store().clearBaselineError();
+    expect(store().baselineError).toBeNull();
+    // Dismissing the error keeps the baseline that was already loaded.
+    expect(store().baseline).not.toBeNull();
+
+    store().clearBaseline();
+    expect(store().baseline).toBeNull();
+    expect(store().comparison).toBeNull();
+    expect(store().baselineOnly).toBe(false);
+  });
+
+  it('keeps the baseline but explains the comparison when the report has no fingerprints', async () => {
+    await auditFindings([existing]);
+    await store().loadBaselineFile(baselineFile(baselineReport([existing])));
+    expect(store().comparison).not.toBeNull();
+
+    // A report from an engine that predates fingerprints cannot be compared;
+    // the store must not throw, must keep the baseline, and must say why the
+    // counts are gone instead of dropping them silently.
+    auditIpc.auditDocument.mockResolvedValue(
+      documentResult(2, [{ ...existing, fingerprint: undefined }]),
+    );
+    await store().runAudit();
+
+    expect(store().baseline).not.toBeNull();
+    expect(store().comparison).toBeNull();
+    expect(store().baselineError).toBe(
+      'The current audit report has no fingerprints. Re-run the audit with the current engine.',
+    );
+    // Still a baseline concern, never an audit-run failure.
+    expect(store().error).toBeNull();
+
+    // The message is dismissible and the baseline stays usable.
+    store().clearBaselineError();
+    expect(store().baselineError).toBeNull();
+    expect(store().baseline).not.toBeNull();
+  });
+
+  it('explains a fingerprint-less current report when the baseline is loaded', async () => {
+    // The very first load: the baseline file is valid, the report is not
+    // comparable, so the file is kept and the reason is reported.
+    await auditFindings([{ ...existing, fingerprint: undefined }]);
+
+    await store().loadBaselineFile(baselineFile(baselineReport([existing])));
+
+    expect(store().baseline?.fileName).toBe('baseline.json');
+    expect(store().comparison).toBeNull();
+    expect(store().baselineError).toContain('The current audit report has no fingerprints');
+    expect(store().baselineError).not.toContain('Regenerate the baseline');
+    expect(store().error).toBeNull();
+  });
+
+  it('clears a fingerprint error once a re-run produces fingerprints again', async () => {
+    await auditFindings([{ ...existing, fingerprint: undefined }]);
+    await store().loadBaselineFile(baselineFile(baselineReport([existing])));
+    expect(store().baselineError).not.toBeNull();
+
+    auditIpc.auditDocument.mockResolvedValue(documentResult(2, [existing]));
+    await store().runAudit();
+
+    expect(store().baselineError).toBeNull();
+    expect(store().comparison?.summary.existing).toBe(1);
+  });
+
+  it('ignores a baseline chosen while no report exists', async () => {
+    await store().loadBaselineFile(baselineFile(baselineReport([existing])));
+
+    expect(store().baseline).toBeNull();
+    expect(store().comparison).toBeNull();
+    expect(store().baselineError).toBeNull();
   });
 });

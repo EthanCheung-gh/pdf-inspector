@@ -580,6 +580,36 @@ export const zhCN: Record<MessageKey, string> = {
   'audit.page.document': '文档',
   'audit.page.page': '第 {page} 页',
 
+  // --- 审计：基线对比（发现视图）------------------------------------------
+  'audit.baseline.load': '基线…',
+  'audit.baseline.loadTitle': '将当前报告与基线 AuditReport JSON 对比',
+  'audit.baseline.inputLabel': '基线 AuditReport JSON 文件',
+  'audit.baseline.clear': '清除',
+  'audit.baseline.clearTitle': '停止与此基线对比',
+  'audit.baseline.countsLine': '基线：{counts}',
+  'audit.baseline.fileLabel': '基线文件',
+  'audit.baseline.count.new': '新增 {count}',
+  'audit.baseline.count.existing': '已存在 {count}',
+  'audit.baseline.count.moved': '换页 {count}',
+  'audit.baseline.count.escalated': '升级 {count}',
+  'audit.baseline.count.fixed': '已修复 {count}',
+  'audit.baseline.count.waived': '已豁免 {count}',
+  'audit.baseline.title':
+    '基线对比——新增 {new}、已存在 {existing}、换页 {moved}、升级 {escalated}、已修复 {fixed}、已豁免 {waived}',
+  'audit.baseline.newOnly': '仅看新增',
+  'audit.baseline.newOnlyTitle': '只显示新增和升级的发现',
+  'audit.baseline.status.new': '新增',
+  'audit.baseline.status.moved': '换页',
+  'audit.baseline.status.escalated': '升级',
+  'audit.baseline.error.read': '无法读取基线文件（{detail}）。',
+  'audit.baseline.error.json': '基线文件不是合法的 JSON（{detail}）。',
+  'audit.baseline.error.schema':
+    '基线文件必须是包含 "schemaVersion": 1 和 findings 数组的 AuditReport JSON（{detail}）。',
+  'audit.baseline.error.fingerprint':
+    '第 {index} 个发现缺少 32 位指纹。请用当前版本的 CLI 重新生成基线后再加载。',
+  'audit.baseline.error.currentFingerprint':
+    '当前审计报告没有指纹。请用当前版本的引擎重新审计。',
+
   // --- 审计：发现 / 结构 / 资源模式切换 ------------------------------------
   'audit.mode.label': '审计视图模式',
   'audit.mode.findings': '发现',

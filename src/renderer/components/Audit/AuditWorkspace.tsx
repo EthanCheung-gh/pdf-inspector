@@ -1,12 +1,16 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AUDIT_CATEGORIES,
   AUDIT_SEVERITIES,
+  type AuditBaselineComparison,
+  type AuditBaselineCounts,
+  type AuditBaselineStatus,
   type AuditCategory,
   type AuditFinding,
   type AuditReport,
   type AuditSeverity,
 } from '../../../shared/audit-types';
+import { auditBaselineStatuses, isAuditBaselineNew } from '../../../shared/audit-baseline';
 import {
   translatePlural,
   useI18nStore,
@@ -94,18 +98,72 @@ export function isAuditFilterActive(filter: AuditFilter): boolean {
   return filter.severity !== 'all' || filter.category !== 'all';
 }
 
+/** Does one finding pass both filter axes? `all` means "do not filter". */
+export function matchesAuditFilter(finding: AuditFinding, filter: AuditFilter): boolean {
+  return (
+    (filter.severity === 'all' || finding.severity === filter.severity) &&
+    (filter.category === 'all' || finding.category === filter.category)
+  );
+}
+
 /** Findings matching both filter axes; `all` means "do not filter on this axis". */
 export function filterAuditFindings(
   findings: AuditFinding[],
   filter: AuditFilter,
 ): AuditFinding[] {
   if (!isAuditFilterActive(filter)) return findings;
-  return findings.filter(
-    (finding) =>
-      (filter.severity === 'all' || finding.severity === filter.severity) &&
-      (filter.category === 'all' || finding.category === filter.category),
-  );
+  return findings.filter((finding) => matchesAuditFilter(finding, filter));
 }
+
+/** Separator between the count groups of the baseline line. */
+export const BASELINE_COUNT_SEPARATOR = ' · ';
+
+/**
+ * `Baseline: 2 new · 5 existing · 1 moved · 3 fixed`.
+ *
+ * New, existing and fixed are always shown — they answer "is this document
+ * getting better or worse?" — while `moved`/`escalated`/`waived` only appear
+ * when non-zero, so a plain re-run stays a single short line.
+ */
+export function auditBaselineCountsText(
+  counts: AuditBaselineCounts,
+  t: TranslateFn,
+): string {
+  const parts = [
+    t('audit.baseline.count.new', { count: counts.new }),
+    t('audit.baseline.count.existing', { count: counts.existing }),
+  ];
+  if (counts.moved > 0) parts.push(t('audit.baseline.count.moved', { count: counts.moved }));
+  if (counts.escalated > 0) {
+    parts.push(t('audit.baseline.count.escalated', { count: counts.escalated }));
+  }
+  parts.push(t('audit.baseline.count.fixed', { count: counts.fixed }));
+  if (counts.waived > 0) parts.push(t('audit.baseline.count.waived', { count: counts.waived }));
+  // The label owns the colon so `en` and `zh-CN` can use their own punctuation.
+  return t('audit.baseline.countsLine', { counts: parts.join(BASELINE_COUNT_SEPARATOR) });
+}
+
+/** The full `title` of the baseline line: every count, zeros included. */
+export function auditBaselineCountsTitle(
+  counts: AuditBaselineCounts,
+  t: TranslateFn,
+): string {
+  return t('audit.baseline.title', {
+    new: counts.new,
+    existing: counts.existing,
+    moved: counts.moved,
+    escalated: counts.escalated,
+    fixed: counts.fixed,
+    waived: counts.waived,
+  });
+}
+
+/** Statuses that get a row badge; `existing`/`fixed`/`waived` get none. */
+const BASELINE_STATUS_KEYS: Partial<Record<AuditBaselineStatus, MessageKey>> = {
+  new: 'audit.baseline.status.new',
+  moved: 'audit.baseline.status.moved',
+  escalated: 'audit.baseline.status.escalated',
+};
 
 const Summary: React.FC<{ report: AuditReport }> = ({ report }) => {
   const t = useT();
@@ -163,6 +221,72 @@ const Summary: React.FC<{ report: AuditReport }> = ({ report }) => {
         </div>
       </dl>
     </>
+  );
+};
+
+/**
+ * Baseline controls of the `Findings` summary pane: the counts line, the
+ * `New only` toggle and a dismissible load error.
+ *
+ * `fixed` findings only appear as a count: there is no current row to select,
+ * and a second "already fixed" list is out of scope. The full per-category
+ * counts live in the line's `title`, so the visible line stays short.
+ */
+const BaselinePane: React.FC<{
+  comparison: AuditBaselineComparison | null;
+  error: string | null;
+  newOnly: boolean;
+  onNewOnlyChange: (value: boolean) => void;
+  onDismissError: () => void;
+}> = ({ comparison, error, newOnly, onNewOnlyChange, onDismissError }) => {
+  const t = useT();
+  const newCount = comparison
+    ? comparison.summary.new + comparison.summary.escalated
+    : 0;
+
+  return (
+    <div className={styles.baseline} data-testid="audit-baseline">
+      {comparison && (
+        <>
+          <p
+            className={styles.baselineCounts}
+            data-testid="audit-baseline-summary"
+            title={auditBaselineCountsTitle(comparison.summary, t)}
+          >
+            {auditBaselineCountsText(comparison.summary, t)}
+          </p>
+          <div className={styles.baselineToggle}>
+            <input
+              className={styles.baselineCheckbox}
+              id="audit-baseline-new-only"
+              type="checkbox"
+              checked={newOnly}
+              title={t('audit.baseline.newOnlyTitle')}
+              onChange={(event) => onNewOnlyChange(event.target.checked)}
+            />
+            <label className={styles.baselineToggleLabel} htmlFor="audit-baseline-new-only">
+              {t('audit.baseline.newOnly')}
+            </label>
+            {/* How many rows `New only` keeps, before the severity/category
+             * filters narrow them further. */}
+            <span className={styles.baselineToggleCount} data-testid="audit-baseline-count">
+              ({newCount})
+            </span>
+          </div>
+        </>
+      )}
+
+      {error && (
+        <div className={styles.baselineError}>
+          <p role="alert" data-testid="audit-baseline-error">
+            {error}
+          </p>
+          <button className={styles.linkButton} type="button" onClick={onDismissError}>
+            {t('common.dismiss')}
+          </button>
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -255,6 +379,15 @@ export const AuditWorkspace: React.FC = () => {
   const setFilter = useAuditStore((s) => s.setFilter);
   const selectFinding = useAuditStore((s) => s.selectFinding);
 
+  const baseline = useAuditStore((s) => s.baseline);
+  const comparison = useAuditStore((s) => s.comparison);
+  const baselineError = useAuditStore((s) => s.baselineError);
+  const baselineOnly = useAuditStore((s) => s.baselineOnly);
+  const loadBaselineFile = useAuditStore((s) => s.loadBaselineFile);
+  const clearBaseline = useAuditStore((s) => s.clearBaseline);
+  const clearBaselineError = useAuditStore((s) => s.clearBaselineError);
+  const setBaselineOnly = useAuditStore((s) => s.setBaselineOnly);
+
   const securityReport = useSecurityStore((s) => s.report);
   const securityLoading = useSecurityStore((s) => s.loading);
   const securityLoad = useSecurityStore((s) => s.load);
@@ -296,11 +429,66 @@ export const AuditWorkspace: React.FC = () => {
   }, [mode, filePath]);
 
   const findingCount = report?.findings.length ?? 0;
-  const filtered = useMemo(
-    () => filterAuditFindings(report?.findings ?? [], filter),
-    [report, filter],
+
+  /**
+   * Status per current finding, or null without a baseline.
+   *
+   * `auditBaselineStatuses` projects the comparison onto `report.findings`
+   * order, so `statuses[index]` describes `report.findings[index]`.
+   */
+  const statuses = useMemo(
+    () => (comparison ? auditBaselineStatuses(comparison) : null),
+    [comparison],
   );
-  const filterActive = isAuditFilterActive(filter);
+
+  /**
+   * The rows the list shows: severity/category filters and `New only` are
+   * combined here, so the count next to the list always describes what is
+   * visible. `index` is the position in `report.findings`, which is how the
+   * baseline status is looked up.
+   *
+   * `New only` without a comparison (a report that carries no fingerprints
+   * cannot be compared) is a no-op rather than an empty list: the toggle is not
+   * even rendered then, so the filter must not hide every row.
+   */
+  const newOnlyActive = baselineOnly && statuses !== null;
+
+  const rows = useMemo(() => {
+    const findings = report?.findings ?? [];
+    return findings
+      .map((finding, index) => ({ finding, index, status: statuses?.[index] ?? null }))
+      .filter(
+        ({ finding, status }) =>
+          matchesAuditFilter(finding, filter) &&
+          (!newOnlyActive || (status !== null && isAuditBaselineNew(status))),
+      );
+  }, [report, filter, statuses, newOnlyActive]);
+
+  const filterActive = isAuditFilterActive(filter) || newOnlyActive;
+  const filteredCount = rows.length;
+
+  /** Clear every list filter, including `New only`. */
+  const handleResetFilters = useCallback(() => {
+    setFilter({ severity: 'all', category: 'all' });
+    setBaselineOnly(false);
+  }, [setFilter, setBaselineOnly]);
+
+  const baselineInput = useRef<HTMLInputElement | null>(null);
+
+  const handleChooseBaseline = useCallback(() => {
+    baselineInput.current?.click();
+  }, []);
+
+  const handleBaselineChosen = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      // Reset before the async read: picking the same file again must still
+      // fire `change`.
+      event.target.value = '';
+      if (file) void loadBaselineFile(file);
+    },
+    [loadBaselineFile],
+  );
 
   const saveJson = useCallback(
     async (defaultPath: string, content: string) => {
@@ -504,15 +692,59 @@ export const AuditWorkspace: React.FC = () => {
           </button>
 
           {mode === 'findings' && (
-            <button
-              className={styles.button}
-              type="button"
-              onClick={() => void handleExportJson()}
-              disabled={!report}
-              title={t('audit.exportTitle')}
-            >
-              {t('common.exportJson')}
-            </button>
+            <>
+              <button
+                className={styles.button}
+                type="button"
+                onClick={() => void handleExportJson()}
+                disabled={!report}
+                title={t('audit.exportTitle')}
+              >
+                {t('common.exportJson')}
+              </button>
+
+              {/* A native file input is the only way to pick a local file
+                  without a new IPC channel; the visible button only forwards
+                  the click, and the input keeps its accessible label. */}
+              <button
+                className={styles.button}
+                type="button"
+                onClick={handleChooseBaseline}
+                disabled={!report}
+                title={t('audit.baseline.loadTitle')}
+              >
+                {t('audit.baseline.load')}
+              </button>
+              <input
+                ref={baselineInput}
+                className={styles.fileInput}
+                type="file"
+                accept=".json,application/json"
+                aria-label={t('audit.baseline.inputLabel')}
+                data-testid="audit-baseline-input"
+                onChange={handleBaselineChosen}
+              />
+
+              {baseline && (
+                <>
+                  <button
+                    className={styles.button}
+                    type="button"
+                    onClick={clearBaseline}
+                    title={t('audit.baseline.clearTitle')}
+                  >
+                    {t('audit.baseline.clear')}
+                  </button>
+                  <span
+                    className={styles.baselineFileName}
+                    title={`${t('audit.baseline.fileLabel')}: ${baseline.fileName}`}
+                    data-testid="audit-baseline-file-name"
+                  >
+                    {baseline.fileName}
+                  </span>
+                </>
+              )}
+            </>
           )}
 
           {mode === 'structure' && (
@@ -605,6 +837,18 @@ export const AuditWorkspace: React.FC = () => {
               </p>
             )}
 
+            {/* The pane is also rendered for an error alone: the first bad file
+                a user picks must explain itself before any baseline exists. */}
+            {(baseline !== null || baselineError !== null) && (
+              <BaselinePane
+                comparison={comparison}
+                error={baselineError}
+                newOnly={baselineOnly}
+                onNewOnlyChange={setBaselineOnly}
+                onDismissError={clearBaselineError}
+              />
+            )}
+
             <div className={styles.filters}>
               <label className={styles.filterLabel}>
                 {t('audit.filter.severity')}
@@ -645,7 +889,7 @@ export const AuditWorkspace: React.FC = () => {
               <button
                 className={styles.linkButton}
                 type="button"
-                onClick={() => setFilter({ severity: 'all', category: 'all' })}
+                onClick={handleResetFilters}
                 disabled={!filterActive}
               >
                 {t('common.reset')}
@@ -681,22 +925,28 @@ export const AuditWorkspace: React.FC = () => {
             )}
 
             {report && findingCount > 0 && (
-              <p className={styles.listCount} data-testid="audit-filtered-count">
+              <p
+                className={styles.listCount}
+                data-testid="audit-filtered-count"
+                data-baseline-only={newOnlyActive || undefined}
+              >
                 {filterActive
-                  ? t('audit.filteredCount', { filtered: filtered.length, total: findingCount })
+                  ? t('audit.filteredCount', { filtered: filteredCount, total: findingCount })
                   : translatePlural(locale, 'audit.count', findingCount)}
               </p>
             )}
 
-            {report && findingCount > 0 && filtered.length === 0 && !loading && (
+            {report && findingCount > 0 && filteredCount === 0 && !loading && (
               <p className={styles.emptyState} role="status">
                 {t('audit.noFilterMatch')}
               </p>
             )}
 
             <ul className={styles.findingList} data-testid="audit-finding-list">
-              {filtered.map((finding, index) => {
+              {rows.map(({ finding, index, status }) => {
                 const isSelected = selected === finding;
+                const statusKey = status ? BASELINE_STATUS_KEYS[status] : undefined;
+                const statusLabel = statusKey ? t(statusKey) : null;
                 return (
                   <li
                     key={`${finding.category}:${finding.page ?? 'document'}:${finding.title}:${index}`}
@@ -705,7 +955,7 @@ export const AuditWorkspace: React.FC = () => {
                       className={`${styles.findingItem} ${isSelected ? styles.findingItemSelected : ''}`}
                       type="button"
                       aria-pressed={isSelected}
-                      aria-label={`${finding.severity} ${finding.category} ${auditPageLabel(finding.page, t)}: ${finding.title}`}
+                      aria-label={`${finding.severity} ${finding.category} ${auditPageLabel(finding.page, t)}: ${finding.title}${statusLabel ? ` (${statusLabel})` : ''}`}
                       onClick={() => selectFinding(finding)}
                     >
                       <span className={styles.severityBadge} data-severity={finding.severity}>
@@ -718,6 +968,17 @@ export const AuditWorkspace: React.FC = () => {
                       <span className={styles.findingTitle} title={finding.title}>
                         {finding.title}
                       </span>
+                      {/* Text badge, never colour alone: `existing` rows keep
+                          no badge so the list stays calm after a plain re-run. */}
+                      {status && statusLabel && (
+                        <span
+                          className={styles.baselineBadge}
+                          data-status={status}
+                          data-testid="audit-baseline-badge"
+                        >
+                          {statusLabel}
+                        </span>
+                      )}
                     </button>
                   </li>
                 );

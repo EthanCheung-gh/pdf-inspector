@@ -599,6 +599,36 @@ export const en = {
   'audit.page.document': 'Document',
   'audit.page.page': 'Page {page}',
 
+  // --- Audit: baseline comparison (Findings view) --------------------------
+  'audit.baseline.load': 'Baseline…',
+  'audit.baseline.loadTitle': 'Compare this report with a baseline AuditReport JSON',
+  'audit.baseline.inputLabel': 'Baseline AuditReport JSON file',
+  'audit.baseline.clear': 'Clear',
+  'audit.baseline.clearTitle': 'Stop comparing with this baseline',
+  'audit.baseline.countsLine': 'Baseline: {counts}',
+  'audit.baseline.fileLabel': 'Baseline file',
+  'audit.baseline.count.new': '{count} new',
+  'audit.baseline.count.existing': '{count} existing',
+  'audit.baseline.count.moved': '{count} moved',
+  'audit.baseline.count.escalated': '{count} escalated',
+  'audit.baseline.count.fixed': '{count} fixed',
+  'audit.baseline.count.waived': '{count} waived',
+  'audit.baseline.title':
+    'Baseline comparison — new {new}, existing {existing}, moved {moved}, escalated {escalated}, fixed {fixed}, waived {waived}',
+  'audit.baseline.newOnly': 'New only',
+  'audit.baseline.newOnlyTitle': 'Show only new and escalated findings',
+  'audit.baseline.status.new': 'New',
+  'audit.baseline.status.moved': 'Moved',
+  'audit.baseline.status.escalated': 'Escalated',
+  'audit.baseline.error.read': 'The baseline file could not be read ({detail}).',
+  'audit.baseline.error.json': 'The baseline is not valid JSON ({detail}).',
+  'audit.baseline.error.schema':
+    'The baseline must be an AuditReport JSON object with "schemaVersion": 1 and a findings array ({detail}).',
+  'audit.baseline.error.fingerprint':
+    'Finding {index} has no 32-character fingerprint. Regenerate the baseline with the current CLI and load it again.',
+  'audit.baseline.error.currentFingerprint':
+    'The current audit report has no fingerprints. Re-run the audit with the current engine.',
+
   // --- Audit: Findings / Structure / Resources mode switch -----------------
   'audit.mode.label': 'Audit view mode',
   'audit.mode.findings': 'Findings',

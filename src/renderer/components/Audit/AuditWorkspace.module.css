@@ -93,6 +93,36 @@
   background: var(--pi-border-strong);
 }
 
+/* --- baseline file picker ------------------------------------------------ */
+
+/* Visually hidden but still focusable and clickable: the visible `Baseline…`
+ * button forwards its click, and the input keeps its accessible label. Using
+ * `display: none` would remove it from the accessibility tree. */
+.fileInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Same treatment as the document name, only narrower: two file names must not
+ * push the header buttons out of the 1280px layout. */
+.baselineFileName {
+  flex: 0 1 auto;
+  max-width: 180px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pi-text-subtle);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* --- Findings / Structure / Resources segmented switch -------------------- */
 
 .modeSwitch {
@@ -241,6 +271,70 @@
   border-bottom: 1px solid var(--pi-border-muted);
 }
 
+/* --- baseline comparison (Findings summary pane) -------------------------- */
+
+.baseline {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--pi-border-muted);
+}
+
+.baselineCounts {
+  margin: 0;
+  color: var(--pi-text-secondary);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.baselineToggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--pi-text-subtle);
+  font-size: 10px;
+}
+
+.baselineCheckbox {
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--pi-accent);
+}
+
+.baselineCheckbox:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
+.baselineToggleLabel {
+  cursor: pointer;
+}
+
+.baselineToggleCount {
+  color: var(--pi-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.baselineError {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.baselineError p {
+  flex: 1;
+  margin: 0;
+  color: var(--pi-danger-text);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
 .filterLabel {
   display: flex;
   flex-direction: column;
@@ -320,9 +414,9 @@
 .findingItem {
   display: grid;
   grid-template-areas:
-    'severity category page'
-    'title title title';
-  grid-template-columns: auto auto minmax(0, 1fr);
+    'severity category page baseline'
+    'title title title baseline';
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   gap: 2px 6px;
   align-items: center;
   width: 100%;
@@ -409,6 +503,40 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Baseline status of one row. Occupies its own auto column (zero width when no
+ * badge is rendered), so switching baselines never reflows the rows above or
+ * below it, and the title keeps its ellipsis instead of pushing the row wider. */
+.baselineBadge {
+  grid-area: baseline;
+  align-self: center;
+  justify-self: end;
+  padding: 0 4px;
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-sm);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.baselineBadge[data-status='new'] {
+  color: var(--pi-accent);
+  border-color: var(--pi-accent-border);
+  background: var(--pi-accent-soft);
+}
+
+.baselineBadge[data-status='escalated'] {
+  color: var(--pi-warning-text);
+  border-color: var(--pi-warning-border-soft);
+  background: rgba(240, 196, 138, 0.12);
+}
+
+.baselineBadge[data-status='moved'] {
+  color: var(--pi-text-muted);
+  border-color: var(--pi-border-strong);
+  background: rgba(174, 183, 194, 0.08);
 }
 
 .progress {

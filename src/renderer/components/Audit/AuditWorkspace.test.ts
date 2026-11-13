@@ -8,6 +8,7 @@ import {
   type AuditFinding,
   type AuditReport,
 } from '../../../shared/audit-types';
+import { compareAuditReports } from '../../../shared/audit-baseline';
 import type {
   SecurityEncryption,
   SecurityReport,
@@ -39,6 +40,9 @@ vi.mock('../../hooks/usePageNavigation', () => ({
 
 import {
   AuditWorkspace,
+  BASELINE_COUNT_SEPARATOR,
+  auditBaselineCountsText,
+  auditBaselineCountsTitle,
   auditPageLabel,
   filterAuditFindings,
   suggestAccessibilityJsonFilename,
@@ -136,6 +140,67 @@ function makeReport(
   document: Partial<AuditDocumentInfo> = {},
 ): AuditReport {
   return buildAuditReport(makeDocument(document), findings, TOOL);
+}
+
+/** A valid 32-character lowercase hex fingerprint, distinct per `seed`. */
+function fingerprint(seed: number | string): string {
+  const hex = typeof seed === 'number' ? seed.toString(16) : seed;
+  return hex.padStart(32, '0').slice(-32).toLowerCase();
+}
+
+/**
+ * A current report and the baseline it is compared with:
+ *
+ * - `existing`   fonts warning, document level, same page;
+ * - `escalated`  images info on page 2 became a warning;
+ * - `existing`   pages info on page 3;
+ * - `new`        metadata info, absent from the baseline;
+ * - `moved`      security warning, page 1 in the baseline, page 5 now;
+ * - `fixed`      structure error the baseline had and this run does not.
+ */
+const BASELINE_CURRENT: AuditFinding[] = [
+  { ...FINDINGS[0], fingerprint: fingerprint(1) },
+  { ...FINDINGS[1], fingerprint: fingerprint(2) },
+  { ...FINDINGS[2], fingerprint: fingerprint(3) },
+  { ...FINDINGS[3], fingerprint: fingerprint(4) },
+  makeFinding({
+    category: 'security',
+    severity: 'warning',
+    page: 5,
+    title: 'JavaScript present',
+    detail: 'The document contains JavaScript.',
+    fingerprint: fingerprint(5),
+  }),
+];
+
+const BASELINE_OLD: AuditFinding[] = [
+  { ...BASELINE_CURRENT[0] },
+  { ...BASELINE_CURRENT[1], severity: 'info' },
+  { ...BASELINE_CURRENT[2] },
+  { ...BASELINE_CURRENT[4], page: 1 },
+  makeFinding({
+    category: 'structure',
+    severity: 'error',
+    page: null,
+    title: 'Document is not tagged',
+    detail: 'No /StructTreeRoot was found.',
+    fingerprint: fingerprint(9),
+  }),
+];
+
+function baselineFile(report: AuditReport, name = 'baseline.json'): File {
+  return new File([JSON.stringify(report)], name, { type: 'application/json' });
+}
+
+/** Enter the workspace with a report and a loaded, compared baseline. */
+async function showBaseline(
+  current: AuditFinding[] = BASELINE_CURRENT,
+  baseline: AuditFinding[] = BASELINE_OLD,
+): Promise<void> {
+  showReport(makeReport(current));
+  await act(async () => {
+    await store().loadBaselineFile(baselineFile(makeReport(baseline)));
+  });
 }
 
 /** Enter the workspace with a completed report, without running the engine. */
@@ -2224,5 +2289,411 @@ describe('structure view helpers', () => {
     );
     expect(suggestAccessibilityJsonFilename('测试 报告.pdf')).toBe('测试 报告.accessibility.json');
     expect(suggestAccessibilityJsonFilename(null)).toBe('document.accessibility.json');
+  });
+});
+
+// --- Audit baseline comparison ---------------------------------------------
+
+const rowFor = (title: string): HTMLElement =>
+  within(list()).getByRole('button', { name: new RegExp(title) });
+
+const badgeOf = (title: string): HTMLElement | null =>
+  within(rowFor(title)).queryByTestId('audit-baseline-badge') ?? null;
+
+const baselineInput = (): HTMLInputElement =>
+  screen.getByTestId('audit-baseline-input') as HTMLInputElement;
+
+/** Choose `file` in the hidden picker the way a user would. */
+async function chooseBaseline(file: File): Promise<void> {
+  await act(async () => {
+    fireEvent.change(baselineInput(), { target: { files: [file] } });
+  });
+}
+
+describe('AuditWorkspace baseline', () => {
+  it('disables the Baseline button until a report exists', () => {
+    useAuditStore.setState({
+      active: true,
+      filePath: '/docs/report.pdf',
+      fileName: 'report.pdf',
+      report: null,
+      loading: false,
+      progress: null,
+      error: null,
+    });
+    renderWorkspace();
+
+    expect((screen.getByRole('button', { name: 'Baseline…' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    // The file input is always mounted so the button only has to forward clicks.
+    expect(baselineInput().getAttribute('aria-label')).toBe('Baseline AuditReport JSON file');
+    expect(baselineInput().accept).toBe('.json,application/json');
+  });
+
+  it('opens the file picker from the header button', () => {
+    showReport(makeReport(BASELINE_CURRENT));
+    renderWorkspace();
+
+    const click = vi.spyOn(HTMLInputElement.prototype, 'click');
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Baseline…' }));
+    });
+
+    expect(click).toHaveBeenCalledTimes(1);
+    // The picker opens, not the save dialog: loading is client-side only.
+    expect(auditIpc.saveFile).not.toHaveBeenCalled();
+    click.mockRestore();
+  });
+
+  it('loads a baseline from the picker and shows the counts and file name', async () => {
+    showReport(makeReport(BASELINE_CURRENT));
+    renderWorkspace();
+
+    await chooseBaseline(baselineFile(makeReport(BASELINE_OLD), 'previous audit.json'));
+
+    expect(store().baseline?.fileName).toBe('previous audit.json');
+    expect(screen.getByTestId('audit-baseline-summary').textContent).toBe(
+      'Baseline: 1 new · 2 existing · 1 moved · 1 escalated · 1 fixed',
+    );
+    // `fixed` has no current row, so it is a count only.
+    expect(within(list()).getAllByRole('button')).toHaveLength(5);
+    expect(within(list()).queryByText('Document is not tagged')).toBeNull();
+
+    const fileName = screen.getByTestId('audit-baseline-file-name');
+    expect(fileName.textContent).toBe('previous audit.json');
+    expect(fileName.getAttribute('title')).toBe('Baseline file: previous audit.json');
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeTruthy();
+    // The full breakdown lives in the title, zeros included.
+    expect(screen.getByTestId('audit-baseline-summary').getAttribute('title')).toBe(
+      'Baseline comparison — new 1, existing 2, moved 1, escalated 1, fixed 1, waived 0',
+    );
+    expect(auditIpc.saveFile).not.toHaveBeenCalled();
+  });
+
+  it('badges new, escalated and moved rows and leaves existing rows plain', async () => {
+    await showBaseline();
+    renderWorkspace();
+
+    expect(badgeOf('JavaScript present')?.textContent).toBe('Moved');
+    expect(badgeOf('JavaScript present')?.getAttribute('data-status')).toBe('moved');
+    expect(badgeOf('Low DPI image on page 2')?.textContent).toBe('Escalated');
+    expect(badgeOf('Missing language')?.textContent).toBe('New');
+    expect(badgeOf('Font not embedded')).toBeNull();
+    expect(badgeOf('Page 3 has no content')).toBeNull();
+
+    // The badge text is part of the row's accessible name, not colour alone.
+    expect(rowFor('Missing language').getAttribute('aria-label')).toBe(
+      'info metadata Document: Missing language (New)',
+    );
+    expect(rowFor('Font not embedded').getAttribute('aria-label')).toBe(
+      'warning fonts Document: Font not embedded: Inter',
+    );
+  });
+
+  it('shows only new and escalated rows when New only is on', async () => {
+    await showBaseline();
+    renderWorkspace();
+
+    expect(screen.getByTestId('audit-baseline-count').textContent).toBe('(2)');
+
+    act(() => {
+      fireEvent.click(screen.getByRole('checkbox', { name: 'New only' }));
+    });
+
+    expect(store().baselineOnly).toBe(true);
+    expect(rowNames()).toEqual([
+      'warning images Page 2: Low DPI image on page 2 (Escalated)',
+      'info metadata Document: Missing language (New)',
+    ]);
+    // The list count describes the combined filter, not just the baseline one.
+    expect(screen.getByTestId('audit-filtered-count').textContent).toBe('2 of 5 findings');
+    expect(screen.getByTestId('audit-filtered-count').getAttribute('data-baseline-only')).toBe(
+      'true',
+    );
+
+    act(() => {
+      fireEvent.change(screen.getByLabelText('Filter by severity'), {
+        target: { value: 'warning' },
+      });
+    });
+
+    expect(rowNames()).toEqual([
+      'warning images Page 2: Low DPI image on page 2 (Escalated)',
+    ]);
+    expect(screen.getByTestId('audit-filtered-count').textContent).toBe('1 of 5 findings');
+
+    // The category axis combines the same way: only the escalated images row
+    // survives New only + `images`, and the metadata `new` row is filtered out.
+    act(() => {
+      fireEvent.change(screen.getByLabelText('Filter by severity'), {
+        target: { value: 'all' },
+      });
+      fireEvent.change(screen.getByLabelText('Filter by category'), {
+        target: { value: 'images' },
+      });
+    });
+
+    expect(store().filter).toEqual({ severity: 'all', category: 'images' });
+    expect(rowNames()).toEqual([
+      'warning images Page 2: Low DPI image on page 2 (Escalated)',
+    ]);
+    expect(screen.getByTestId('audit-filtered-count').textContent).toBe('1 of 5 findings');
+    // The summary keeps the whole-document counts regardless of the filters.
+    expect(screen.getByTestId('audit-baseline-summary').textContent).toBe(
+      'Baseline: 1 new · 2 existing · 1 moved · 1 escalated · 1 fixed',
+    );
+
+    // Reset clears the category filter and New only together.
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+    });
+
+    expect(store().baselineOnly).toBe(false);
+    expect(store().filter).toEqual({ severity: 'all', category: 'all' });
+    expect(rowNames()).toHaveLength(5);
+    expect(screen.getByTestId('audit-filtered-count').textContent).toBe('5 findings');
+  });
+
+  it('keeps the loaded baseline and reports a bad file inline', async () => {
+    await showBaseline();
+    renderWorkspace();
+    const before = store().comparison;
+
+    await chooseBaseline(new File(['{ "schemaVersion": '], 'broken.json'));
+
+    const alert = screen.getByTestId('audit-baseline-error');
+    expect(alert.getAttribute('role')).toBe('alert');
+    expect(alert.textContent).toContain('not valid JSON');
+    // A baseline failure is never the audit-run failure, and the good baseline
+    // stays on screen.
+    expect(store().error).toBeNull();
+    expect(store().comparison).toBe(before);
+    expect(screen.getByTestId('audit-baseline-summary').textContent).toContain('1 new');
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    });
+
+    expect(screen.queryByTestId('audit-baseline-error')).toBeNull();
+    expect(store().baseline).not.toBeNull();
+  });
+
+  it('explains a legacy baseline and keeps the previous one', async () => {
+    await showBaseline();
+    renderWorkspace();
+
+    await chooseBaseline(
+      baselineFile(
+        makeReport(BASELINE_OLD.map((finding) => ({ ...finding, fingerprint: undefined }))),
+        'legacy.json',
+      ),
+    );
+
+    expect(screen.getByTestId('audit-baseline-error').textContent).toContain(
+      'Regenerate the baseline with the current CLI',
+    );
+    expect(screen.getByTestId('audit-baseline-file-name').textContent).toBe('baseline.json');
+  });
+
+  it('reports the first invalid baseline inline, before any baseline is loaded', async () => {
+    // No baseline exists yet, so the summary pane must appear for the error
+    // alone; hiding it would make the very first bad file silent.
+    showReport(makeReport(BASELINE_CURRENT));
+    renderWorkspace();
+
+    const cases: Array<{ name: string; file: File; message: string }> = [
+      {
+        name: 'broken JSON',
+        file: new File(['{ "schemaVersion": 1, '], 'broken.json'),
+        message: 'not valid JSON',
+      },
+      {
+        name: 'wrong schema version',
+        file: new File([JSON.stringify({ schemaVersion: 2, findings: [] })], 'v2.json'),
+        message: '"schemaVersion": 1',
+      },
+      {
+        name: 'legacy fingerprints',
+        file: baselineFile(
+          makeReport(BASELINE_OLD.map((finding) => ({ ...finding, fingerprint: undefined }))),
+          'legacy.json',
+        ),
+        message: 'Regenerate the baseline with the current CLI',
+      },
+    ];
+
+    for (const testCase of cases) {
+      await chooseBaseline(testCase.file);
+
+      const alert = screen.getByTestId('audit-baseline-error');
+      expect(alert.getAttribute('role'), testCase.name).toBe('alert');
+      expect(alert.textContent, testCase.name).toContain(testCase.message);
+      // Only the error is on screen: no counts and no toggle without a baseline.
+      expect(screen.queryByTestId('audit-baseline-summary'), testCase.name).toBeNull();
+      expect(screen.queryByRole('checkbox', { name: 'New only' }), testCase.name).toBeNull();
+      expect(store().baseline, testCase.name).toBeNull();
+      // The list keeps showing every current finding.
+      expect(rowNames(), testCase.name).toHaveLength(5);
+
+      act(() => {
+        fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+      });
+
+      expect(screen.queryByTestId('audit-baseline-error'), testCase.name).toBeNull();
+      // Nothing is left to show, so the whole pane goes away again.
+      expect(screen.queryByTestId('audit-baseline'), testCase.name).toBeNull();
+      expect(store().baselineError, testCase.name).toBeNull();
+    }
+  });
+
+  it('reports a current report without fingerprints instead of hiding the counts', async () => {
+    // A report from an engine that predates fingerprints: the baseline file is
+    // valid, so it stays loaded, but the comparison cannot be built and the
+    // user must be told why rather than seeing a file name with no counts.
+    showReport(makeReport(FINDINGS));
+    renderWorkspace();
+
+    await chooseBaseline(baselineFile(makeReport(BASELINE_OLD), 'previous audit.json'));
+
+    expect(store().baseline?.fileName).toBe('previous audit.json');
+    expect(store().comparison).toBeNull();
+    // The baseline is still the loaded one, so its name stays in the header.
+    expect(screen.getByTestId('audit-baseline-file-name').textContent).toBe('previous audit.json');
+
+    const alert = screen.getByTestId('audit-baseline-error');
+    expect(alert.getAttribute('role')).toBe('alert');
+    expect(alert.textContent).toBe(
+      'The current audit report has no fingerprints. Re-run the audit with the current engine.',
+    );
+    // No counts and no toggle without a comparison, and no audit-run error.
+    expect(screen.queryByTestId('audit-baseline-summary')).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: 'New only' })).toBeNull();
+    expect(store().error).toBeNull();
+    expect(rowNames()).toHaveLength(4);
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    });
+
+    expect(screen.queryByTestId('audit-baseline-error')).toBeNull();
+    // Dismissing explains nothing away: the baseline file is still loaded.
+    expect(store().baseline).not.toBeNull();
+    expect(screen.getByTestId('audit-baseline-file-name')).toBeTruthy();
+  });
+
+  it('rejects a BaselineComparison JSON instead of comparing against it', async () => {
+    showReport(makeReport(BASELINE_CURRENT));
+    renderWorkspace();
+
+    const comparison = compareAuditReports(
+      makeReport(BASELINE_CURRENT),
+      makeReport(BASELINE_OLD),
+    );
+
+    await chooseBaseline(
+      new File([JSON.stringify(comparison)], 'report.baseline.json', {
+        type: 'application/json',
+      }),
+    );
+
+    expect(store().baseline).toBeNull();
+    expect(store().comparison).toBeNull();
+    const alert = screen.getByTestId('audit-baseline-error');
+    expect(alert.getAttribute('role')).toBe('alert');
+    expect(alert.textContent).toContain('BaselineComparison instead of AuditReport');
+    expect(rowNames()).toHaveLength(5);
+  });
+
+  it('clears the baseline, the badges and the toggle from the header', async () => {
+    await showBaseline();
+    renderWorkspace();
+    expect(screen.getAllByTestId('audit-baseline-badge').length).toBeGreaterThan(0);
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    });
+
+    expect(store().baseline).toBeNull();
+    expect(store().comparison).toBeNull();
+    expect(screen.queryByTestId('audit-baseline')).toBeNull();
+    expect(screen.queryByTestId('audit-baseline-file-name')).toBeNull();
+    expect(screen.queryAllByTestId('audit-baseline-badge')).toHaveLength(0);
+    expect(rowNames()).toHaveLength(5);
+  });
+
+  it('never writes the baseline into the exported report', async () => {
+    await showBaseline();
+    renderWorkspace();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Export JSON' }));
+    });
+
+    const request = auditIpc.saveFile.mock.calls[0][0] as { content: string };
+    const parsed = JSON.parse(request.content) as Record<string, unknown>;
+    expect(Object.keys(parsed).sort()).toEqual([
+      'document',
+      'findings',
+      'schemaVersion',
+      'summary',
+      'tool',
+    ]);
+    expect(request.content).not.toContain('baseline');
+    expect(auditIpc.saveFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('localizes the counts, the toggle and the badges', async () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    await showBaseline();
+    renderWorkspace();
+
+    expect(screen.getByTestId('audit-baseline-summary').textContent).toBe(
+      '基线：新增 1 · 已存在 2 · 换页 1 · 升级 1 · 已修复 1',
+    );
+    expect(screen.getByRole('button', { name: '基线…' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '清除' })).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: '仅看新增' })).toBeTruthy();
+    expect(badgeOf('Missing language')?.textContent).toBe('新增');
+    expect(badgeOf('Low DPI image on page 2')?.textContent).toBe('升级');
+    expect(badgeOf('JavaScript present')?.textContent).toBe('换页');
+  });
+});
+
+describe('audit baseline count wording', () => {
+  it('shows new, existing and fixed always and moved/escalated only when non-zero', () => {
+    expect(
+      auditBaselineCountsText(
+        { new: 0, existing: 5, moved: 0, escalated: 0, fixed: 0, waived: 0 },
+        tEn,
+      ),
+    ).toBe('Baseline: 0 new · 5 existing · 0 fixed');
+
+    expect(
+      auditBaselineCountsText(
+        { new: 2, existing: 5, moved: 1, escalated: 1, fixed: 3, waived: 0 },
+        tEn,
+      ),
+    ).toBe('Baseline: 2 new · 5 existing · 1 moved · 1 escalated · 3 fixed');
+
+    // Waivers are reserved for S2 and only shown when a producer reports them.
+    expect(
+      auditBaselineCountsText(
+        { new: 0, existing: 1, moved: 0, escalated: 0, fixed: 0, waived: 2 },
+        tEn,
+      ),
+    ).toBe('Baseline: 0 new · 1 existing · 0 fixed · 2 waived');
+
+    expect(BASELINE_COUNT_SEPARATOR).toBe(' · ');
+  });
+
+  it('keeps every count, zeros included, in the full title', () => {
+    expect(
+      auditBaselineCountsTitle(
+        { new: 2, existing: 5, moved: 1, escalated: 1, fixed: 3, waived: 1 },
+        tZh,
+      ),
+    ).toBe('基线对比——新增 2、已存在 5、换页 1、升级 1、已修复 3、已豁免 1');
   });
 });
