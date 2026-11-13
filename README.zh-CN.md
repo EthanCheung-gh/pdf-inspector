@@ -25,10 +25,11 @@
 | ![页面几何：五个页面框与标尺](docs/images/page-geometry.png) | **页面几何**<br>`Page` 标签页列出 MediaBox / CropBox / TrimBox / BleedBox / ArtBox，可切换 pt/mm 并显示标尺。 |
 | ![Diff 工作区：并排旧/新页面、变更摘要与列表、右侧选中变更详情](docs/images/diff-workspace.png) | **PDF Diff**<br>并排查看旧/新页面；左侧按页汇总变更，选中条目后右侧显示旧/新文本、BBox 与字段差异，顶部可重新选择旧/新文件或导出 JSON。 |
 | ![叠加模式：同一页上叠加旧/新对象框](docs/images/diff-overlay.png) | **叠加模式**<br>在同一页叠加旧/新对象框（移除红、新增绿、移动橙、修改蓝），适合定位同一区域的改动。 |
-| ![Visual 模式：像素热力图叠加在页面上，顶部显示 changed / total 像素统计](docs/images/diff-visual.png) | **Visual 像素对比**<br>在 Diff 工作区切到 `Visual`，以新页为底叠加旧页（`Blend`）或逐像素热力图（`Heatmap`），并在页面栏显示 `changed / total px`；`Boxes` 只显示对象框。 |
+| ![Visual 模式：像素热力图叠加在页面上，顶部显示 changed / total 像素统计](docs/images/diff-visual.png) | **Visual 像素对比**<br>在 Diff 工作区切到 `Visual`，以新页为底叠加旧页（`Blend`）或逐像素热力图（`Heatmap`），并在页面栏显示 `changed / total px`；`Boxes` 不做像素叠加，只显示变更框。 |
 | ![忽略区域：在并排页面上拖动矩形后显示虚线框、区域列表与重新运行按钮](docs/images/diff-regions.png) | **忽略区域**<br>打开 `Ignore region` 后在任一页拖动矩形，左侧列出页码/侧/bbox，虚线框同步绘制；`Apply & re-run` 重新比较并过滤相交的变更。 |
 | ![页面重排：页面列表显示 Old 2 → New 1、Old 3 → New 2 等对齐结果与新页 5 为 added](docs/images/diff-reordered.png) | **页面对齐与重排**<br>页面按内容指纹配对，列表与页面栏显示 `Old 2 → New 1` 等旧/新页码；插入/删除页保持单侧，`--fail-on reordered` 可把这些配对作为 CI 门禁。 |
 | ![Diff 页列表：按页折叠的变更组、Go to page 输入与 Expand all/Collapse all](docs/images/diff-page-groups.png) | **按页分组的 Diff 结果**<br>左侧每个页面是独立可折叠组，标题保留状态与变更数；`Go to page` 输入支持夹取跳转并自动展开目标页，`Expand all` / `Collapse all` 批量控制。 |
+| ![Diff 资源变更：Document changes 组列出元数据与页面标签、页级注释/链接/表单行、资源虚线框与只读的旧/新详情](docs/images/diff-resources.png) | **Diff 资源变更**<br>Diff 除了对象也比较注释、链接、表单字段、文档元数据与页面标签：类型过滤与计数、`Document changes` 组、有 BBox 的资源虚线框与只读旧/新详情；不打开链接、不执行 Launch、不填写表单。 |
 | ![文档体检工作区：严重级别汇总、筛选器、发现列表与右侧选中发现详情](docs/images/audit-workspace.png) | **文档体检**<br>跨字体、页面、图片、元数据、结构与安全的整档审计；按严重级别汇总，可按严重级别/类别筛选，选中条目查看证据与修复建议，并可跳转到对应页面。切换到 `Structure` 可查看标记结构树，切换到 `Resources` 可查看附件、JavaScript、动作、签名、加密与权限。 |
 | ![PDF 审计 HTML 报告：文档信息、严重级别汇总与逐条发现](docs/images/audit-report.png) | **审计报告（HTML）**<br>CLI `audit --format html` 生成单文件报告：文档信息、严重级别汇总与逐条发现（证据、建议）；内联 CSS、无脚本、无外部资源。 |
 | ![文档安全资源：Audit 的 Resources 视图，包含附件、JavaScript、动作、签名、加密与 XFA 汇总卡、notes.txt 附件、脚本预览、风险动作、签名字段与安全发现](docs/images/security-resources.png) | **文档安全资源**<br>Audit 顶部可在 `发现` 与 `资源` 之间切换。`资源` 显示附件、JavaScript、动作、签名、加密与 XFA 汇总卡，并列出 `notes.txt` 附件、只读脚本预览、风险动作、未验证签名字段与安全发现计数；附件仅展示元数据，不能打开或下载。 |
@@ -199,13 +200,16 @@
 
 ### PDF Diff
 
+当前 Diff 把 2.0 的页面对齐与视觉审查流程、3.0 的长任务保护（页面签名、心跳/超时恢复、变更上限与可选的字符级比较）以及 3.0 的文档资源比较（注释、链接、表单、元数据、页面标签）合并在一起。对象级结果仍然是事实来源。
+
 - **对象级变更**：对 word / char / rect / line / curve / image / table 七类对象逐页比较，报告 `added` / `removed` / `moved` / `modified`；每条变更包含旧/新页码、BBox、文本与细节（字体、字号、颜色、描边/填充、content hash、表格单元格等）。
+- **文档资源变更**：侧车同时读取注释、链接、表单控件、Info 字典与 `/PageLabels`，把差异写进同一份结果。注释/链接/表单以 `annotation` / `link` / `form` 类型进入 `pages[].changes`（identity 依次取 `/NM`、链接目标、表单完整字段名 + widget rect）；元数据与页面标签只出现在 `documentChanges`，因此只有元数据变化时所有页仍是 `unchanged`。资源变更不计入对象计数，摘要新增 `resourcesAdded` / `resourcesRemoved` / `resourcesModified` / `resourcesMoved` 与 `documentChanges`。
 - **页面级变更**：识别页面新增/删除、页面尺寸与 `/Rotate` 旋转角变化；这些变化以页面级说明展示，而不是对象框。
 - **表格单元格**：表格按单元格文本比较，`details.cellChanges` 列出变化的行、列与旧/新文本，并报告行列数变化。
-- **容差与忽略**：可调位置容差（pt，默认 1.0）与文本比较模式（`exact` / `normalized` / `case-insensitive`，默认 `normalized`），并可忽略字体、颜色、图片或指定对象类型。对比对话框提供位置容差与忽略字体/颜色/图片；文本容差与 `--ignore-types` 通过 CLI 使用。
-- **对比工作区**：顶部摘要（页数、页面变更、各类对象计数）加左侧按页变更列表，支持按 Kind / Type 过滤；中间为并排（Side by side）、叠加（Overlay）或视觉（Visual）视图，共享页码与缩放；右侧显示选中变更的新旧文本、Box 与字段差异。
+- **容差与忽略**：可调位置容差（pt，默认 1.0）与文本比较模式（`exact` / `normalized` / `case-insensitive`，默认 `normalized`），并可忽略字体、颜色、图片、指定对象类型或五类文档资源。对比对话框提供位置容差、忽略字体/颜色/图片，以及 `Content` 资源开关；文本容差与 `--ignore-types` 通过 CLI 使用。
+- **对比工作区**：顶部摘要（页数、页面变更、各类对象计数、资源计数）加左侧按页变更列表，支持按 Kind / Type 过滤；中间为并排（Side by side）、叠加（Overlay）或视觉（Visual）视图，共享页码与缩放；右侧显示选中变更的新旧文本、Box 与字段差异。页组上方的 `Document changes` 折叠组列出元数据与页面标签变更，`Page label` 行可 `Go to page`。
 - **按页折叠与跳页**：左侧每个页面是独立可折叠组，标题显示 `Old/New` 页码、状态与变更数；默认展开当前/首个变更页，`Go to page` 输入 `1..页数` 后跳转并自动展开，`Expand all` / `Collapse all` 批量控制。过滤不会合并不同页。
-- **大文件快速路径**：未改动页通过页面签名直接判为 `unchanged`，不触发 pdfplumber 布局与对象抽取；Diff 只对改动页做完整比较。长时间运行每 5 秒有心跳，修改页数很多时可显示 `Comparing documents… Ns`，并受 50k 变更上限保护。
+- **大文件快速路径**：未改动页需要页面签名与页面资源摘要都相同才直接判为 `unchanged`，不触发 pdfplumber 布局与对象抽取；只有资源不同时页面为 `changed`，但不抽取对象。长时间运行每 5 秒有心跳，修改页数很多时可显示 `Comparing documents… Ns`，并受 50k 变更上限保护。
 - **叠加配色**：叠加模式以页面所属文档为底图（有旧页用旧页，新增页用新页），绘制旧/新对象框——移除红、新增绿、移动橙、修改蓝，便于在同一位置快速定位改动。
 - **Export JSON**：把当前结果导出为 `DiffResult` JSON（`schemaVersion: 1`）。
 - **不影响当前检查**：Diff 在独立的旧/新文档上运行，Inspect 中打开的文档、页码、缩放与选中状态保持不变；`Back to Inspect` 返回原文档。
@@ -213,16 +217,43 @@
 #### PDF Diff 2.0
 
 - **页面对齐与重排**：页面先按内容指纹（页面尺寸、旋转、文本哈希、对象计数、表格文本）配对，结果在每个 `DiffPage` 上新增 `match: { score, reordered }`，摘要新增 `pagesReordered`。`reordered` 表示配对页在修订版中换了页码（`oldIndex != newIndex`），不是对象顺序变化；插入/删除页保持单侧（`match: null`）。页面列表与页面栏显示 `Old 2 → New 1` 形式的新旧页码。
-- **Visual 视觉差异**：`Visual` 视图以新页为底图、旧页半透明叠加（`Blend`），或逐像素比较并绘制热力图（`Heatmap`），也可只看对象框（`Boxes`）；页面栏显示 `changed / total px (百分比)`。逐像素比较在浏览器 canvas 中完成，通道差阈值固定为 24，并按上限缩放位图；结果不写入 CLI/JSON。
+- **Visual 视觉差异**：`Visual` 视图以新页为底图、旧页半透明叠加（`Blend`），或逐像素比较并绘制热力图（`Heatmap`），也可不做像素叠加只看变更框（`Boxes`）；页面栏显示 `changed / total px (百分比)`。逐像素比较在浏览器 canvas 中完成，通道差阈值固定为 24，并按上限缩放位图；结果不写入 CLI/JSON。
 - **忽略区域**：打开 `Ignore region` 后在并排/叠加页面拖动矩形，区域按页与 MediaBox 坐标记录（`DiffIgnoreRegion`：`oldPage` / `newPage` / `bbox`），虚线框与左侧区域列表同步显示；`Apply & re-run` 显式重新比较，与区域相交的变更从 JSON/UI/HTML 中消失，`Remove` 后重新运行即可恢复。区域只读，不修改 PDF。
 - **忽略区域 CLI/Action**：`--ignore-regions PATH` 读取与 UI 相同的 camelCase JSON 数组；action 提供同名输入 `ignore-regions`。
 - **重排阈值**：`--fail-on reordered` 在存在 `pagesReordered > 0` 时返回 1，适合把“页序变化”作为独立门禁；原有 `added` / `removed` / `modified` / `page-count` / `none` 语义不变。
-- **生成示例**：`web-samples/diff-visual-old.pdf` / `diff-visual-new.pdf`（第 1 页文字、颜色与位置小幅变化）与 `web-samples/diff-reordered-old.pdf` / `diff-reordered.pdf`（删除首页草稿、追加发布说明，4 个配对页换位）由 `scripts/generate-web-samples.py` 确定性生成。
+- **生成示例**：`web-samples/diff-visual-old.pdf` / `diff-visual-new.pdf`（第 1 页文字、颜色与位置小幅变化）、`web-samples/diff-reordered-old.pdf` / `diff-reordered.pdf`（删除首页草稿、追加发布说明，4 个配对页换位）与 `web-samples/diff-resources-old.pdf` / `diff-resources-new.pdf`（页面完全相同、只有资源变化）。
 - **详细说明**：页面对齐语义、视觉模式、区域 JSON、CLI/action 示例与阈值见 [docs/diff.md](docs/diff.md)。
+
+#### 注释、链接、表单、元数据与页面标签
+
+除了对象，Diff 还比较 Python 侧车收集的**文档资源**，因此 UI、CLI、JSON 与 HTML 结果一致，且不需要任何无头渲染：
+
+- **比较什么**：注释（subtype、title、contents、color、opacity、flags、rect）、链接（URI 目标、内部页码、`unsafeUrl`、action、contents）、表单控件（字段类型、完整字段名、值、默认值、选项、flags）、Info 字典（title、author、subject、keywords、creator、producer、创建/修改时间、language）与 `/PageLabels`。
+- **identity**：注释与链接优先用 `/NM`；没有时注释退回 subtype + rect + contents，链接退回 URI / 内部页码 / 目标文本 + rect，表单用 `/AcroForm` 补全的完整字段名（嵌套以点号连接）+ widget rect。identity 里含有 rect 的资源移动后会变成一条 removed + 一条 added，而不是 `moved`。
+- **结果位置**：注释、链接与表单是页级变更，写在 `pages[].changes`，与对象变更结构相同；元数据与页面标签是文档级变更，只写在 `documentChanges`（页面标签的 `page` 为 1-based 页码）。资源不计入对象计数，`schemaVersion` 仍为 `1`：`documentChanges`、`resources*` 计数、`resourcesTruncated` 与五个 `ignore*` 选项都是加法可选字段。
+- **过滤与徽标**：设置对话框的 `Content` 分组可开关注释 / 链接 / 表单 / 元数据 / 页面标签（默认全开）。Type 徽标与 Type 过滤新增 `Annotation` / `Link` / `Form` / `Metadata` / `Page label`；有 BBox 的资源画成虚线框，没有 BBox 的条目只在详情中出现。
+- **忽略区域**：有 BBox 的注释、链接与表单和对象一样会被区域过滤；元数据与页面标签没有 BBox，不受区域影响。
+- **只读**：不打开链接、不执行 Launch、不填写/重置/提交表单、不验证签名，也不写回 PDF。
+- **样例文件**：`web-samples/diff-resources-old.pdf` / `diff-resources-new.pdf` 两页完全相同，只有资源不同（注释内容/颜色、链接目标 `…/v1` → `…/v2`、表单值 `Alice` → `Bob`、title/author、页面标签 `i` → `ii`），得到 0 个对象变更、3 个资源变更、3 条 `documentChanges`；可用 `python scripts/generate-diff-resource-samples.py` 重新生成。
+- **详细说明**：identity 规则、资源上限、截断语义、忽略区域行为、JSON 结构与只读边界见 [docs/diff.md](docs/diff.md)。
+
+```bash
+# 只比较元数据与页面标签
+python sidecar/cli.py diff old.pdf new.pdf \
+  --ignore-annotations --ignore-links --ignore-forms
+
+# 只比较注释、链接与表单
+python sidecar/cli.py diff old.pdf new.pdf \
+  --ignore-metadata --ignore-page-labels
+
+# 资源修改也算内容变化：资源变化时返回 1
+python sidecar/cli.py diff old.pdf new.pdf --fail-on modified \
+  --format json --output diff.json
+```
 
 #### 对象级与视觉级的关系
 
-- **对象仍是事实来源**：变更列表、过滤、导出 JSON、CLI 与 action 都基于提取出的对象及其元数据；视觉视图只是额外的 UI 视图，不替代对象级结果，也不做 OCR。
+- **对象仍是事实来源**：对象变更列表、对象过滤与 JSON/CLI/action 中的对象计数都基于提取出的对象及其元数据；文档资源变更并列报告，不会替换或放大这些数字。视觉视图只是额外的 UI 视图，不替代对象级结果，也不做 OCR。
 
 ### 文档体检
 
@@ -346,6 +377,7 @@ Diff 的示例文件成对生成，可在对比对话框中分别选择 Old/New�
 |------|------|
 | `web-samples/diff-visual-old.pdf` → `web-samples/diff-visual-new.pdf` | 两页文档，第 1 页状态徽标颜色/文字、色块颜色与位置、正文数字小幅变化；第 2 页完全相同，用于 `Visual` 的 Blend/Heatmap 与像素统计。 |
 | `web-samples/diff-reordered-old.pdf` → `web-samples/diff-reordered.pdf` | 五页文档，修订 B 删除首页草稿、追加发布说明并移动页眉分隔线，产生 4 个重排配对、1 个删除页与 1 个新增页，用于页面对齐与 `--fail-on reordered`。 |
+| `web-samples/diff-resources-old.pdf` → `web-samples/diff-resources-new.pdf` | 两页完全相同，只有注释、链接目标、表单值、元数据与页面标签不同：0 个对象变更、3 个资源变更、3 条 `documentChanges`；可用 `python scripts/generate-diff-resource-samples.py` 重新生成。 |
 
 > **安全提示**：Web 服务没有身份认证，任何能访问该端口的人都可以上传/下载文档、调用解析接口。默认绑定 `0.0.0.0`，请仅在可信网络使用；本机使用时建议 `HOST=127.0.0.1 npm run web`。
 
@@ -359,7 +391,7 @@ Diff 的示例文件成对生成，可在对比对话框中分别选择 Old/New�
 6. **查看页面几何**：在 Inspector → `Page` 标签页查看页面尺寸、旋转角与五个页面框，切换 pt/mm，并按需开关各框叠加与画布标尺。
 7. **控制叠加层**：在左侧 `Layers` 标签页开关七类对象、查看当前页计数、使用 Solo 或调整透明度；`F` 可进入专注模式，隐藏左右面板。
 8. **搜索与导出**：`Ctrl/Cmd+F` 打开搜索，输入查询后可用 `Aa` / `W` / `.*` 切换大小写、整词与正则，在结果面板中按页查看 `p.N` 与上下文并点击跳转；`Ctrl/Cmd+K` 打开命令面板执行打开、跳页、主题、语言、面板、Diff/Audit/Raw 等命令。`Export` 导出当前页/整档 JSON/CSV；工具栏的 `视图…`（命令面板中的 `Export view…`）把当前页或选中区域导出为 PNG/SVG；`报告…`（命令面板中的 `Share report…`）生成自包含 HTML 检查报告。
-9. **比较版本**：点击工具栏 `Diff` 选择 Old/New 两份 PDF，按需设置位置容差与忽略项后 Compare；在左侧变更列表选择条目查看详情，或在 Side by side / Overlay / Visual 间切换（Visual 可切 Blend/Heatmap/Boxes 并查看像素统计），`Ignore region` 可拖框屏蔽区域后再 `Apply & re-run`；`Export JSON` 保存结果。
+9. **比较版本**：点击工具栏 `Diff` 选择 Old/New 两份 PDF，按需设置位置容差、忽略项与 `Content` 资源开关后 Compare；在左侧变更列表（含 `Document changes` 行）选择条目查看详情，或在 Side by side / Overlay / Visual 间切换（Visual 可切 Blend/Heatmap/Boxes 并查看像素统计），`Ignore region` 可拖框屏蔽区域后再 `Apply & re-run`；`Export JSON` 保存结果。
 10. **文档体检**：点击工具栏 `Audit` 对当前文档执行整档审计，查看严重级别汇总，按严重级别/类别筛选，选中发现查看证据与建议；需要时点击 `Open page` 跳转到对应页面，或用 `Export JSON` 保存完整报告。切换到 `Resources` 可查看附件、JavaScript、动作、签名、加密与权限；`Refresh` 重新读取，`Export security JSON` 保存完整 `SecurityReport`，`View in Findings` 切回并自动套用 `security` 类别筛选。
 11. **查看无障碍与结构树**：在 Audit 中切换到 `Structure` 读取标记结构树与文档事实。使用 `Expand all` / `Collapse all`、`Issues only`，或按角色/Alt 文本搜索；选中节点查看角色、Alt/ActualText、页码与 MCID 详情，再用 `Open page` 跳转到该页，或 `View in Findings` 查看 `structure` 类别的问题。`Refresh` 重新解析，`Export accessibility JSON` 保存完整报告。
 12. **检查注释、链接与表单**：切换到左侧 `Annots`，默认 `Current page` 查看当前页；切到 `Whole document` 建立整档索引（显示 `Indexing annotations N/M…`），用搜索与全局 Kind/Subtype 过滤定位条目，点击行跳页并尽力选中。`Issues` 区汇总断链与表单问题，`External links` 列出可打开的 `http(s)` 目标；`Export` 可把整档索引导出为 JSON/CSV。外部链接需点击 `Open link` 才会打开，内部链接使用 `Go to page N` 跳转；表单字段不能编辑或提交。
@@ -384,6 +416,13 @@ python sidecar/cli.py diff old.pdf new.pdf --fail-on reordered
 
 # 用 JSON 区域屏蔽相交的变更（与界面绘制的区域相同）
 python sidecar/cli.py diff old.pdf new.pdf --ignore-regions regions.json --format json --output diff.json
+
+# 只比较元数据与页面标签，或只比较注释/链接/表单
+python sidecar/cli.py diff old.pdf new.pdf --ignore-annotations --ignore-links --ignore-forms
+python sidecar/cli.py diff old.pdf new.pdf --ignore-metadata --ignore-page-labels
+
+# 资源样例：0 个对象变更、3 个资源变更、3 条 documentChanges
+python sidecar/cli.py diff web-samples/diff-resources-old.pdf web-samples/diff-resources-new.pdf
 ```
 
 常用选项：
@@ -397,12 +436,14 @@ python sidecar/cli.py diff old.pdf new.pdf --ignore-regions regions.json --forma
 | `--text-tolerance` | 文本比较模式：`exact` / `normalized`（默认）/ `case-insensitive` |
 | `--ignore-types TYPES` | 跳过指定对象类型，逗号分隔、可重复 |
 | `--ignore-fonts` / `--ignore-colors` / `--ignore-images` | 忽略字体/颜色/图片差异 |
+| `--ignore-annotations` / `--ignore-links` / `--ignore-forms` | 跳过注释、链接或表单控件差异 |
+| `--ignore-metadata` / `--ignore-page-labels` | 跳过元数据或 `/PageLabels` 差异 |
 | `--ignore-regions PATH` | JSON 数组，按页与 MediaBox 坐标屏蔽相交的变更（与 UI 的 `DiffIgnoreRegion` 相同） |
 | `--quiet` | 不打印人类摘要，只保留 JSON/HTML 输出 |
 
-退出码：`0` 表示无差异，或差异均被 `--fail-on`/忽略选项排除；`1` 表示 `--fail-on` 条件命中；`2` 表示参数、输入、解析或输出错误。`--fail-on none` 永不返回 1，但输入错误仍返回 2。`added` / `removed` 同时覆盖对象与页面，`modified` 覆盖 modified、moved 以及页面尺寸/旋转变化，`page-count` 覆盖页面增删、页数与页面几何变化，`reordered` 覆盖配对页换了页码（`pagesReordered > 0`）。
+退出码：`0` 表示无差异，或差异均被 `--fail-on`/忽略选项排除；`1` 表示 `--fail-on` 条件命中；`2` 表示参数、输入、解析或输出错误。`--fail-on none` 永不返回 1，但输入错误仍返回 2。`added` / `removed` 同时覆盖对象、资源与页面，`modified` 覆盖 modified、moved 的对象与资源、任意元数据/页面标签变化以及页面尺寸/旋转变化，`page-count` 覆盖页面增删、页数与页面几何变化，`reordered` 覆盖配对页换了页码（`pagesReordered > 0`）。`page-count` 与 `reordered` 不考虑资源变化。
 
-`--format json` 输出独立的 `DiffResult`（`schemaVersion: 1`），与检查器的对象导出 JSON 不是同一 schema；它包含 `tool` / `options` / `old` / `new` / `summary` / `pages`，每个变更带 kind、type、旧/新页码与 BBox、文本与 `details`。输出不含时间戳与绝对路径、顺序稳定，相同输入与选项产生逐字节一致的 JSON，便于提交、diff 或缓存。
+`--format json` 输出独立的 `DiffResult`（`schemaVersion: 1`），与检查器的对象导出 JSON 不是同一 schema；它包含 `tool` / `options` / `old` / `new` / `summary` / `pages`，元数据或页面标签变化时还包含 `documentChanges`；每个页级变更带 kind、type（对象或资源）、旧/新页码与 BBox、文本与 `details`。输出不含时间戳与绝对路径、顺序稳定，相同输入与选项产生逐字节一致的 JSON，便于提交、diff 或缓存。
 
 ### 审计 CLI
 
@@ -488,7 +529,7 @@ node bin/pdf-inspector.mjs security report.pdf --format json --output report.sec
     ignore-regions: ignore-regions.json
 ```
 
-action 默认 `fail-on: any`，支持 `summary` / `json` / `html`；`json-path` / `report-path` 指定 JSON/HTML payload 的文件路径（`format` 选中对应格式且未指定路径时写入 runner 临时目录），payload 不写入步骤日志。`fail-on` 可选 `any` / `added` / `removed` / `modified` / `page-count` / `reordered` / `none`；`ignore-regions` 接收与 CLI 相同的区域 JSON 路径并透传。完整输入、输出、artifact 约定见 [docs/ci.md](docs/ci.md)，Diff 2.0 的页面对齐、视觉视图与区域语义见 [docs/diff.md](docs/diff.md)。
+action 默认 `fail-on: any`，支持 `summary` / `json` / `html`；`json-path` / `report-path` 指定 JSON/HTML payload 的文件路径（`format` 选中对应格式且未指定路径时写入 runner 临时目录），payload 不写入步骤日志。`fail-on` 可选 `any` / `added` / `removed` / `modified` / `page-count` / `reordered` / `none`；`ignore-regions` 接收与 CLI 相同的区域 JSON 路径并透传。五类资源开关同样是输入：`ignore-annotations`、`ignore-links`、`ignore-forms`、`ignore-metadata`、`ignore-page-labels`。完整输入、输出、artifact 约定见 [docs/ci.md](docs/ci.md)，Diff 的页面对齐、视觉视图、区域语义与文档资源比较见 [docs/diff.md](docs/diff.md)。
 
 HTML 报告是单文件、内联 CSS、无脚本、无外部资源：
 
@@ -607,7 +648,7 @@ pdf-inspector/
 │   ├── search.md          # 搜索 2.0：选项、结果面板、命令面板、快捷键与验证
 │   ├── export.md          # 对象 JSON/CSV、PNG/SVG 视图导出与自包含 HTML 报告
 │   ├── themes-i18n.md     # 主题注册表、Light/System、i18n 目录与持久化
-│   ├── diff.md            # Diff 2.0：页面对齐、视觉模式、忽略区域与阈值
+│   ├── diff.md            # Diff：页面对齐、视觉模式、忽略区域与文档资源
 │   ├── ci.md              # Diff CLI 与 GitHub Action
 │   ├── packaging.md       # 打包说明
 │   ├── images/            # README 截图
@@ -667,10 +708,10 @@ npm run dist:linux       # Linux
 - 旋转页面（`/Rotate` 为 90/180/270）仍显示页面框与标尺，但对象叠加层不可用：对象坐标按未旋转页面映射，无法可靠对齐；Diff 的并排/叠加对象框同样隐藏，旋转页也不能绘制忽略区域（`Visual` 视图仍会渲染页面，但对象框与区域遮罩可能偏移）。
 - 当 CropBox 小于 MediaBox 时，页面框与标尺以 MediaBox 作为页面框架，而 PDF.js 按 CropBox 渲染，因此页面与内容边距的视觉表现可能不同；Diff 的叠加框也以 MediaBox 为基准，可能同样偏移。
 - Diff 的对象配对是启发式的：重复出现的相同对象（重复文字、相同几何的线条/矩形）只能按距离或阅读顺序贪心匹配；对象同时移动且内容改变、超出位置容差时，可能被报告为 `removed` + `added` 而不是 `modified` / `moved`。可调整 `--position-tolerance`、文本容差或忽略相应类型来减少噪声。
-- Diff 只比较提取出的对象及其元数据，不做渲染后的像素级 diff 或 OCR；扫描页面上的文字不会被识别为文本对象。`Visual` 视图的像素对比只在浏览器 UI 中运行，CLI、JSON、HTML 与 action 仍然是对象级、无渲染依赖。
+- Diff 比较提取出的对象、它们的元数据以及文档资源（注释、链接、表单、元数据、页面标签），不做渲染后的像素级 diff 或 OCR，扫描页面上的文字不会被识别为文本对象。`Visual` 视图的像素对比只在浏览器 UI 中运行；CLI、JSON、HTML 与 action 仍是无渲染依赖的，并同时报告对象与资源。
 - 视觉对比固定使用通道差 > 24 的阈值，并把位图按上限缩放后比较（数值是采样统计，不是逐设备像素的精确值）；阈值与位图上限不暴露为设置项，CLI 也不提供 headless 视觉 diff。
 - 忽略区域是只读的页面坐标矩形：以 MediaBox 的 PDF pt 记录，按“变更 BBox 与区域相交”过滤，因此一个覆盖整块区域的矩形可能同时屏蔽该区域内多个对象（包括表格整体）；区域只对当前这次比较生效，切换文件或重置后清空，不能跨运行共享。
-- `match` 与 `pagesReordered` 是 `DiffResult` 的新增字段，`schemaVersion` 仍为 `1`；旧消费者可以忽略这些字段，但读取方不应假定字段集合完全固定。
+- `match`、`pagesReordered`、`documentChanges` 与 `resources*` 摘要计数是 `DiffResult` 的新增字段，`schemaVersion` 仍为 `1`；旧消费者可以忽略这些字段，但读取方不应假定字段集合完全固定。
 - 页面对齐基于内容指纹 + `SequenceMatcher`：移动页可能被报告为“删除 + 新增”，只有被配对的页才会标记 `reordered`；重复页按顺序配对，不能识别真正的“交换”语义。
 - Diff CLI 需要 Python 3.10+ 与 sidecar 依赖，且只接受本地路径；`--fail-on` 只决定差异是否返回 1，参数/输入/解析错误始终返回 2，`none` 不会抑制错误。打包后的桌面应用不包含 CLI。
 - 文档体检的检查是启发式的：基于提取出的对象、字体信息、页面框与 catalog 元数据，可能出现误报或漏报；`--fail-on` 与 action 阈值应结合项目实际情况设置。
@@ -682,7 +723,7 @@ npm run dist:linux       # Linux
 - 注释、链接与表单的整档索引按 10 页一批顺序读取，超大文档需要较长时间；单页读取失败会中止整次索引并显示该页错误，`Retry` 从头重建，没有断点续建或部分结果。索引期间翻页与当前页检查仍可用。
 - 文档模式不承诺为未激活页绘制注释框：`Show boxes` 只在 `Current page` 生效，点击列表行跳页后由当前页正常加载并尽力选中（无 id 或 id 不一致时只跳页）。
 - 注释、链接与表单只读：不能新建、编辑或删除注释，不能填写、重置或提交表单，也不导入 XFA 数据；签名字段只显示为字段，不做数字签名验证。
-- 注释、链接与表单只在 `Annots → Whole document` 中导出，不写入对象导出的 JSON/CSV，也不参与 Diff、Audit 或 CLI；Pipeline 中如需这些信息需要另行读取 PDF。
+- 注释、链接与表单只在 `Annots → Whole document` 中单独导出，不写入对象导出的 JSON/CSV；Diff 会把它们连同元数据与页面标签作为资源变更报告，Audit 另有自己的 `security` 资源清单，但完整的按页注释索引仍只能从注释导出获得。
 - 视图导出是单页/单区域的只读快照：不支持整档图片导出、PDF 编辑或矢量重排。SVG 以 PNG 栅格底图加矢量叠加框组成，底图中的 PDF 文字与图形仍是位图。旋转页会省略对象/注释框（页面框仍可用）并返回警告；空区域回退整页。
 - HTML 分享报告只覆盖当前页；审计发现与注释索引只有在属于当前打开文档时才写入。UI 切到中文时，报告正文仍为英文。报告上限 20 MB，截图最长边目标 2400 px。
 - UI 语言只覆盖渲染层文案。默认主题与语言是用户偏好，刷新后保留；它们不改变 JSON/CSV schema 字段、PDF 对象标识、sidecar/CLI 错误或生成报告的正文。
