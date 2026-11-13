@@ -20,7 +20,9 @@ from audit import (  # noqa: E402
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-BASIC_PDF = REPO_ROOT / "web-samples" / "basic.pdf"
+# A committed sample, so the engine integration test also runs in CI before
+# `scripts/generate-web-samples.py` creates the ignored web samples.
+BASIC_PDF = REPO_ROOT / "web-samples" / "accessibility-broken.pdf"
 
 HEX32 = re.compile(r"[0-9a-f]{32}")
 
