@@ -94,6 +94,21 @@ jobs:
       - name: Generate sample PDFs
         run: python scripts/generate-web-samples.py
 
+      - name: Generate diff resource samples
+        run: python scripts/generate-diff-resource-samples.py
+
+      - name: Assert diff resource samples match the committed fixtures
+        # The pair must be tracked (git ls-files fails otherwise) and the
+        # generator must reproduce it byte for byte.
+        run: |
+          set -euo pipefail
+          git ls-files --error-unmatch \
+            web-samples/diff-resources-old.pdf \
+            web-samples/diff-resources-new.pdf
+          git diff --exit-code -- \
+            web-samples/diff-resources-old.pdf \
+            web-samples/diff-resources-new.pdf
+
       - name: Diff identical PDFs (expect exit 0 and JSON output)
         run: |
           set -euo pipefail
@@ -159,6 +174,126 @@ jobs:
           assert data['old']['pages'] == 4, data['old']['pages']
           assert data['new']['pages'] == 120, data['new']['pages']
           print('changed diff OK:', summary)
+          PY
+
+      - name: Diff resource PDFs (expect exit 1)
+        run: |
+          set -euo pipefail
+
+          set +e
+          python sidecar/cli.py diff \
+            web-samples/diff-resources-old.pdf \
+            web-samples/diff-resources-new.pdf \
+            --format json \
+            --output diff-artifacts/resources.json \
+            --fail-on any
+          code=$?
+          set -e
+
+          echo "pdf-inspector exited with $code"
+          if [ "$code" -ne 1 ]; then
+            echo "::error::expected exit 1 for resource PDFs with --fail-on any, got $code"
+            exit 1
+          fi
+
+      - name: Assert resource and document changes in the JSON
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path('diff-artifacts/resources.json').read_text(encoding='utf-8'))
+          assert data['schemaVersion'] == 1, data['schemaVersion']
+
+          summary = data['summary']
+          # Page objects and page geometry are identical: only resources differ.
+          for key in ('objectsAdded', 'objectsRemoved', 'objectsMoved', 'objectsModified'):
+              assert summary[key] == 0, (key, summary)
+          assert summary['resourcesAdded'] == 0, summary
+          assert summary['resourcesRemoved'] == 0, summary
+          assert summary['resourcesModified'] == 3, summary
+          assert summary['documentChanges'] == 3, summary
+          assert summary['pagesAdded'] == 0 and summary['pagesRemoved'] == 0, summary
+          assert summary['pagesChanged'] == 1, summary
+
+          page_changes = [
+              change for page in data['pages'] for change in page.get('changes', ())
+          ]
+          by_type = {change['type']: change for change in page_changes}
+          assert set(by_type) == {'annotation', 'link', 'form'}, by_type
+
+          annotation = by_type['annotation']
+          assert annotation['kind'] == 'modified', annotation
+          assert annotation['textOld'] != annotation['textNew'], annotation
+          assert annotation['details']['color']['old'] != annotation['details']['color']['new']
+
+          link = by_type['link']
+          assert link['kind'] == 'modified', link
+          assert link['textOld'] == 'https://example.com/docs/v1', link
+          assert link['textNew'] == 'https://example.com/docs/v2', link
+
+          form = by_type['form']
+          assert form['kind'] == 'modified', form
+          assert form['textOld'] == 'Alice' and form['textNew'] == 'Bob', form
+          assert form['details']['value'] == {'old': 'Alice', 'new': 'Bob'}, form
+
+          documents = data.get('documentChanges') or []
+          metadata = {
+              change['field']: change
+              for change in documents
+              if change['type'] == 'metadata'
+          }
+          assert set(metadata) == {'title', 'author'}, metadata
+          assert metadata['title']['newValue'] == 'Diff Resources Sample - Revision B'
+          assert metadata['author']['oldValue'] == 'Alice Example'
+
+          label = [change for change in documents if change['type'] == 'page-label']
+          assert len(label) == 1, documents
+          label = label[0]
+          assert label['page'] == 1, label
+          assert (label['oldValue'], label['newValue']) == ('i', 'ii'), label
+          assert label['details']['start'] == {'old': 1, 'new': 2}, label
+
+          assert [page['status'] for page in data['pages']] == ['changed', 'unchanged']
+          print('resource diff OK:', summary)
+          PY
+
+      - name: Diff resource PDFs with every resource ignored (expect exit 0)
+        run: |
+          set -euo pipefail
+
+          set +e
+          python sidecar/cli.py diff \
+            web-samples/diff-resources-old.pdf \
+            web-samples/diff-resources-new.pdf \
+            --format json \
+            --output diff-artifacts/resources-ignored.json \
+            --fail-on any \
+            --ignore-annotations \
+            --ignore-links \
+            --ignore-forms \
+            --ignore-metadata \
+            --ignore-page-labels
+          code=$?
+          set -e
+
+          echo "pdf-inspector exited with $code"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::expected exit 0 when every resource kind is ignored, got $code"
+            exit 1
+          fi
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(
+              Path('diff-artifacts/resources-ignored.json').read_text(encoding='utf-8')
+          )
+          assert not any(data['summary'].values()), data['summary']
+          assert 'documentChanges' not in data, data.get('documentChanges')
+          assert all(not page['changes'] for page in data['pages']), data['pages']
+          print('ignored resource diff OK:', data['summary'])
           PY
 
       # The reordered pair is part of the G5 follow-up sample work (see
@@ -259,6 +394,9 @@ jobs:
       - name: Generate sample PDFs
         run: python scripts/generate-web-samples.py
 
+      - name: Generate diff resource samples
+        run: python scripts/generate-diff-resource-samples.py
+
       - name: Diff identical PDFs through the action (expect success)
         id: identical
         uses: ./
@@ -326,6 +464,57 @@ jobs:
           test "$EXIT_CODE" = "0"
           test -f "$REPORT_PATH"
           grep -q '<!DOCTYPE html>' "$REPORT_PATH"
+
+      - name: Diff resource PDFs through the action (expected failure)
+        id: resources
+        continue-on-error: true
+        uses: ./
+        with:
+          old: web-samples/diff-resources-old.pdf
+          new: web-samples/diff-resources-new.pdf
+          fail-on: any
+          format: json
+          json-path: diff-artifacts/action-resources.json
+
+      - name: Assert the resource action failed and reported resources
+        env:
+          OUTCOME: ${{ steps.resources.outcome }}
+          EXIT_CODE: ${{ steps.resources.outputs.exit-code }}
+          JSON_PATH: ${{ steps.resources.outputs.json-path }}
+        run: |
+          set -euo pipefail
+          echo "outcome=$OUTCOME exit-code=$EXIT_CODE json-path=$JSON_PATH"
+          test "$OUTCOME" = "failure"
+          test "$EXIT_CODE" = "1"
+          test -f "$JSON_PATH"
+
+          python - "$JSON_PATH" <<'PY'
+          import json
+          import sys
+
+          data = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert data['schemaVersion'] == 1, data['schemaVersion']
+          summary = data['summary']
+          for key in ('objectsAdded', 'objectsRemoved', 'objectsMoved', 'objectsModified'):
+              assert summary[key] == 0, (key, summary)
+          assert summary['resourcesAdded'] == 0, summary
+          assert summary['resourcesRemoved'] == 0, summary
+          assert summary['resourcesModified'] == 3, summary
+          assert summary['documentChanges'] == 3, summary
+          assert summary['pagesChanged'] == 1, summary
+
+          page_types = {
+              change['type']
+              for page in data['pages']
+              for change in page.get('changes', ())
+          }
+          assert page_types == {'annotation', 'link', 'form'}, page_types
+          document_types = {
+              change['type'] for change in data.get('documentChanges') or ()
+          }
+          assert document_types == {'metadata', 'page-label'}, document_types
+          print('action resource diff OK:', summary)
+          PY
 
   audit-cli:
     name: PDF audit CLI

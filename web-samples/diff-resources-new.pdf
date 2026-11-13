@@ -1,0 +1,75 @@
+%PDF-1.7
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /AcroForm 10 0 R /PageLabels 9 0 R /Lang (en-US) >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 8 0 R >> >> /Contents 4 0 R /Annots [11 0 R 12 0 R 13 0 R] >>
+endobj
+4 0 obj
+<< /Length 613  >>
+stream
+BT /F1 22 Tf 56 728 Td (PDF Inspector - diff resources sample) Tj ET
+BT /F1 12 Tf 56 700 Td (This page, its geometry and its content stream are identical in both revisions.) Tj ET
+BT /F1 12 Tf 56 682 Td (Only the document resources differ: annotation, link, form, metadata and page label.) Tj ET
+BT /F1 11 Tf 56 640 Td (Form field: customer_name) Tj ET
+q 0.94 g 56 610 300 24 re f Q
+BT /F1 11 Tf 56 588 Td (Sticky note: annotation on this page) Tj ET
+BT /F1 11 Tf 56 560 Td (External link: documentation) Tj ET
+BT /F1 11 Tf 56 536 Td (Metadata title/author and the page label also change between revisions.) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 8 0 R >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 150  >>
+stream
+BT /F1 20 Tf 56 728 Td (Second page - unchanged) Tj ET
+BT /F1 12 Tf 56 700 Td (This page has no annotations and is unchanged in both revisions.) Tj ET
+endstream
+endobj
+7 0 obj
+<< /Title (Diff Resources Sample - Revision B) /Author (Bob Example) /Subject (Deterministic diff resource sample) /Creator (scripts/generate-diff-resource-samples.py) /Producer (PDF Inspector raw PDF writer) /CreationDate (D:20240101000000Z) /ModDate (D:20240101000000Z) >>
+endobj
+8 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+9 0 obj
+<< /Nums [0 << /S /r /St 2 >> 1 << /S /D /St 1 >>] >>
+endobj
+10 0 obj
+<< /Fields [13 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 8 0 R >> >> >>
+endobj
+11 0 obj
+<< /Type /Annot /Subtype /Text /Rect [72 580 94 602] /NM (note-review) /T (Reviewer) /Contents (Reviewed in revision B. The page objects are identical.) /C [0.85 0.92 1] /CA 1 /F 4 /M (D:20240101000000Z) >>
+endobj
+12 0 obj
+<< /Type /Annot /Subtype /Link /Rect [144 552 300 574] /Border [0 0 0] /NM (link-docs) /H /I /A << /S /URI /URI (https://example.com/docs/v2) >> >>
+endobj
+13 0 obj
+<< /Type /Annot /Subtype /Widget /Rect [56 610 356 634] /P 3 0 R /F 4 /FT /Tx /T (customer_name) /V (Bob) /DV (Alice) /Ff 0 /DA (/Helv 12 Tf 0 0 0 rg) >>
+endobj
+xref
+0 14
+0000000000 65535 f 
+0000000009 00000 n 
+0000000107 00000 n 
+0000000170 00000 n 
+0000000327 00000 n 
+0000000992 00000 n 
+0000001118 00000 n 
+0000001320 00000 n 
+0000001610 00000 n 
+0000001707 00000 n 
+0000001776 00000 n 
+0000001870 00000 n 
+0000002093 00000 n 
+0000002257 00000 n 
+trailer
+<< /Size 14 /Root 1 0 R /Info 7 0 R >>
+startxref
+2427
+%%EOF

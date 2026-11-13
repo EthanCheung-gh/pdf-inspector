@@ -10,6 +10,9 @@ web-samples/*
 # The accessibility samples are generated deterministically and committed.
 !web-samples/accessibility-valid.pdf
 !web-samples/accessibility-broken.pdf
+# The diff-resource pair is generated deterministically and committed.
+!web-samples/diff-resources-old.pdf
+!web-samples/diff-resources-new.pdf
 sidecar/build/
 .venv/
 .superpowers/
