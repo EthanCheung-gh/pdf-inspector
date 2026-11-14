@@ -7,8 +7,8 @@
 同一套审计引擎（`sidecar/audit.py`）被三个入口复用：
 
 - **Web / 桌面界面**：工具栏 `Audit` 打开独立的审计工作区，可筛选、查看证据与建议、跳转到对应页面、加载基线只显示新增，并导出 JSON。
-- **CLI**：`python sidecar/cli.py audit FILE.pdf`，适合本地检查与脚本；支持基线、豁免与 SARIF。
-- **Composite action**：[`audit/action.yml`](../audit/action.yml)，在 GitHub Actions 中安装依赖、运行审计、写步骤摘要并按 `fail-on` 决定步骤成败。
+- **CLI**：`python sidecar/cli.py audit FILE.pdf`，适合本地检查与脚本；支持基线、豁免与 SARIF。`python sidecar/cli.py audit-dir ROOT` 审计整棵目录并输出批量汇总，见[目录批量审计](#目录批量审计)。
+- **Composite action**：[`audit/action.yml`](../audit/action.yml)，在 GitHub Actions 中安装依赖、运行审计、写步骤摘要并按 `fail-on` 决定步骤成败。`path` 可以是单个 PDF，也可以是一棵目录。
 
 审计引擎只接收本地文件路径，不发起网络请求；CLI 与 action 会拒绝 `http(s)` URL。Web 端先用既有的“Open URL”流程把远程文档下载到临时目录，再对本地副本做审计。
 
@@ -441,9 +441,220 @@ node bin/pdf-inspector.mjs audit report.pdf --format json --output report.audit.
 
 CLI 只接受本地路径；输入会先校验 `%PDF-` 文件头。打包后的桌面应用不包含 CLI。
 
+## 目录批量审计
+
+`audit-dir` 用一条命令审计一棵本地目录下的所有 PDF，并把每份 `AuditReport` 聚合成一份确定性的批量报告。它是**独立子命令**：`audit` 的 flag、输出、退出码与默认值完全不变，单文件与目录语义不会被同一个命令猜测。CI 里不必为每个 PDF 各配一个 action。
+
+```bash
+# 人类摘要 + 进度（进度写 stderr）
+python sidecar/cli.py audit-dir docs
+
+# JSON + HTML artifact + 供步骤摘要读取的计数文件；坏 PDF 不阻断其余文件
+python sidecar/cli.py audit-dir docs \
+  --format json --output artifacts/pdf-audit-batch.json \
+  --stats artifacts/pdf-audit-batch-stats.json \
+  --fail-on error
+
+# 只审计 reports/ 下的文件，跳过草稿、最多 200 个文件；HTML 报告是单文件 artifact
+python sidecar/cli.py audit-dir docs \
+  --include 'reports/*' --exclude '*draft*' --max-files 200 \
+  --format html --output artifacts/pdf-audit-batch.html --quiet
+
+# Node 包装器同样转发子命令、参数与退出码
+node bin/pdf-inspector.mjs audit-dir docs --fail-on warning
+```
+
+### 发现规则
+
+| 规则 | 行为 |
+|---|---|
+| 遍历 | 从 `ROOT` 递归；**不跟随符号链接**（符号链接目录不进入，符号链接文件不收）。 |
+| 后缀 | 只收 `.pdf`，**大小写不敏感**（`.PDF` / `.Pdf` 都算）。 |
+| 跳过 | 隐藏条目（以 `.` 开头的文件与目录），以及 `node_modules`、`.git`、`.hg`、`.svn`、`__pycache__` 目录。 |
+| 过滤 | `--include` / `--exclude` 是相对 root 的 POSIX 路径（如 `reports/a.pdf`）上的 `fnmatch` glob；多个 `--include` 任一命中即可，`--exclude` 优先。`fnmatch` 的 `*` 也匹配 `/`，所以 `--include '*.pdf'` 等价于不限层级，`--include 'reports/*'` 覆盖 `reports/` 下的所有层级。glob **大小写敏感**（`fnmatch.fnmatchcase`），因此 `--include '*.pdf'` 不会匹配 `REPORT.PDF`；要覆盖混合大小写的后缀请用 `--include '*.PDF'` 或 `--include '*.[Pp][Dd][Ff]'`。发现阶段的 `.pdf` 后缀判断本身仍是大小写不敏感的。 |
+| 顺序 | 按相对 POSIX 路径排序（先 `casefold`，再按原文做稳定次序），与文件系统的目录列举顺序无关。 |
+| 上限 | `--max-files` 默认 500，允许 1–5000；发现数量超过上限直接退出 2，**不会**悄悄只审计一个子集。 |
+| 根 | `ROOT` 必须是本地目录；URL、已存在的文件、不存在或不可读的路径都退出 2（一行 `pdf-inspector: error: ...`）。 |
+
+### 选项
+
+```text
+audit-dir ROOT [--include GLOB]... [--exclude GLOB]...
+  [--max-files N] [--format summary|json|html] [--output PATH]
+  [--stats PATH] [--fail-on error|warning|none] [--quiet]
+```
+
+| 选项 | 说明 |
+|---|---|
+| `ROOT` | 要递归审计的本地目录。 |
+| `--include GLOB` | 可重复；只审计相对路径匹配任一 GLOB 的 PDF。 |
+| `--exclude GLOB` | 可重复；跳过匹配 GLOB 的 PDF，优先于 `--include`。 |
+| `--max-files N` | 发现上限，默认 500，允许 1–5000；超出退出 2。 |
+| `--format` | `summary`（默认）/ `json` / `html`；目录模式**没有** `sarif`。 |
+| `--output PATH` | 把格式化结果写入文件；给了 `--output` 时 stdout 仍打印人类摘要（与单文件 `audit` 一致）。省略 `--output` 且选择 `json` / `html` 时 payload 写到 stdout。不能覆盖 root 目录本身，也不能覆盖 root 下的任何 `.pdf`。 |
+| `--stats PATH` | 额外写一份小 JSON 计数产物（只有 `schemaVersion` / `tool` / `root` / `summary`，没有逐文件条目），供 CI 步骤摘要读取。任何 `--format` 都会写，`--quiet` 也不抑制；不能覆盖 root、root 下的 PDF 或 `--output` 指向的文件。 |
+| `--fail-on` | `error` / `warning` / `none`（默认 `none`）。`warning` 同时覆盖 warnings 与 errors；**失败文件计入 errors**，所以两种模式都会拦截读不了的文件。 |
+| `--quiet` | 关闭 stderr 进度行与 stdout 人类摘要；JSON/HTML payload 与 `--stats` 不受影响，错误诊断仍写 stderr。 |
+
+进度写在 **stderr**，格式为 `audit-dir: [2/5] reports/b.pdf`（正在审计第 2 个文件），因此 `--format json` 的 stdout 可以安全地管道给其他工具。
+
+### 摘要输出
+
+```text
+pdf-inspector 0.3.3 - PDF audit directory
+root: docs
+files: 3 (2 audited, 1 failed)
+findings: 1 error, 5 warnings, 0 info (6 total)
+  ok    a.pdf: 0 errors, 0 warnings
+  ok    reports/b.PDF: 0 errors, 5 warnings
+  error reports/broken.pdf: Cannot open PDF 'reports/broken.pdf': No /Root object! - Is this really a PDF?
+```
+
+- `files: N (A audited, F failed)` 给出发现数、成功审计数与失败文件数。
+- `findings` 行的 `(N total)` 是同一行三个计数之和，因此**包含**失败文件贡献的 error；JSON 的 `summary.findings` 只统计 finding。
+- 最多列 50 个文件，其余打印 `... N more file(s)`；目录里没有 PDF 时打印 `no PDF files found` 并退出 0。
+- 每份文件的错误信息压成一行并截断到 160 字符，损坏 PDF 不会刷满终端或换行。
+
+### JSON（`BatchReport`）
+
+```json
+{
+  "schemaVersion": 1,
+  "tool": { "name": "pdf-inspector", "version": "0.3.3" },
+  "root": { "name": "docs", "files": 3, "bytes": 123456 },
+  "summary": {
+    "files": 3,
+    "audited": 2,
+    "failed": 1,
+    "findings": 5,
+    "errors": 1,
+    "warnings": 5,
+    "info": 0
+  },
+  "files": [
+    {
+      "path": "reports/a.pdf",
+      "status": "ok",
+      "bytes": 45678,
+      "document": {
+        "pages": 4,
+        "version": "1.7",
+        "encrypted": false,
+        "title": null,
+        "author": null,
+        "producer": null,
+        "language": "en-US",
+        "tagged": true
+      },
+      "summary": { "total": 0, "errors": 0, "warnings": 0, "info": 0 },
+      "findings": []
+    },
+    {
+      "path": "reports/broken.pdf",
+      "status": "error",
+      "bytes": 789,
+      "error": "Cannot open PDF 'reports/broken.pdf': ..."
+    }
+  ]
+}
+```
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `schemaVersion` | `1` | 批量报告版本，固定为 `1`。 |
+| `tool` | `{name, version}` | 与单文件报告相同的工具标识。 |
+| `root` | `{name, files, bytes}` | 只保存目录**名**（不保存路径）、发现文件数与这些文件的字节总和。 |
+| `summary` | object | `files` 为发现数，`audited` 为成功审计数，`failed` 为 `status: "error"` 数，`findings` 为全部 finding 总数，`errors` = finding 的 error 数 **+ 失败文件数**，`warnings` / `info` 为 finding 计数。 |
+| `files[]` | array | 按发现顺序（相对路径排序）。 |
+| `files[].path` | string | 相对 root 的 POSIX 路径（`/` 分隔），永不含绝对路径。 |
+| `files[].status` | string | `ok` 或 `error`。 |
+| `files[].bytes` | int | 文件字节数；读取失败时为 `0`。 |
+| `files[].document` / `.summary` / `.findings` | object / object / array | 仅 `status: "ok"` 时出现，字段与单文件 `AuditReport` 相同；finding 保留完整字段（含 `fingerprint`），因此批量 JSON 可以拆回单文件报告而不必重跑。 |
+| `files[].error` | string | 仅 `status: "error"` 时出现：一行错误信息（绝对路径已改写为相对路径）。 |
+
+上面的示例是节选：`files[]` 里只列了无发现的 `reports/a.pdf` 与损坏的 `reports/broken.pdf`，被省略的第三个成功文件贡献了 5 条 warning；真实输出会列出每一个被发现的文件，finding 的形状与单文件 `AuditReport` 完全相同（含 `fingerprint`）。
+
+- 批量 JSON 不含时间戳、主机名或绝对路径，键顺序固定，相同目录与选项产生逐字节一致的文件，可以直接提交、diff 或缓存。
+- `--stats` 写出同一份数据的子集（`schemaVersion` / `tool` / `root` / `summary`），不含 `files` 数组与 finding；只要审计跑完就始终写入，与 `--format` 和 `--quiet` 无关（参数/root/发现/输出错误退出 2 时不会留下该文件），因此 CI 步骤摘要和 JSON/HTML artifact 永远不会描述不同的结果。
+
+### 退出码
+
+| 退出码 | 条件 |
+|---|---|
+| `0` | 没有命中阈值（包括空目录、`--fail-on none`）。 |
+| `1` | `--fail-on error` 且存在 finding error 或失败文件；`--fail-on warning` 且存在 warning / error 或失败文件。 |
+| `2` | 参数、root、发现或输出错误：URL / 不存在 / 非目录 / 不可读 root、`--max-files` 越界、发现数超过上限、目录遍历失败、payload 路径不可写、`--output` 与 `--stats` 同名或指向 root 下的 PDF。 |
+
+`--fail-on none` 不会因 finding 或失败文件返回 1，但参数、root 与输出错误仍是 2。
+
+### HTML
+
+`--format html` 渲染**一个**自包含 HTML 文件：内联 CSS、无脚本、无外部资源、无缩略图，标题为 `PDF audit report - N files`（单个文件时是 `PDF audit report - 1 file`）。
+
+- 顶部：root 名、文件数与字节数、`audited` / `failed`，以及 errors / warnings / info / total。
+- 文件表：path、status、pages、errors / warnings / info 与错误信息。
+- 每个成功文件一个 `<section>`：文档信息、严重级别计数与全部 finding（标题、页码、说明、证据、建议）；失败文件只有一个错误块。
+- 所有路径、元数据、证据与错误文本都经过 HTML 转义，报告不含绝对路径与时间戳，相同 payload 渲染出逐字节一致的 HTML。
+- 体积随文件数与 finding 数增长（默认上限 500 个文件），它是 artifact，不适合打进步骤日志。
+
+### 与单文件、基线、豁免和 SARIF 的边界
+
+- 目录模式**不支持**基线（`--baseline` / `--baseline-output`）、豁免（`--waivers`）与 SARIF（`--format sarif`）。这些 flag 没有注册到 `audit-dir`，传了就是 `unrecognized arguments` 退出 2；action 的目录模式也会在安装 Python 之前以退出 2 拒绝它们，不会静默忽略。
+- 需要在目录级别做增量门禁或策略豁免时，对单份文件运行 `audit`（基线与豁免按单文件 `fingerprint` 设计），或先用 `audit-dir --format json` 找出有问题的文件再逐个处理。
+- 单个文件失败是**数据**而不是整体崩溃：文件损坏、无法打开/不可读（包括需要密码而无法打开）时记为 `status: "error"` 并继续审计其余文件；失败文件计入 `summary.failed` 与 `summary.errors`，因此 `--fail-on error` 会拦截它。
+- 能打开但已加密的文件**不是**失败文件：它是 `status: "ok"`，并带一条 `security` 类别、`warning` 级别的 `Document is encrypted` 发现（见[检查项](#安全security)）。因此 `--fail-on error` 不会因它失败，`--fail-on warning` 会；只有根本打不开（例如需要密码）时才算失败文件。
+- 目录模式只读：不写 PDF、不执行内容、不联网。
+
+### Action 目录模式
+
+action 的 `path` 可以是单个 PDF，也可以是一棵目录；目录时执行 `audit-dir`，文件时仍执行 `audit`（单文件路径的输入、输出与失败语义与之前一致）。
+
+```yaml
+name: PDF audit (directory)
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**/*.pdf'
+
+permissions:
+  contents: read
+
+jobs:
+  pdf-audit-directory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Audit docs/
+        id: audit
+        continue-on-error: true
+        uses: <owner>/pdf-inspector/audit@v1
+        with:
+          path: docs                     # a directory: one aggregate result
+          fail-on: error                 # a file that cannot be read counts as one error
+          format: json
+          json-path: artifacts/pdf-audit-batch.json
+          report-path: artifacts/pdf-audit-batch.html
+
+      - name: Enforce the audit gate
+        if: steps.audit.outputs.exit-code != '0'
+        run: exit '${{ steps.audit.outputs.exit-code }}'
+```
+
+| 目录模式的约定 | 行为 |
+|---|---|
+| `format` | 只接受 `summary` / `json` / `html`；`sarif` 在“校验输入”阶段退出 2。 |
+| 被拒绝的输入 | `baseline-path`、`baseline-output-path`、`waivers-path`、`sarif-path`、`sarif-uri` 与 `format: sarif` 都会在**安装 Python 之前**退出 2，并给出说明。 |
+| 默认 artifact | `json-path` / `report-path` 留空且格式匹配时写入 runner 临时目录，规则与单文件模式相同；`sarif-path` 输出在目录模式下恒为空。 |
+| 步骤摘要 | 额外列出 `mode: directory` 与 `root`、`files`、`audited`、`failed`、`errors`、`warnings`、`info`；数据来自 CLI 的 `--stats` 产物，因此与 JSON/HTML 同源。 |
+| `exit-code` | 语义不变：`0` / `1` / `2`。 |
+
+更多 CI 示例、artifact 与失败文件语义见 [CI 文档](ci.md)。
+
 ## GitHub Action
 
-仓库提供 composite action（[`audit/action.yml`](../audit/action.yml)），会安装 Python 与 `sidecar/requirements.txt` 依赖，运行 `python sidecar/cli.py audit`，把结果写入步骤摘要，并按 `fail-on` 决定步骤成败。
+仓库提供 composite action（[`audit/action.yml`](../audit/action.yml)），会安装 Python 与 `sidecar/requirements.txt` 依赖，运行 `python sidecar/cli.py audit`（`path` 是目录时改用 `audit-dir`），把结果写入步骤摘要，并按 `fail-on` 决定步骤成败。
 
 ```yaml
 name: PDF audit
@@ -482,45 +693,49 @@ jobs:
 
 在仓库内部使用 `uses: ./audit`，见 `.github/workflows/ci.yml` 的 `audit-action` 任务。基线、豁免与 SARIF 上传的完整 workflow 见 [CI 文档](ci.md)。
 
+把 `path` 改成目录即可切换到目录批量模式（`audit-dir`），完整示例、限制与边界见[目录批量审计](#目录批量审计)与 [CI 文档](ci.md)。
+
 ### 输入
 
 | 输入 | 必填 | 默认值 | 说明 |
 |---|---|---|---|
-| `path` | 是 | — | PDF 路径，绝对路径或相对 workspace；只接受本地文件，拒绝 `http(s)` URL。 |
-| `fail-on` | 否 | `error` | `error` / `warning` / `none`；`warning` 同时覆盖 errors。设置 `baseline-path` 时只统计 `new` / `escalated` 的发现。 |
-| `format` | 否 | `summary` | `summary` / `json` / `html` / `sarif`，用于步骤摘要与默认 artifact 路径。JSON/HTML/SARIF payload 写入文件，不进入日志。 |
+| `path` | 是 | — | 一个 PDF 的路径，或一棵目录的路径；绝对路径或相对 workspace，只接受本地路径并拒绝 `http(s)` URL。目录会被递归审计并给出一条聚合结果；单文件仍校验 `%PDF-` 文件头。 |
+| `fail-on` | 否 | `error` | `error` / `warning` / `none`；`warning` 同时覆盖 errors。设置 `baseline-path` 时只统计 `new` / `escalated` 的发现。目录模式下无法读取的文件计为一个 error。 |
+| `format` | 否 | `summary` | `summary` / `json` / `html` / `sarif`，用于步骤摘要与默认 artifact 路径。JSON/HTML/SARIF payload 写入文件，不进入日志。`path` 是目录时只接受 `summary` / `json` / `html`（SARIF 是单文件功能）。 |
 | `json-path` | 否 | `''` | JSON 报告路径；`format: json` 且留空时写入 runner 临时目录。 |
 | `report-path` | 否 | `''` | HTML 报告路径；`format: html` 且留空时写入 runner 临时目录。 |
-| `baseline-path` | 否 | `''` | 用于比较的上一次 `AuditReport` JSON（`audit --format json` 的产物，本地文件）；文件不存在或 URL 会在审计前退出 2。传入比较产物同样被拒绝（见下方说明）。 |
-| `baseline-output-path` | 否 | `''` | `BaselineComparison` JSON 的输出路径；需要同时设置 `baseline-path`，且不能与 `json-path` / `report-path` / `sarif-path` 相同。 |
-| `waivers-path` | 否 | `''` | 可过期豁免策略 JSON（本地文件）；被接受的发现不会让步骤失败，过期项在 stderr 提示。 |
-| `sarif-path` | 否 | `''` | SARIF 2.1.0 的输出路径；`format: sarif` 且留空时写入 runner 临时目录。 |
-| `sarif-uri` | 否 | `''` | SARIF 的 `artifactLocation.uri`，默认取 `path`；只允许与 `format: sarif` 一起使用。 |
+| `baseline-path` | 否 | `''` | 用于比较的上一次 `AuditReport` JSON（`audit --format json` 的产物，本地文件）；文件不存在或 URL 会在审计前退出 2。传入比较产物同样被拒绝（见下方说明）。目录模式会拒绝该输入。 |
+| `baseline-output-path` | 否 | `''` | `BaselineComparison` JSON 的输出路径；需要同时设置 `baseline-path`，且不能与 `json-path` / `report-path` / `sarif-path` 相同。目录模式会拒绝该输入。 |
+| `waivers-path` | 否 | `''` | 可过期豁免策略 JSON（本地文件）；被接受的发现不会让步骤失败，过期项在 stderr 提示。目录模式会拒绝该输入。 |
+| `sarif-path` | 否 | `''` | SARIF 2.1.0 的输出路径；`format: sarif` 且留空时写入 runner 临时目录。目录模式会拒绝该输入，且该模式下输出恒为空。 |
+| `sarif-uri` | 否 | `''` | SARIF 的 `artifactLocation.uri`，默认取 `path`；只允许与 `format: sarif` 一起使用。目录模式会拒绝该输入。 |
 | `python-version` | 否 | `3.12` | 运行审计 CLI 的 Python 版本。 |
 
 ### 输出
 
 | 输出 | 说明 |
 |---|---|
-| `exit-code` | CLI 退出码（`0`/`1`/`2`）；`fail-on: none` 不会因发现返回 1，但读取/参数/artifact 错误仍为 2。 |
-| `json-path` | 本次运行写出的 JSON 报告路径；未请求或未生成时为空。 |
-| `report-path` | 本次运行写出的 HTML 报告路径；未请求或未生成时为空。 |
-| `sarif-path` | 本次运行写出的 SARIF payload 路径；未请求或未生成时为空。 |
+| `exit-code` | CLI 退出码（`0`/`1`/`2`）；`fail-on: none` 不会因发现返回 1，但读取/参数/artifact 错误仍为 2。目录模式下失败文件按 finding 处理：`fail-on: none` 返回 0。 |
+| `json-path` | 本次运行写出的 JSON 报告路径；未请求或未生成时为空。目录模式下是 `BatchReport`。 |
+| `report-path` | 本次运行写出的 HTML 报告路径；未请求或未生成时为空。目录模式下是单文件批量报告。 |
+| `sarif-path` | 本次运行写出的 SARIF payload 路径；未请求或未生成时为空；目录模式恒为空。 |
 
 说明：
 
 - `json-path` / `report-path` / `sarif-path` 的父目录会自动创建；相对路径相对于 workspace。
-- 如果请求的 artifact 不属于 `format`（例如 `format: summary` 加 `json-path`），action 会额外执行一次 `--quiet --fail-on none` 的 CLI 以生成该文件；基线与豁免参数同样传给这次额外执行，否则摘要与 artifact 会描述不同的比较结果。
+- 如果请求的 artifact 不属于 `format`（例如 `format: summary` 加 `json-path`），action 会额外执行一次 `--quiet --fail-on none` 的 CLI 以生成该文件；基线与豁免参数同样传给这次额外执行，否则摘要与 artifact 会描述不同的比较结果。目录模式下这次额外执行同样是 `audit-dir`，不带任何基线/豁免/SARIF 参数。
+- 目录模式在校验输入阶段（安装 Python 之前）就拒绝 `format: sarif`、`baseline-path`、`baseline-output-path`、`waivers-path`、`sarif-path` 与 `sarif-uri`，退出 2：`audit-dir` 没有这些功能，静默忽略会让调用方以为它们生效了。
+- 目录模式在 runner 临时目录额外写一份 `--stats` 计数产物，步骤摘要用它的 `root` / `files` / `audited` / `failed` / `errors` / `warnings` / `info`；该文件与 JSON/HTML artifact 来自同一次审计。
 - `baseline-path` / `waivers-path` 在上一步“校验输入”中检查：缺文件或 URL 直接让步骤失败，不会先跑一次审计。
 - `baseline-output-path` 与 `json-path` / `report-path` / `sarif-path` 必须指向不同文件（比较时忽略开头的 `./` 与结尾的 `/`），否则在校验阶段退出 2：同一个文件被写两次会静默覆盖前一个产物。
 - `baseline-path` 必须是报告而不是比较产物；传入 `--baseline-output` 生成的 `BaselineComparison` 会由 CLI 以退出码 2 拒绝（它的 finding 条目带 `status` / `current` / `baseline`）。
 - 非零退出码会先写入 `exit-code` 输出与步骤摘要，再让步骤失败，便于后续步骤仍然读取输出。
-- 步骤摘要列出退出码、`fail-on`、格式，以及已设置的基线、豁免和 artifact 路径。
-- action 只读取传入的本地文件，不需要额外凭据；默认 `contents: read` 足够。需要上传 SARIF 时由 workflow 授予 `security-events: write`，见 [CI 文档](ci.md)。
+- 步骤摘要列出退出码、`fail-on`、格式，以及已设置的基线、豁免和 artifact 路径；目录模式还会列出 `mode`、`root` 与聚合计数。
+- action 只读取传入的本地文件或目录，不需要额外凭据；默认 `contents: read` 足够。需要上传 SARIF 时由 workflow 授予 `security-events: write`，见 [CI 文档](ci.md)。
 
 ## 确定性、安全与非目标
 
-- **确定性**：相同 PDF 产生相同的发现集合、顺序、指纹与 JSON/HTML/SARIF 字节；报告、比较产物与 SARIF 都不含时间戳、机器信息或工具生成的绝对路径。
+- **确定性**：相同 PDF 产生相同的发现集合、顺序、指纹与 JSON/HTML/SARIF 字节；相同目录产生相同的批量 `summary` / `BatchReport` / `--stats` / 批量 HTML 字节。报告、比较产物与 SARIF 都不含时间戳、机器信息或工具生成的绝对路径（目录模式只写相对 POSIX 路径与 root 名）。
 - **安全**：审计引擎只读取本地文件；CLI 与 action 拒绝 URL，因此没有 SSRF 面；HTML 报告内联 CSS、无脚本、无外部资源，所有 PDF 元数据与发现文本都经过 HTML 转义；SARIF 只做格式映射，不上传、不联网。
 - **基线与豁免的只读边界**：基线、豁免和比较产物都只描述“当前结果与策略”，不修改 PDF、不修改 `AuditReport`、不回写基线。比较产物与 SARIF 只记录策略事实（状态、原因、到期日），不记录基线/豁免文件的路径；界面加载基线只在本机内存中进行，不写 localStorage、不上传、不进入导出 JSON。
 - **本地优先**：CLI 与 action 需要 Python 3.10+ 与 `sidecar/requirements.txt`（`pdfplumber`、`Pillow`）；打包后的桌面应用不包含 CLI。

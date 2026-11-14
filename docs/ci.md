@@ -1,6 +1,6 @@
 # PDF diff and audit quality gates in CI
 
-Two read-only CLIs can gate a pipeline:
+Three read-only CLIs can gate a pipeline:
 
 - `pdf-inspector diff` compares two revisions of a PDF object by object (chars,
   words, rects, lines, curves, images, tables) plus document resources,
@@ -10,22 +10,27 @@ Two read-only CLIs can gate a pipeline:
   structure and security findings. Its baseline, expiring waivers and SARIF
   output turn a one-shot report into an incremental gate that only fails on new
   or escalated problems.
+- `pdf-inspector audit-dir` runs the same checks over every PDF under a local
+  directory and aggregates them into one deterministic summary, JSON or HTML
+  report, so a whole tree can be gated with a single command and a single
+  artifact. See [Directory audits](#directory-audits).
 
-Both are documented here; the audit checks and the `AuditReport` /
+All of them are documented here; the audit checks and the `AuditReport` /
 `BaselineComparison` schemas live in [docs/audit.md](audit.md), and the diff
 object model in [docs/diff.md](diff.md).
 
-Two ways to run either CLI in CI:
+Two ways to run any of these CLIs in CI:
 
 - **Composite actions** - `action.yml` (diff, this repository) and
-  `audit/action.yml` (audit). They set up Python, install the sidecar
-  dependencies, run the CLI and fail the step according to `fail-on`.
-- **Direct CLI** - `python sidecar/cli.py diff ...` or
-  `python sidecar/cli.py audit ...` when the workflow already has Python and
-  the dependencies installed.
+  `audit/action.yml` (audit and directory audit). They set up Python, install
+  the sidecar dependencies, run the CLI and fail the step according to
+  `fail-on`.
+- **Direct CLI** - `python sidecar/cli.py diff ...`, `python sidecar/cli.py
+  audit ...` or `python sidecar/cli.py audit-dir ...` when the workflow already
+  has Python and the dependencies installed.
 
-All of them only read **local file paths**. `http(s)` URLs are rejected on
-purpose, so a workflow cannot turn either command into a network fetch (no SSRF
+All of them only read **local paths**. `http(s)` URLs are rejected on purpose, so
+a workflow cannot turn any of these commands into a network fetch (no SSRF
 surface).
 
 ## Quick start: diff
@@ -219,7 +224,9 @@ is omitted, so pipe stdout only when you want machine output.
 `pdf-inspector audit` reports font, page, image, metadata, structure and security
 findings for one local PDF. It supports four formats - `summary`, `json`, `html`
 and `sarif` - and four ways to gate a pipeline. Pick one row as the primary
-policy; the options combine (a baseline plus waivers plus SARIF is valid).
+policy; the options combine (a baseline plus waivers plus SARIF is valid). For a
+whole tree of PDFs use `audit-dir`, documented under
+[Directory audits](#directory-audits).
 
 | Approach | Flags / inputs | Fails the step on | Use when |
 |---|---|---|---|
@@ -238,14 +245,14 @@ The status vocabulary (`new` / `existing` / `moved` / `escalated` / `fixed` /
 
 | Input | Default | Description |
 |---|---|---|
-| `path` | - | PDF path, absolute or relative to the workspace. Local file only. |
-| `fail-on` | `error` | `error`, `warning` or `none`; only `new`/`escalated` findings count when `baseline-path` is set. |
-| `format` | `summary` | `summary`, `json`, `html` or `sarif`. |
-| `json-path` / `report-path` / `sarif-path` | `''` | Where to write the JSON `AuditReport`, the HTML report and the SARIF payload. Each defaults to the runner temp directory when it is the primary `format`. |
-| `baseline-path` | `''` | Previous `AuditReport` (JSON, i.e. the `audit --format json` output) to compare against. Local file only; a missing file or a URL fails the step with exit code 2. |
-| `baseline-output-path` | `''` | Where to write the `BaselineComparison` JSON (requires `baseline-path`). Must differ from `json-path`, `report-path` and `sarif-path`. |
-| `waivers-path` | `''` | Expiring waiver policy (JSON). Accepted findings do not fail the step. |
-| `sarif-uri` | `''` | `artifactLocation.uri` of the SARIF payload. Only valid with `format: sarif`. |
+| `path` | - | One PDF, or a directory of PDFs, absolute or relative to the workspace. Local paths only. A directory is audited recursively with one aggregate result; single-file mode still validates the `%PDF-` header. |
+| `fail-on` | `error` | `error`, `warning` or `none`; only `new`/`escalated` findings count when `baseline-path` is set. In directory mode a file that cannot be read counts as one error. |
+| `format` | `summary` | `summary`, `json`, `html` or `sarif`. A directory accepts `summary`, `json` or `html`. |
+| `json-path` / `report-path` / `sarif-path` | `''` | Where to write the JSON `AuditReport`, the HTML report and the SARIF payload. Each defaults to the runner temp directory when it is the primary `format`. In directory mode the JSON is a `BatchReport`, and `sarif-path` is always empty. |
+| `baseline-path` | `''` | Previous `AuditReport` (JSON, i.e. the `audit --format json` output) to compare against. Local file only; a missing file or a URL fails the step with exit code 2. Rejected for a directory `path`. |
+| `baseline-output-path` | `''` | Where to write the `BaselineComparison` JSON (requires `baseline-path`). Must differ from `json-path`, `report-path` and `sarif-path`. Rejected for a directory `path`. |
+| `waivers-path` | `''` | Expiring waiver policy (JSON). Accepted findings do not fail the step. Rejected for a directory `path`. |
+| `sarif-uri` | `''` | `artifactLocation.uri` of the SARIF payload. Only valid with `format: sarif`. Rejected for a directory `path`. |
 | `python-version` | `3.12` | Python version used to run the CLI. |
 
 `baseline-path` must point at an `AuditReport`, not at a `BaselineComparison`:
@@ -259,8 +266,10 @@ Outputs: `exit-code` (raw `0`/`1`/`2`), `json-path`, `report-path` and
 `sarif-path`. The step summary lists the exit code, the threshold, the format and
 the baseline, waiver and artifact paths. A missing or `http(s)` baseline/waiver
 path fails the input-validation step before Python is installed, so no payload is
-written for a run that never happened. See [docs/audit.md](audit.md) for the full
-input/output tables.
+written for a run that never happened. A directory `path` rejects `format:
+sarif`, `baseline-path`, `baseline-output-path`, `waivers-path`, `sarif-path`
+and `sarif-uri` in that same validation step, also before Python is installed.
+See [docs/audit.md](audit.md) for the full input/output tables.
 
 ### Code scanning workflow
 
@@ -461,6 +470,139 @@ the tag tree, and it never certifies PDF/A or PDF/UA compliance. SARIF upload,
 baselines and waivers only change how findings are reported and gated, not what
 the audit detects. No network access, no pixel diff, no OCR, no PDF modification.
 
+## Directory audits
+
+`pdf-inspector audit-dir` audits every PDF under one local directory with a
+single command and aggregates the per-file reports into one deterministic batch
+payload. Use it when a repository holds a whole tree of PDFs: one action per
+file would mean dozens of Python installs and dozens of failures to triage.
+
+```sh
+# Human summary + progress on stderr; exit code 0/1/2
+python sidecar/cli.py audit-dir docs
+
+# Deterministic batch JSON, an HTML artifact and the counts file for a
+# workflow summary; a broken PDF does not stop the other files
+python sidecar/cli.py audit-dir docs \
+  --format json --output artifacts/pdf-audit-batch.json \
+  --stats artifacts/pdf-audit-batch-stats.json \
+  --fail-on error
+
+# Scope and cap a large tree; HTML is one self-contained file
+python sidecar/cli.py audit-dir docs \
+  --include 'reports/*' --exclude '*draft*' --max-files 200 \
+  --format html --output artifacts/pdf-audit-batch.html --quiet
+```
+
+Discovery is fixed and auditable: the tree is walked recursively **without
+following symlinks**, hidden entries and
+`node_modules`/`.git`/`.hg`/`.svn`/`__pycache__` are pruned, only `.pdf` files
+(case-insensitive) are collected, and results are ordered by relative POSIX
+path. `--include`/`--exclude` are `fnmatch` globs over that relative path
+(several includes are OR-ed, an exclude always wins, and `*` also matches `/`).
+The globs are case-sensitive, so `--include '*.pdf'` does not match `.PDF`; use
+`*.PDF` or `*.[Pp][Dd][Ff]` for mixed-case suffixes, while `.pdf` suffix
+discovery itself stays case-insensitive. `--max-files` defaults to 500 and allows
+1-5000; a larger tree exits 2 instead of silently auditing a subset.
+
+### Directory action
+
+The same action accepts a directory as `path`:
+
+```yaml
+name: PDF audit (directory)
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**/*.pdf'
+
+permissions:
+  contents: read
+
+jobs:
+  pdf-audit-directory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Audit docs/
+        id: audit
+        # Keep going so the artifacts and the step summary are written even when
+        # the gate fails; the last step turns the exit code back into a failure.
+        continue-on-error: true
+        uses: <owner>/pdf-inspector/audit@v1
+        with:
+          path: docs                     # a directory: one aggregate result
+          fail-on: error                 # an unreadable file counts as one error
+          format: json
+          json-path: artifacts/pdf-audit-batch.json
+          report-path: artifacts/pdf-audit-batch.html
+
+      - name: Upload the audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdf-audit-directory
+          path: artifacts/
+          if-no-files-found: ignore
+
+      - name: Enforce the audit gate
+        if: steps.audit.outputs.exit-code != '0'
+        run: exit '${{ steps.audit.outputs.exit-code }}'
+```
+
+Inside this repository the same job uses `uses: ./audit` - see the
+`audit-cli` and `audit-action` jobs in `.github/workflows/ci.yml`.
+
+What directory mode does differently:
+
+| Area | Behaviour |
+|---|---|
+| Formats | `summary`, `json`, `html`. `format: sarif` exits 2 during input validation, before Python is installed. |
+| Rejected inputs | `baseline-path`, `baseline-output-path`, `waivers-path`, `sarif-path` and `sarif-uri` exit 2 in that same validation step: directory mode has no per-file fingerprint mapping and no SARIF output, so they are never silently ignored. |
+| Artifacts | `json-path`/`report-path` keep their defaults (the runner temp directory when that format is primary). `sarif-path` is always empty. The action also writes a `--stats` counts file in the runner temp directory and fails the step if a 0/1 run left it missing. |
+| Step summary | Adds `mode: directory` plus `root`, `files`, `audited`, `failed`, `errors`, `warnings` and `info`. The numbers come from the CLI `--stats` artifact, so the summary and the payloads cannot disagree. |
+| Exit code | Unchanged: `0` no threshold matched, `1` `fail-on` matched, `2` usage/root/discovery/output error. |
+
+### Failing files and artifacts
+
+- A file that cannot be read (corrupt, removed between discovery and audit, or
+  unopenable - including a PDF that needs a password) becomes one
+  `status: "error"` entry with a single-line message; the remaining files are
+  still audited. It counts as one failed file **and** one error, so
+  `--fail-on error` (and `--fail-on warning`) fails the step, while
+  `--fail-on none` exits 0 and leaves the failure as data in the report. An
+  encrypted file that still opens is not a failure: it is `status: "ok"` with a
+  `security` `Document is encrypted` warning, so `--fail-on error` passes it and
+  `--fail-on warning` fails.
+- The JSON artifact is a `BatchReport` (`schemaVersion: 1`) with `tool`,
+  `root{name, files, bytes}`, `summary{files, audited, failed, findings, errors,
+  warnings, info}` and `files[]`. An audited file keeps the full `AuditReport`
+  document/summary/findings (including each finding's `fingerprint`); a failed
+  file has only `path`, `status`, `bytes` and `error`. `summary.errors` includes
+  the failed files, `summary.findings` does not.
+- The HTML artifact is one self-contained file (inline CSS, no scripts, no
+  external assets) titled `PDF audit report - N files`, with a directory
+  summary, a file table and one section per file.
+- The `--stats` artifact keeps only `schemaVersion`, `tool`, `root` and
+  `summary`. It is what a step summary or dashboard should read, while the
+  per-file findings stay in the JSON/HTML payloads. The CLI writes it for every
+  `--format`, including `summary`, and `--quiet` does not suppress it.
+- Batch payloads carry relative POSIX paths and the root *name* only - no
+  absolute paths, no timestamps - so two runs over the same tree are
+  byte-identical and the artifacts can be cached, diffed or committed. The
+  repository CI asserts exactly that by comparing two runs byte for byte.
+- Directory mode is read-only: no PDF is written, no content is executed, and
+  nothing is fetched from the network. `--output` and `--stats` may not target
+  the root directory itself or any PDF underneath it.
+
+Baselines, waivers and SARIF stay single-file features. To gate a directory
+incrementally, run `audit-dir --format json` to find the offending files and then
+run `audit` on each of them with `--baseline`/`--waivers`, whose identities are
+per-file fingerprints. See [docs/audit.md](audit.md#目录批量审计) for the full
+flag table, `BatchReport` schema and exit-code rules.
+
 ## Requirements and limitations
 
 - **Python is required.** The CLI and the action need Python 3.10+ with
@@ -468,8 +610,13 @@ the audit detects. No network access, no pixel diff, no OCR, no PDF modification
   `actions/setup-python`; for direct CLI use install the dependencies yourself or
   use the repository `.venv`. The packaged desktop app does not ship the CLI.
 - **Local paths only.** No URLs, no network access, no secrets. Inputs are
-  validated for the `%PDF-` header before parsing; encrypted or corrupt files
-  fail with exit code 2 and a readable message.
+  validated for the `%PDF-` header before parsing. A corrupt file, or one that
+  cannot be opened (including a PDF that needs a password), fails single-file
+  mode with exit code 2 and a readable message; directory mode records it as one
+  failed file and keeps auditing (the step then fails only when `--fail-on` is
+  `error` or `warning`). An encrypted file that still opens is audited normally:
+  `status: "ok"` plus a `security` `Document is encrypted` warning, so
+  `--fail-on error` passes it while `--fail-on warning` fails.
 - **No pixel diff / OCR.** The diff compares extracted objects, not rendered
   pixels, and does not read scanned page images. The audit is heuristic in the
   same way and never certifies PDF/A or PDF/UA compliance.
@@ -478,5 +625,6 @@ the audit detects. No network access, no pixel diff, no OCR, no PDF modification
   Artifact upload follows the normal `actions/upload-artifact` permissions, and
   SARIF upload additionally needs `security-events: write`.
 - **Deterministic output.** Same inputs + same options produce the same JSON,
-  HTML, SARIF and `BaselineComparison` payloads (no timestamps, no absolute paths
-  in the payload), which makes failures easy to compare across runs.
+  HTML, SARIF, `BaselineComparison`, `BatchReport`, batch HTML and `--stats`
+  payloads (no timestamps, no absolute paths in the payload), which makes
+  failures easy to compare across runs.
