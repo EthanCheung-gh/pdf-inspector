@@ -46,8 +46,9 @@
 | ![桌面文档标签栏：两个通过 URL 打开的文档标签，切换到 basic.pdf 后工具栏显示 1 / 4](docs/images/large-doc-tabs.png) | **桌面文档标签**<br>桌面端可同时保留多个文档标签，切换时恢复页码、缩放、叠加层与面板标签；Web 端通过服务端 `documentId` 激活标签。 |
 | ![Web 文档标签栏：basic.pdf 与 large.pdf 两个标签，当前 large.pdf 显示 1 / 120](docs/images/web-tabs.png) | **Web 文档标签**<br>Web 与桌面端都显示文档标签栏；切换按 `documentId` 激活并恢复视图快照，未激活文档的 `/doc/:id` 仍可读取，关闭标签只删除该文档的临时副本。 |
 | ![最近文档对话框：按类型分组的 Web 文档行、Open/Remove 按钮、恢复上次会话开关、清空最近记录与关闭](docs/images/session-recent.png) | **会话恢复与最近文件**<br>空状态可重新打开最近文档或恢复上次会话，`File: Recent documents…` 按本地/URL/Web 分组列出最近文档。只把定位信息与视图快照存入 `pdf-inspector:session:v1` / `pdf-inspector:recent:v1`，不保存 PDF 内容与分析结果。 |
+| ![页面总览：4 页 basic.pdf 的缩略图网格，第 4 页高亮并居中](docs/images/page-overview.png) | **页面总览**<br>点击工具栏页码（`1 / 4`）、按 `P`，或在命令面板执行 `Navigate: Page overview…`，打开缩略图网格模态框。当前页高亮并自动居中；点击卡片或按 `Enter` 跳页并关闭，`Esc`、遮罩与关闭按钮取消。缩略图最多 2 个并发渲染、每份文档缓存 60 张；卡片滚出视口较远后释放图片，返回时重新请求，因此 1000 页文档也能立即打开，且不会保留所有访问过的页面。 |
 
-*截图来自 Web 构建与真实 Electron 桌面构建；页面列表/搜索 2.0/命令面板、注释整档索引/导出、主题、导出对话框、中文界面、Diff/Audit/Raw、Audit Resources、Audit Structure 与会话恢复/最近文档为 1440×900，桌面标签为 Electron + xvfb 实测（CDP 1440×900 视口）。详见 [docs/export.md](docs/export.md)、[docs/themes-i18n.md](docs/themes-i18n.md)、[docs/search.md](docs/search.md)、[docs/large-docs.md](docs/large-docs.md)、[docs/annotations.md](docs/annotations.md) 与 [docs/session.md](docs/session.md)。*
+*截图来自 Web 构建与真实 Electron 桌面构建；页面列表/搜索 2.0/命令面板、注释整档索引/导出、主题、导出对话框、中文界面、页面总览、Diff/Audit/Raw、Audit Resources、Audit Structure 与会话恢复/最近文档为 1440×900，桌面标签为 Electron + xvfb 实测（CDP 1440×900 视口）。详见 [docs/export.md](docs/export.md)、[docs/themes-i18n.md](docs/themes-i18n.md)、[docs/search.md](docs/search.md)、[docs/large-docs.md](docs/large-docs.md)、[docs/annotations.md](docs/annotations.md) 与 [docs/session.md](docs/session.md)。*
 
 ## 功能特性
 
@@ -64,6 +65,8 @@
 - `Objects` 标签页的对象树按页展示全部对象，页面节点可折叠/展开。
 - `Outline` 标签页读取 PDF 书签（outline），点击条目直接跳转到对应页面。
 - 当前页码显示与上一页/下一页导航，并实时显示缩放比例。
+- **页面总览：** 点击工具栏页码按钮（`1 / 4`）、按 `P`，或在命令面板执行 `Navigate: Page overview…`，打开缩略图网格模态框。当前页高亮并自动居中；点击卡片或按 `Enter` 跳页并关闭，`Esc`、遮罩与关闭按钮取消；方向键移动焦点（上下按网格列数），`Home` / `End` 到首/末页，`Tab` 限制在对话框内，关闭后焦点回到打开前的元素。打开期间背景的 `T` / `R` / `F` / `Esc` / `Ctrl+F` 快捷键不生效；`P` 仍可关闭，`Ctrl/Cmd+P` 保留给浏览器。
+- **懒加载缩略图：** 渲染进程用 PDF.js 把每页画到离屏 canvas（160×220 CSS `contain`，设备像素比上限 2，JPEG 质量 0.82），最多 2 个并发渲染，每份文档一个 60 张的 LRU 缓存，切换文档即失效。只有视口附近的卡片才请求图片，并在打开时围绕当前页预置种子，因此 1000 页文档无需预渲染即可显示缩略图：1000 张卡片，打开后约 27 张图片，滚动到第 170 页附近后约 57 张；卡片滚出视口较远后释放图片，返回时再从缓存或重新渲染获取，避免整份文档的已访问页面都被保留。总览只读：不叠加对象框、注释或审计标记，不持久化，不做 sidecar 页面提取，也不修改 PDF；缩略图失败显示占位，卡片仍可点击跳页。
 
 ### 工作区与布局
 
@@ -117,7 +120,7 @@
 ### 命令面板
 
 - `Ctrl/Cmd+K` 打开命令面板，按 `File` / `Navigate` / `View` / `Analyze` / `Export` 分组显示已注册命令；打开时自动聚焦过滤框，输入标题或关键词（例如 `page`）即可过滤，`↑/↓` 移动、`Enter` 执行、`Escape` 关闭。
-- 命令覆盖 Open PDF、Open URL、Search document、Go to page、四个主题与 Cycle theme、Language: English / 简体中文、Focus mode、左右面板、Layers、Diff、Audit、Raw、Export objects、Export view、Share report、Clear selection 与 Close palette；`Go to page…` 会进入页码子视图，输入值夹取到 `1..pageCount`。
+- 命令覆盖 Open PDF、Open URL、Search document、Go to page、Page overview、四个主题与 Cycle theme、Language: English / 简体中文、Focus mode、左右面板、Layers、Diff、Audit、Raw、Export objects、Export view、Share report、Clear selection 与 Close palette；`Go to page…` 会进入页码子视图，输入值夹取到 `1..pageCount`。
 - 命令由实际持有 handler 的组件按 owner 注册，面板只调用现有 handler/store，不复制 IPC 或文件打开/导出逻辑；无文档或当前工作区不允许时，依赖文档的命令显示为禁用。
 - 命令注册是显式的，不提供用户自定义命令、插件系统或快捷键编辑器；`Ctrl/Cmd+F` 仍直接打开搜索，`Ctrl/Cmd+K` 只负责命令面板。
 
@@ -311,12 +314,13 @@ python sidecar/cli.py diff old.pdf new.pdf --fail-on modified \
 | `T` | 切换文本选择模式 |
 | `R` | 切换区域框选模式（与文本选择互斥） |
 | `F` | 切换 Focus 模式（隐藏左右面板） |
+| `P` | 打开或关闭页面总览（缩略图网格）；`Ctrl/Cmd+P` 仍为浏览器打印快捷键 |
 | `Ctrl/Cmd+F` | 打开并聚焦当前文档搜索 |
 | `Enter` / `Shift+Enter` | 搜索框内跳到下一处 / 上一处命中 |
 | `↑` / `↓` | 搜索结果面板或命令面板中移动当前项 |
 | `Ctrl/Cmd+K` | 打开命令面板；已打开时聚焦过滤框或返回命令列表 |
 | `Ctrl/Cmd+滚轮` | 缩放文档；向上滚放大，向下滚缩小（触控板捏合同样生效） |
-| `Esc` | 关闭结果面板或命令面板；在搜索框内再按关闭搜索；没有浮层时清除选中、筛选与框选结果 |
+| `Esc` | 关闭页面总览、结果面板或命令面板；在搜索框内再按关闭搜索；没有浮层时清除选中、筛选与框选结果 |
 
 ## 快速开始
 

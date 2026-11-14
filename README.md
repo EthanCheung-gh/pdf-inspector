@@ -48,8 +48,9 @@ PDF Inspector is a developer-focused PDF structure viewer. It overlays coordinat
 | ![Desktop document tabs: two URL-opened tabs, switched back to basic.pdf with toolbar 1 / 4](docs/images/large-doc-tabs.png) | **Desktop document tabs**<br>The desktop app keeps multiple document tabs and restores page, zoom, overlays, and panel tabs when switching. Web tabs activate a server-side `documentId` instead. |
 | ![Web document tabs: basic.pdf and large.pdf tabs, active large.pdf showing 1 / 120](docs/images/web-tabs.png) | **Web document tabs**<br>Web and desktop both show the document tab bar. Switching activates by `documentId` and restores the view snapshot; inactive documents remain readable at `/doc/:id`, and closing a tab removes only that document's temporary copy. |
 | ![Recent documents dialog: grouped Web document rows with Open and Remove, the restore-last-session toggle, Clear recent, and Close](docs/images/session-recent.png) | **Session restore and recent documents**<br>The empty state reopens a recent document or restores the last session, and `File: Recent documents…` lists local, URL, and Web documents grouped by kind. Only locators and view snapshots are stored under `pdf-inspector:session:v1` / `pdf-inspector:recent:v1`; PDF content and analysis results never are. |
+| ![Page overview: a thumbnail grid of the 4-page basic.pdf with page 4 highlighted and centered](docs/images/page-overview.png) | **Page overview**<br>Click the toolbar page counter (`1 / 4`), press `P`, or run `Navigate: Page overview…` to open a modal grid of page thumbnails. The current page is highlighted and auto-centered; click a card or press `Enter` to jump and close, while `Esc`, the backdrop, and the close button cancel. Thumbnails render lazily (at most 2 at a time, 60 cached per document); cards release their image when scrolled well outside the viewport and re-request it on return, so a 1000-page document opens immediately and does not retain every visited page. |
 
-*Screenshots come from the Web build and a real Electron desktop build. Page list / Search 2.0 / command palette, annotation index/export, themes, export dialogs, Chinese UI, Diff/Audit/Raw, Audit Resources, Audit Structure, and session restore/recent documents are 1440×900. Desktop tabs were captured from Electron + `xvfb` through CDP at a 1440×900 viewport. See [docs/export.md](docs/export.md), [docs/themes-i18n.md](docs/themes-i18n.md), [docs/search.md](docs/search.md), [docs/large-docs.md](docs/large-docs.md), [docs/annotations.md](docs/annotations.md), and [docs/session.md](docs/session.md).*
+*Screenshots come from the Web build and a real Electron desktop build. Page list / Search 2.0 / command palette, annotation index/export, themes, export dialogs, Chinese UI, page overview, Diff/Audit/Raw, Audit Resources, Audit Structure, and session restore/recent documents are 1440×900. Desktop tabs were captured from Electron + `xvfb` through CDP at a 1440×900 viewport. See [docs/export.md](docs/export.md), [docs/themes-i18n.md](docs/themes-i18n.md), [docs/search.md](docs/search.md), [docs/large-docs.md](docs/large-docs.md), [docs/annotations.md](docs/annotations.md), and [docs/session.md](docs/session.md).*
 
 ## Features
 
@@ -66,6 +67,8 @@ PDF Inspector is a developer-focused PDF structure viewer. It overlays coordinat
 - The `Objects` tree groups all objects by page; page nodes can be collapsed and expanded.
 - The `Outline` tab reads PDF bookmarks and jumps to a page when an entry is clicked.
 - Current-page display, previous/next navigation, and a live zoom indicator.
+- **Page overview:** click the toolbar page counter (`1 / 4`), press `P`, or run `Navigate: Page overview…` to open a modal thumbnail grid. The current page is highlighted and auto-centered; clicking a card or pressing `Enter` jumps there and closes the dialog, `Esc` / backdrop / the close button cancel, arrow keys move focus (up/down by the grid's column count), `Home` / `End` jump to the first/last card, `Tab` stays inside the dialog, and focus returns to the opener on close. While it is open, the background `T` / `R` / `F` / `Esc` / `Ctrl+F` shortcuts stay inactive; `P` still toggles it, and `Ctrl/Cmd+P` is left to the browser.
+- **Lazy page thumbnails:** the renderer draws each page with PDF.js into an offscreen canvas (160×220 CSS `contain`, device pixel ratio capped at 2, JPEG quality 0.82), at most two renders at a time, with a per-document LRU of 60 images and a fresh cache per document. Only cards near the viewport request an image, plus a seed around the current page, so a 1000-page document shows thumbnails immediately without pre-rendering it: 1000 cards are present, about 27 images load after opening and about 57 after scrolling to page ~170. The overview is read-only — no overlay boxes, annotations, or audit markers, nothing is persisted, no sidecar page extraction, and the PDF is never modified. A failed thumbnail shows a placeholder and the card still navigates.
 
 ### Workspace and layout
 
@@ -119,7 +122,7 @@ PDF Inspector is a developer-focused PDF structure viewer. It overlays coordinat
 ### Command palette
 
 - `Ctrl/Cmd+K` opens a command palette grouped by `File` / `Navigate` / `View` / `Analyze` / `Export`. It focuses the filter input on open; type a title or keyword (for example `page`) to filter. `↑/↓` moves, `Enter` runs, and `Escape` closes.
-- Commands cover Open PDF, Open URL, Search document, Go to page, the four themes plus Cycle theme, Language: English / 简体中文, Focus mode, left/right panels, Layers, Diff, Audit, Raw, Export objects, Export view, Share report, Clear selection, and Close palette. `Go to page…` switches to a page-number subview that clamps input to `1..pageCount`.
+- Commands cover Open PDF, Open URL, Search document, Go to page, Page overview, the four themes plus Cycle theme, Language: English / 简体中文, Focus mode, left/right panels, Layers, Diff, Audit, Raw, Export objects, Export view, Share report, Clear selection, and Close palette. `Go to page…` switches to a page-number subview that clamps input to `1..pageCount`.
 - Commands are registered by the components that own the handler. The palette only calls existing handlers and stores, so there is no duplicated IPC, file-open, or export logic. Document-dependent commands are shown disabled when no document or workspace permits them.
 - Registration is explicit: there are no user-defined commands, plugins, or shortcut editor. `Ctrl/Cmd+F` still opens search directly; `Ctrl/Cmd+K` only handles the command palette.
 
@@ -317,12 +320,13 @@ python sidecar/cli.py diff old.pdf new.pdf --fail-on modified \
 | `T` | Toggle text-selection mode |
 | `R` | Toggle region-selection mode (mutually exclusive with text selection) |
 | `F` | Toggle Focus mode (hide both side panels) |
+| `P` | Open or close the page overview (thumbnail grid); `Ctrl/Cmd+P` remains the browser print shortcut |
 | `Ctrl/Cmd+F` | Open and focus in-document search |
 | `Enter` / `Shift+Enter` | In the search box, jump to the next / previous hit |
 | `↑` / `↓` | Move the current item in the search-results panel or command palette |
 | `Ctrl/Cmd+K` | Open the command palette; when open, focus its filter or return to the command list |
 | `Ctrl/Cmd+wheel` | Zoom the document; scroll up to zoom in and down to zoom out (trackpad pinch works too) |
-| `Esc` | Close the results panel or command palette; in the search box, close search next; with no overlay, clear selection, filters, and box-selection results |
+| `Esc` | Close the page overview, the results panel, or the command palette; in the search box, close search next; with no overlay, clear selection, filters, and box-selection results |
 
 ## Quick start
 
