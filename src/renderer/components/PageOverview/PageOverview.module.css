@@ -1,0 +1,265 @@
+/*
+ * Page overview dialog.
+ *
+ * The dialog is a fixed-height card: the title, hint and close button stay
+ * visible while only the grid scrolls. A near-opaque token scrim (color-mix of
+ * the theme's deepest surface) separates it from the workspace in every theme
+ * without hard-coded colours. The grid is fluid (`auto-fill` + `minmax`), so
+ * 1280/1440/1600 windows never overflow horizontally.
+ */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--pi-bg-app-translucent);
+  background: color-mix(in srgb, var(--pi-bg-deep) 76%, transparent);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pi-gap-md);
+  width: min(1100px, calc(100vw - 48px));
+  max-height: 85vh;
+  min-width: 0;
+  padding: 16px;
+  color: var(--pi-text);
+  background: var(--pi-bg-panel);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-lg);
+  box-shadow: var(--pi-shadow-md);
+  font-size: 13px;
+  outline: none;
+}
+
+.header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pi-gap-md);
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  overflow: hidden;
+  color: var(--pi-text-heading);
+  font-size: 15px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.closeButton {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--pi-text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--pi-radius-sm);
+  cursor: pointer;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.closeButton:hover {
+  color: var(--pi-text-heading);
+  background: var(--pi-bg-hover);
+  border-color: var(--pi-border-strong);
+}
+
+.closeButton:focus-visible {
+  outline: 2px solid var(--pi-focus);
+  outline-offset: 2px;
+}
+
+.hint {
+  flex: 0 0 auto;
+  margin: 0;
+  color: var(--pi-text-subtle);
+  font-size: 11.5px;
+}
+
+.scroller {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 2px 2px 6px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: var(--pi-gap-md);
+  align-content: start;
+  min-width: 0;
+}
+
+/*
+ * The card keeps its height stable before an off-screen card is painted:
+ * the thumbnail frame owns a 160:220 aspect ratio and the footer a fixed line,
+ * so `contain-intrinsic-size` is only an estimate for the scrollbar.
+ */
+.card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 4px;
+  overflow: hidden;
+  color: var(--pi-text);
+  text-align: left;
+  background: var(--pi-bg-raised);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-md);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 232px;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.card:hover {
+  background: var(--pi-bg-hover);
+  border-color: var(--pi-border-hover);
+}
+
+.card:focus {
+  outline: none;
+}
+
+.card:focus-visible {
+  outline: 2px solid var(--pi-focus);
+  outline-offset: 2px;
+}
+
+.cardCurrent {
+  border-color: var(--pi-accent);
+  box-shadow: 0 0 0 1px var(--pi-accent);
+}
+
+.thumbnailFrame {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 160 / 220;
+  overflow: hidden;
+  background: var(--pi-bg-sunken);
+  border-radius: var(--pi-radius-sm);
+}
+
+.thumbnailImage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--pi-bg-raised);
+}
+
+.thumbnailSkeleton {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    100deg,
+    var(--pi-bg-subtle) 20%,
+    var(--pi-bg-hover) 50%,
+    var(--pi-bg-subtle) 80%
+  );
+  background-size: 220% 100%;
+  animation: page-overview-shimmer 1.4s ease-in-out infinite;
+}
+
+.thumbnailError {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-sunken);
+  border: 1px dashed var(--pi-border);
+  border-radius: var(--pi-radius-sm);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.cardFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pi-gap-xs);
+  min-width: 0;
+  padding: 6px 2px 1px;
+}
+
+.cardLabel {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pi-text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.currentBadge {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  color: var(--pi-accent-text);
+  white-space: nowrap;
+  background: var(--pi-accent-soft);
+  border: 1px solid var(--pi-accent-soft-border);
+  border-radius: var(--pi-radius-xs);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 15px;
+}
+
+@keyframes page-overview-shimmer {
+  from {
+    background-position: 120% 0;
+  }
+
+  to {
+    background-position: -120% 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .backdrop {
+    padding: 8px;
+  }
+
+  .dialog {
+    width: calc(100vw - 16px);
+    max-height: 92vh;
+    padding: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    transition: none;
+  }
+
+  .thumbnailSkeleton {
+    animation: none;
+  }
+}

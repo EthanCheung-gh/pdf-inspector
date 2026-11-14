@@ -78,6 +78,7 @@ export const en = {
   'toolbar.prev': 'Prev',
   'toolbar.next': 'Next',
   'toolbar.pageNavigation': 'Page navigation',
+  'toolbar.pageOverviewTitle': 'Open the page overview (P)',
   'toolbar.zoomControls': 'Zoom controls',
   'toolbar.fitWidth': 'Fit W',
   'toolbar.fitWidthTitle': 'Fit page width',
@@ -121,6 +122,7 @@ export const en = {
   'command.toggleLeftPanel': 'Toggle left panel',
   'command.toggleRightPanel': 'Toggle right panel',
   'command.searchDocument': 'Search document…',
+  'command.pageOverview': 'Page overview…',
   'command.clearSelection': 'Clear selection',
   'command.recentDocuments': 'Recent documents…',
   'command.restoreLastSession': 'Restore last session',
@@ -253,6 +255,15 @@ export const en = {
   'palette.noDocument': 'No document',
   'palette.go': 'Go',
   'palette.pageHint': 'Enter a page number; values outside 1 – {count} are clamped.',
+
+  // --- Page overview dialog -----------------------------------------------
+  'pageOverview.title': 'Page overview',
+  'pageOverview.close': 'Close',
+  'pageOverview.hint': 'Arrow keys to move, Enter to open a page, Esc to close.',
+  'pageOverview.pageLabel': 'Page {page}',
+  'pageOverview.loading': 'Loading thumbnail…',
+  'pageOverview.failed': 'Thumbnail unavailable',
+  'pageOverview.current': 'Current page',
 
   // --- Document tabs ------------------------------------------------------
   'tabs.list': 'Open documents',

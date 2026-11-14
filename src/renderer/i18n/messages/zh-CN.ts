@@ -68,6 +68,7 @@ export const zhCN: Record<MessageKey, string> = {
   'toolbar.prev': '上一页',
   'toolbar.next': '下一页',
   'toolbar.pageNavigation': '页面导航',
+  'toolbar.pageOverviewTitle': '打开页面总览 (P)',
   'toolbar.zoomControls': '缩放控件',
   'toolbar.fitWidth': '适应宽度',
   'toolbar.fitWidthTitle': '适应页面宽度',
@@ -111,6 +112,7 @@ export const zhCN: Record<MessageKey, string> = {
   'command.toggleLeftPanel': '切换左侧面板',
   'command.toggleRightPanel': '切换右侧面板',
   'command.searchDocument': '搜索文档…',
+  'command.pageOverview': '页面总览…',
   'command.clearSelection': '清除选择',
   'command.recentDocuments': '最近文档…',
   'command.restoreLastSession': '恢复上次会话',
@@ -242,6 +244,15 @@ export const zhCN: Record<MessageKey, string> = {
   'palette.noDocument': '未打开文档',
   'palette.go': '跳转',
   'palette.pageHint': '输入页码；超出 1 – {count} 的值会被限制在范围内。',
+
+  // --- 页面总览对话框 -----------------------------------------------------
+  'pageOverview.title': '页面总览',
+  'pageOverview.close': '关闭',
+  'pageOverview.hint': '方向键移动，Enter 打开页面，Esc 关闭。',
+  'pageOverview.pageLabel': '第 {page} 页',
+  'pageOverview.loading': '正在加载缩略图…',
+  'pageOverview.failed': '缩略图不可用',
+  'pageOverview.current': '当前页',
 
   // --- 文档标签 -----------------------------------------------------------
   'tabs.list': '已打开的文档',
