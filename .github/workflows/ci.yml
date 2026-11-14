@@ -778,6 +778,128 @@ jobs:
             exit 1
           fi
 
+      - name: Prepare a small directory audit fixture
+        # The directory job must not audit web-samples/ wholesale: that tree also
+        # holds the 1000-page huge.pdf and other generated samples. Two committed
+        # samples in a nested tree keep the run fast and the counts fixed.
+        run: |
+          set -euo pipefail
+          rm -rf audit-fixtures
+          mkdir -p audit-fixtures/reports
+          cp web-samples/accessibility-valid.pdf audit-fixtures/clean.pdf
+          cp web-samples/accessibility-broken.pdf audit-fixtures/reports/warned.pdf
+          test "$(find audit-fixtures -name '*.pdf' | wc -l)" -eq 2
+
+      - name: Audit the fixture directory to JSON with stats (expect exit 0)
+        run: |
+          set -euo pipefail
+          mkdir -p audit-artifacts
+
+          set +e
+          python sidecar/cli.py audit-dir audit-fixtures \
+            --format json \
+            --output audit-artifacts/directory.json \
+            --fail-on none \
+            --stats audit-artifacts/directory-stats.json
+          code=$?
+          set -e
+
+          echo "pdf-inspector exited with $code"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::expected exit 0 with --fail-on none, got $code"
+            exit 1
+          fi
+
+      - name: Assert the directory JSON, stats and determinism
+        run: |
+          set -euo pipefail
+
+          # A second run must reproduce both artifacts byte for byte.
+          python sidecar/cli.py audit-dir audit-fixtures \
+            --format json \
+            --output audit-artifacts/directory-repeat.json \
+            --fail-on none \
+            --stats audit-artifacts/directory-stats-repeat.json \
+            --quiet
+          if ! cmp -s audit-artifacts/directory.json audit-artifacts/directory-repeat.json; then
+            echo "::error::two audit-dir JSON runs over the same tree differ"
+            exit 1
+          fi
+          if ! cmp -s audit-artifacts/directory-stats.json audit-artifacts/directory-stats-repeat.json; then
+            echo "::error::two audit-dir stats runs over the same tree differ"
+            exit 1
+          fi
+
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          data = json.loads(
+              Path('audit-artifacts/directory.json').read_text(encoding='utf-8')
+          )
+          assert list(data) == ['schemaVersion', 'tool', 'root', 'summary', 'files'], list(data)
+          assert data['schemaVersion'] == 1, data['schemaVersion']
+          assert data['tool']['name'] == 'pdf-inspector', data['tool']
+          assert data['root']['name'] == 'audit-fixtures', data['root']
+          assert data['root']['files'] == 2, data['root']
+
+          summary = data['summary']
+          assert summary['files'] == 2, summary
+          assert summary['audited'] == 2, summary
+          assert summary['failed'] == 0, summary
+          assert summary['errors'] == 0, summary
+          # accessibility-broken.pdf carries exactly five warnings.
+          assert summary['warnings'] == 5, summary
+          assert summary['info'] == 0, summary
+          assert summary['findings'] == 5, summary
+          assert [entry['path'] for entry in data['files']] == [
+              'clean.pdf',
+              'reports/warned.pdf',
+          ], data['files']
+          assert all(not Path(entry['path']).is_absolute() for entry in data['files'])
+
+          text = Path('audit-artifacts/directory.json').read_text(encoding='utf-8')
+          assert str(Path.cwd()) not in text, 'the payload leaks an absolute path'
+          assert not re.search(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}', text), 'timestamp'
+
+          stats = json.loads(
+              Path('audit-artifacts/directory-stats.json').read_text(encoding='utf-8')
+          )
+          assert list(stats) == ['schemaVersion', 'tool', 'root', 'summary'], list(stats)
+          assert 'files' not in stats, stats
+          assert stats['summary'] == summary, (stats['summary'], summary)
+          print('directory JSON OK:', summary)
+          PY
+
+      - name: Render the directory HTML report (expect exit 0)
+        run: |
+          set -euo pipefail
+
+          set +e
+          python sidecar/cli.py audit-dir audit-fixtures \
+            --format html \
+            --output audit-artifacts/directory.html \
+            --fail-on none \
+            --quiet
+          code=$?
+          set -e
+
+          echo "pdf-inspector exited with $code"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::expected exit 0 with --fail-on none, got $code"
+            exit 1
+          fi
+
+          test -s audit-artifacts/directory.html
+          grep -q '<!DOCTYPE html>' audit-artifacts/directory.html
+          grep -q '<title>PDF audit report - 2 files</title>' audit-artifacts/directory.html
+          if grep -q '<script' audit-artifacts/directory.html; then
+            echo "::error::directory HTML report must not contain scripts"
+            exit 1
+          fi
+          echo "HTML report: $(wc -c < audit-artifacts/directory.html) bytes"
+
       - name: Upload audit artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -1296,5 +1418,93 @@ jobs:
           test "$OUTCOME" = "failure"
           if [ -e audit-artifacts/missing-baseline.sarif ]; then
             echo "::error::a rejected baseline must not produce a payload"
+            exit 1
+          fi
+
+      - name: Prepare a small directory audit fixture
+        run: |
+          set -euo pipefail
+          mkdir -p audit-artifacts audit-fixtures/reports
+          cp web-samples/accessibility-valid.pdf audit-fixtures/clean.pdf
+          cp web-samples/accessibility-broken.pdf audit-fixtures/reports/warned.pdf
+          test "$(find audit-fixtures -name '*.pdf' | wc -l)" -eq 2
+
+      - name: Audit the fixture directory through the action (expect success)
+        id: audit-dir
+        uses: ./audit
+        with:
+          path: audit-fixtures
+          fail-on: none
+          format: json
+          json-path: audit-artifacts/action-directory.json
+          report-path: audit-artifacts/action-directory.html
+
+      - name: Assert the directory action outputs, artifact and step summary
+        env:
+          EXIT_CODE: ${{ steps.audit-dir.outputs.exit-code }}
+          JSON_PATH: ${{ steps.audit-dir.outputs.json-path }}
+          REPORT_PATH: ${{ steps.audit-dir.outputs.report-path }}
+          SARIF_PATH: ${{ steps.audit-dir.outputs.sarif-path }}
+          # The stats artifact always lands in the runner temp directory.
+          STATS_PATH: ${{ runner.temp }}/pdf-inspector-audit-stats.json
+        run: |
+          set -euo pipefail
+          echo "exit-code=$EXIT_CODE json-path=$JSON_PATH report-path=$REPORT_PATH sarif-path=$SARIF_PATH"
+          test "$EXIT_CODE" = "0"
+          test -n "$JSON_PATH"
+          test -f "$JSON_PATH"
+          test -n "$REPORT_PATH"
+          test -s "$REPORT_PATH"
+          # Directory mode has no SARIF output.
+          test -z "$SARIF_PATH"
+          test -s "$STATS_PATH"
+          grep -q '<!DOCTYPE html>' "$REPORT_PATH"
+
+          python - "$JSON_PATH" "$STATS_PATH" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          data = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          assert data['root']['name'] == 'audit-fixtures', data['root']
+          summary = data['summary']
+          assert summary['files'] == 2, summary
+          assert summary['audited'] == 2, summary
+          assert summary['failed'] == 0, summary
+          assert summary['warnings'] == 5, summary
+          assert [entry['path'] for entry in data['files']] == [
+              'clean.pdf',
+              'reports/warned.pdf',
+          ], data['files']
+
+          stats = json.loads(Path(sys.argv[2]).read_text(encoding='utf-8'))
+          assert list(stats) == ['schemaVersion', 'tool', 'root', 'summary'], list(stats)
+          assert 'files' not in stats, stats
+          assert stats['summary'] == summary, (stats['summary'], summary)
+          print('directory action OK:', summary)
+          PY
+
+      - name: Audit a directory with a baseline through the action (expected failure)
+        id: directory-baseline
+        continue-on-error: true
+        uses: ./audit
+        with:
+          path: audit-fixtures
+          fail-on: none
+          format: json
+          json-path: audit-artifacts/action-directory-baseline.json
+          baseline-path: audit-artifacts/audit-baseline.json
+
+      - name: Assert the rejected directory baseline failed before any payload was written
+        env:
+          OUTCOME: ${{ steps.directory-baseline.outcome }}
+        run: |
+          set -euo pipefail
+          echo "outcome=$OUTCOME"
+          # The input validation step rejects baseline-path for a directory: the
+          # step fails (before Python is installed) and no payload is left behind.
+          test "$OUTCOME" = "failure"
+          if [ -e audit-artifacts/action-directory-baseline.json ]; then
+            echo "::error::a rejected directory baseline must not produce a payload"
             exit 1
           fi

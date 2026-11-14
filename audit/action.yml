@@ -1,8 +1,9 @@
 name: PDF Inspector Audit
 description: >-
-  Audit a local PDF for font, page, image, metadata, structure and security
-  findings, write JSON/HTML/SARIF reports and fail the step when findings match
-  the configured severity threshold.
+  Audit a local PDF, or every PDF under a local directory, for font, page,
+  image, metadata, structure and security findings, write JSON/HTML/SARIF
+  reports and fail the step when findings match the configured severity
+  threshold.
 
 branding:
   icon: shield
@@ -11,21 +12,24 @@ branding:
 inputs:
   path:
     description: >-
-      PDF path, absolute or relative to the workspace. Local files only;
-      http(s) URLs are rejected.
+      Path to one PDF, or to a directory of PDFs, absolute or relative to the
+      workspace. Local paths only; http(s) URLs are rejected. A directory is
+      audited recursively with one aggregate result.
     required: true
   fail-on:
     description: >-
       Which findings fail the step: error, warning or none. "warning" fails on
       warnings and errors, "error" only on errors, "none" always exits 0. With
-      baseline-path only new or escalated findings count.
+      baseline-path only new or escalated findings count. In directory mode a
+      file that cannot be read counts as one error.
     required: false
     default: error
   format:
     description: >-
       Primary output used for the step summary and default artifact path:
       summary, json, html or sarif. JSON/HTML/SARIF payloads are written to
-      files, not the log.
+      files, not the log. A directory accepts summary, json or html; SARIF is a
+      single-file feature.
     required: false
     default: summary
   json-path:
@@ -46,32 +50,36 @@ inputs:
     description: >-
       Previous audit report (JSON) to compare against. Local file only; a
       missing file or an http(s) URL fails the step with exit code 2. Only new
-      or escalated findings count for fail-on.
+      or escalated findings count for fail-on. Single-file mode only: a
+      directory path rejects this input.
     required: false
     default: ''
   baseline-output-path:
     description: >-
       Where to write the baseline comparison JSON (requires baseline-path).
+      Single-file mode only.
     required: false
     default: ''
   waivers-path:
     description: >-
       Expiring waiver policy (JSON) whose accepted findings never fail the step.
-      Local file only; expired entries are reported on stderr.
+      Local file only; expired entries are reported on stderr. Single-file mode
+      only: a directory path rejects this input.
     required: false
     default: ''
   sarif-path:
     description: >-
       Where to write the SARIF 2.1.0 payload. Defaults to the runner temp
       directory when format is sarif; set it explicitly to keep SARIF alongside a
-      summary/json/html run (that adds one extra CLI pass).
+      summary/json/html run (that adds one extra CLI pass). Single-file mode
+      only: a directory path rejects this input.
     required: false
     default: ''
   sarif-uri:
     description: >-
       artifactLocation.uri used by the SARIF payload (default: the path input).
       Use a repository-relative path so code scanning resolves the file. Only
-      valid with format sarif.
+      valid with format sarif; a directory path rejects this input.
     required: false
     default: ''
   python-version:
@@ -101,7 +109,7 @@ outputs:
     description: >-
       Path of the SARIF 2.1.0 payload written by this run (as given, so relative
       inputs stay workspace-relative), or empty when no SARIF artifact was
-      requested or produced.
+      requested or produced. Always empty in directory mode.
     value: ${{ steps.audit.outputs.sarif-path }}
 
 runs:
@@ -130,7 +138,7 @@ runs:
         }
 
         if [ -z "$INPUT_PATH" ]; then
-          error "input 'path' is required (path to a local PDF file)"
+          error "input 'path' is required (a local PDF file or a directory of PDFs)"
         fi
 
         lowered="$(printf '%s' "$INPUT_PATH" | tr '[:upper:]' '[:lower:]')"
@@ -140,8 +148,18 @@ runs:
             ;;
         esac
 
-        if [ ! -f "$INPUT_PATH" ]; then
-          error "input 'path' file not found (relative to $PWD): $INPUT_PATH"
+        # The input is either one PDF (single-file mode, ``audit``) or a
+        # directory of PDFs (directory mode, ``audit-dir``). The kind decides the
+        # CLI subcommand, the allowed formats and the supported inputs.
+        if [ ! -e "$INPUT_PATH" ]; then
+          error "input 'path' not found (relative to $PWD): $INPUT_PATH"
+        fi
+        if [ -d "$INPUT_PATH" ]; then
+          input_kind=directory
+        elif [ -f "$INPUT_PATH" ]; then
+          input_kind=file
+        else
+          error "input 'path' must be a regular PDF file or a directory: $INPUT_PATH"
         fi
 
         case "$INPUT_FAIL_ON" in
@@ -157,6 +175,35 @@ runs:
             error "input 'format' must be one of summary, json, html, sarif (got '$INPUT_FORMAT')"
             ;;
         esac
+
+        # Directory mode aggregates a tree with ``audit-dir``: there is no
+        # per-file baseline/waiver fingerprint mapping and no SARIF output.
+        # Reject the unsupported combinations here, before Python is installed,
+        # instead of letting the run step discover them (or silently ignore
+        # them). A directory path never accepts baseline/waiver/SARIF inputs.
+        if [ "$input_kind" = "directory" ]; then
+          case "$INPUT_FORMAT" in
+            summary | json | html) ;;
+            *)
+              error "input 'format' must be one of summary, json, html when 'path' is a directory (got '$INPUT_FORMAT'); SARIF is a single-file feature"
+              ;;
+          esac
+          if [ -n "$INPUT_BASELINE_PATH" ]; then
+            error "input 'baseline-path' is not supported when 'path' is a directory: $INPUT_PATH (baselines are a single-file feature)"
+          fi
+          if [ -n "$INPUT_BASELINE_OUTPUT_PATH" ]; then
+            error "input 'baseline-output-path' is not supported when 'path' is a directory: $INPUT_PATH (baselines are a single-file feature)"
+          fi
+          if [ -n "$INPUT_WAIVERS_PATH" ]; then
+            error "input 'waivers-path' is not supported when 'path' is a directory: $INPUT_PATH (waivers are a single-file feature)"
+          fi
+          if [ -n "$INPUT_SARIF_PATH" ]; then
+            error "input 'sarif-path' is not supported when 'path' is a directory: $INPUT_PATH (there is no SARIF output)"
+          fi
+          if [ -n "$INPUT_SARIF_URI" ]; then
+            error "input 'sarif-uri' is not supported when 'path' is a directory: $INPUT_PATH (there is no SARIF output)"
+          fi
+        fi
 
         # A JSON baseline/waiver file must exist locally: a URL would turn the
         # comparison into a network fetch, and a missing file usually means a
@@ -269,6 +316,19 @@ runs:
         waivers_path="$INPUT_WAIVERS_PATH"
         sarif_uri="$INPUT_SARIF_URI"
 
+        # One PDF keeps its single-file ``audit`` pass; a directory switches to
+        # the aggregate ``audit-dir`` pass. Validation already rejected the
+        # unsupported directory inputs, so the mode only decides the subcommand,
+        # the default artifacts and the summary rows here.
+        if [ -d "$INPUT_PATH" ]; then
+          input_kind=directory
+        elif [ -f "$INPUT_PATH" ]; then
+          input_kind=file
+        else
+          echo "::error::input 'path' must be a regular PDF file or a directory: $INPUT_PATH"
+          exit 2
+        fi
+
         ensure_parent() {
           local path="$1" parent
           [ -n "$path" ] || return 0
@@ -289,6 +349,14 @@ runs:
           sarif_path="${RUNNER_TEMP_DIR}/pdf-inspector-audit.sarif"
         fi
 
+        stats_path=""
+        if [ "$input_kind" = "directory" ]; then
+          # Directory mode has no SARIF output; validation rejects an explicit
+          # sarif-path, this keeps the output empty even when it was bypassed.
+          sarif_path=""
+          stats_path="${RUNNER_TEMP_DIR}/pdf-inspector-audit-stats.json"
+        fi
+
         primary_output=""
         case "$format" in
           json) primary_output="$json_path" ;;
@@ -297,31 +365,42 @@ runs:
         esac
         ensure_parent "$primary_output"
         ensure_parent "$baseline_output_path"
+        ensure_parent "$stats_path"
         # A stale payload from an earlier step in the same job must not mask a
         # run that never wrote its output.
         if [ -n "$primary_output" ]; then
           rm -f -- "$primary_output"
         fi
+        if [ -n "$stats_path" ]; then
+          rm -f -- "$stats_path"
+        fi
 
-        # One CLI pass. The baseline, the waiver policy, the comparison artifact
-        # and the SARIF uri are appended to *every* pass: a primary summary and a
-        # secondary JSON/SARIF artifact must describe the same comparison, or the
-        # gate and the artifacts disagree.
+        # One CLI pass shared by both modes. File mode keeps the baseline, the
+        # waiver policy, the comparison artifact and the SARIF uri on *every*
+        # pass: a primary summary and a secondary JSON/SARIF artifact must
+        # describe the same comparison, or the gate and the artifacts disagree.
+        # Directory mode never appends them (``audit-dir`` does not register the
+        # flags), and its stats artifact is written by the primary pass only.
         run_pass() {
           local pass_format="$1" pass_fail_on="$2"
           shift 2
-          local pass_args=(audit "$INPUT_PATH" --format "$pass_format" --fail-on "$pass_fail_on")
-          if [ -n "$baseline_path" ]; then
-            pass_args+=(--baseline "$baseline_path")
-            if [ -n "$baseline_output_path" ]; then
-              pass_args+=(--baseline-output "$baseline_output_path")
+          local pass_args=()
+          if [ "$input_kind" = "directory" ]; then
+            pass_args=(audit-dir "$INPUT_PATH" --format "$pass_format" --fail-on "$pass_fail_on")
+          else
+            pass_args=(audit "$INPUT_PATH" --format "$pass_format" --fail-on "$pass_fail_on")
+            if [ -n "$baseline_path" ]; then
+              pass_args+=(--baseline "$baseline_path")
+              if [ -n "$baseline_output_path" ]; then
+                pass_args+=(--baseline-output "$baseline_output_path")
+              fi
             fi
-          fi
-          if [ -n "$waivers_path" ]; then
-            pass_args+=(--waivers "$waivers_path")
-          fi
-          if [ "$pass_format" = "sarif" ] && [ -n "$sarif_uri" ]; then
-            pass_args+=(--sarif-uri "$sarif_uri")
+            if [ -n "$waivers_path" ]; then
+              pass_args+=(--waivers "$waivers_path")
+            fi
+            if [ "$pass_format" = "sarif" ] && [ -n "$sarif_uri" ]; then
+              pass_args+=(--sarif-uri "$sarif_uri")
+            fi
           fi
           if [ "$#" -gt 0 ]; then
             pass_args+=("$@")
@@ -336,9 +415,17 @@ runs:
           return "$status"
         }
 
-        set +e
+        primary_args=()
         if [ -n "$primary_output" ]; then
-          run_pass "$format" "$fail_on" --output "$primary_output"
+          primary_args+=(--output "$primary_output")
+        fi
+        if [ -n "$stats_path" ]; then
+          primary_args+=(--stats "$stats_path")
+        fi
+
+        set +e
+        if [ "${#primary_args[@]}" -gt 0 ]; then
+          run_pass "$format" "$fail_on" "${primary_args[@]}"
         else
           run_pass "$format" "$fail_on"
         fi
@@ -350,6 +437,13 @@ runs:
         # interpreter failure also exits 1 like a matched threshold.
         if [ -n "$primary_output" ] && [ ! -s "$primary_output" ]; then
           echo "::error::pdf-inspector did not write $primary_output (exit code $exit_code); see the CLI error above (broken Python environment or invalid input PDF)"
+          exit 2
+        fi
+        # Directory mode always writes the stats artifact the step summary reads.
+        # A usage/discovery error exits 2 before writing it, so only a 0/1 run
+        # without the file is a broken environment.
+        if [ -n "$stats_path" ] && [ "$exit_code" -ne 2 ] && [ ! -s "$stats_path" ]; then
+          echo "::error::pdf-inspector did not write the directory stats artifact $stats_path (exit code $exit_code); see the CLI error above"
           exit 2
         fi
 
@@ -385,7 +479,9 @@ runs:
             report_path=""
           fi
         fi
-        if [ "$format" != "sarif" ] && [ -n "$INPUT_SARIF_PATH" ]; then
+        # No SARIF pass in directory mode: the format is rejected up front and
+        # ``audit-dir`` has no SARIF payload at all.
+        if [ "$input_kind" != "directory" ] && [ "$format" != "sarif" ] && [ -n "$INPUT_SARIF_PATH" ]; then
           set +e
           write_secondary sarif "$sarif_path"
           status=$?
@@ -404,22 +500,63 @@ runs:
           echo "sarif-path=$sarif_path"
         } >> "$GITHUB_OUTPUT"
 
+        # Directory mode adds the aggregate counts to the step summary. They come
+        # from the same --stats artifact the CLI wrote, so the summary and the
+        # JSON/HTML payload can never disagree. The heredoc body sits at this
+        # block's base indentation (like every ``run: |`` heredoc in the repo) so
+        # the shell sees it at column 0.
+        stats_rows=""
+        if [ "$input_kind" = "directory" ] && [ -s "$stats_path" ]; then
+          stats_rows="$(
+            python - "$stats_path" <<'PY'
+        import json
+        import sys
+        from pathlib import Path
+
+        data = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+        root = data.get('root') or {}
+        summary = data.get('summary') or {}
+
+
+        def count(key):
+            try:
+                return max(int(summary.get(key) or 0), 0)
+            except (TypeError, ValueError):
+                return 0
+
+
+        name = str(root.get('name') or '.').replace('|', '\\|')
+        print(f'| root | `{name}` |')
+        for key in ('files', 'audited', 'failed', 'errors', 'warnings', 'info'):
+            print(f'| {key} | {count(key)} |')
+        PY
+          )"
+        fi
+
         {
           echo "### PDF audit: \`$INPUT_PATH\`"
           echo
           echo "| Field | Value |"
           echo "| --- | --- |"
+          if [ "$input_kind" = "directory" ]; then
+            echo "| mode | \`directory\` |"
+            if [ -n "$stats_rows" ]; then
+              echo "$stats_rows"
+            fi
+          fi
           echo "| exit code | \`$exit_code\` |"
           echo "| fail-on | \`$fail_on\` |"
           echo "| format | \`$format\` |"
-          if [ -n "$baseline_path" ]; then
-            echo "| baseline | \`$baseline_path\` |"
-          fi
-          if [ -n "$waivers_path" ]; then
-            echo "| waivers | \`$waivers_path\` |"
-          fi
-          if [ -n "$baseline_output_path" ]; then
-            echo "| baseline comparison | \`$baseline_output_path\` |"
+          if [ "$input_kind" != "directory" ]; then
+            if [ -n "$baseline_path" ]; then
+              echo "| baseline | \`$baseline_path\` |"
+            fi
+            if [ -n "$waivers_path" ]; then
+              echo "| waivers | \`$waivers_path\` |"
+            fi
+            if [ -n "$baseline_output_path" ]; then
+              echo "| baseline comparison | \`$baseline_output_path\` |"
+            fi
           fi
           if [ -n "$json_path" ]; then
             echo "| JSON | \`$json_path\` |"

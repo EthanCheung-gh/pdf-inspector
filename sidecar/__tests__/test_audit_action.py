@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -34,6 +35,9 @@ from test_diff_action import _run_step as _run_generic_step  # noqa: E402
 VALIDATE_STEP = 'Validate inputs'
 RUN_STEP = 'Run PDF audit'
 WAIVER_REASON = 'Sample policy; tracked in DOC-1234'
+
+# A file that promises a document body and never delivers one.
+BROKEN_PDF = b'%PDF-1.4\nthis header promises a document body that never arrives\n'
 
 
 def _run_step(name: str, *, env, cwd):
@@ -112,10 +116,19 @@ def workspace(tmp_path_factory):
         ),
         encoding='utf-8',
     )
+
+    # A small directory tree for directory mode: one readable PDF plus one
+    # damaged stub, so ``failed`` and the aggregate error count are non-zero.
+    directory = root / 'docs'
+    directory.mkdir()
+    _text_pdf(directory / 'a.pdf')
+    (directory / 'broken.pdf').write_bytes(BROKEN_PDF)
+
     return {
         'root': root,
         'pdf': pdf,
         'warning_pdf': _warning_pdf(root / 'warnings.pdf'),
+        'directory': str(directory),
         'baseline': str(baseline),
         'waivers': str(waivers),
         'findings': report['findings'],
@@ -386,6 +399,119 @@ def test_validate_inputs_accepts_a_comparison_path_with_empty_artifact_paths(wor
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+# --- directory mode input validation ---------------------------------------
+
+
+def _directory_env(workspace, **overrides) -> dict[str, str]:
+    """Validation env for a directory ``path`` (the single-file inputs empty)."""
+    env = _validate_env(
+        workspace, INPUT_PATH=workspace['directory'], INPUT_FORMAT='json'
+    )
+    env.update(overrides)
+    return env
+
+
+@pytest.mark.parametrize('fmt', ['summary', 'json', 'html'])
+def test_validate_inputs_accepts_a_directory(workspace, fmt):
+    result = _run_step(
+        VALIDATE_STEP,
+        env=_directory_env(workspace, INPUT_FORMAT=fmt),
+        cwd=workspace['root'],
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_validate_inputs_accepts_directory_artifact_paths(workspace):
+    result = _run_step(
+        VALIDATE_STEP,
+        env=_directory_env(
+            workspace,
+            INPUT_JSON_PATH='audit-artifacts/report.json',
+            INPUT_REPORT_PATH='audit-artifacts/report.html',
+        ),
+        cwd=workspace['root'],
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_validate_inputs_rejects_sarif_for_a_directory(workspace):
+    result = _run_step(
+        VALIDATE_STEP,
+        env=_directory_env(workspace, INPUT_FORMAT='sarif'),
+        cwd=workspace['root'],
+    )
+
+    combined = result.stdout + result.stderr
+    assert result.returncode == 2
+    assert '::error::' in combined
+    assert "input 'format' must be one of summary, json, html" in combined
+    assert 'SARIF is a single-file feature' in combined
+
+
+@pytest.mark.parametrize(
+    'key, fragment',
+    [
+        ('INPUT_BASELINE_PATH', "'baseline-path' is not supported"),
+        ('INPUT_BASELINE_OUTPUT_PATH', "'baseline-output-path' is not supported"),
+        ('INPUT_WAIVERS_PATH', "'waivers-path' is not supported"),
+        ('INPUT_SARIF_PATH', "'sarif-path' is not supported"),
+        ('INPUT_SARIF_URI', "'sarif-uri' is not supported"),
+    ],
+)
+def test_validate_inputs_rejects_single_file_inputs_for_a_directory(
+    workspace, key, fragment
+):
+    result = _run_step(
+        VALIDATE_STEP,
+        env=_directory_env(
+            workspace,
+            # A path that does not exist proves the directory check runs before
+            # the "file not found" check.
+            **{key: 'audit-artifacts/does-not-exist.json'},
+        ),
+        cwd=workspace['root'],
+    )
+
+    combined = result.stdout + result.stderr
+    assert result.returncode == 2, combined
+    assert '::error::' in combined
+    assert fragment in combined
+    assert 'single-file feature' in combined or 'no SARIF output' in combined
+    assert 'file not found' not in combined
+
+
+def test_validate_inputs_rejects_a_missing_path(workspace):
+    result = _run_step(
+        VALIDATE_STEP,
+        env=_validate_env(workspace, INPUT_PATH='missing.pdf'),
+        cwd=workspace['root'],
+    )
+
+    combined = result.stdout + result.stderr
+    assert result.returncode == 2
+    assert "input 'path' not found" in combined
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='mkfifo is POSIX only')
+def test_validate_inputs_rejects_a_path_that_is_neither_file_nor_directory(
+    workspace, tmp_path
+):
+    fifo = tmp_path / 'pipe'
+    os.mkfifo(fifo)
+
+    result = _run_step(
+        VALIDATE_STEP,
+        env=_validate_env(workspace, INPUT_PATH=str(fifo)),
+        cwd=workspace['root'],
+    )
+
+    combined = result.stdout + result.stderr
+    assert result.returncode == 2
+    assert "must be a regular PDF file or a directory" in combined
+
+
 # --- run step ---------------------------------------------------------------
 
 
@@ -554,3 +680,183 @@ def test_run_step_refuses_to_publish_outputs_when_no_payload_was_written(
     assert result.returncode == 2, result.stdout + result.stderr
     assert 'did not write' in result.stdout
     assert _outputs(outputs) == {}
+
+
+# --- directory mode run step ------------------------------------------------
+
+
+def _directory_run_env(workspace, tmp_path: Path, **overrides):
+    """Run-step env whose ``path`` is the fixture directory."""
+    env, outputs, summary = _run_env(
+        workspace,
+        tmp_path,
+        INPUT_PATH=workspace['directory'],
+        INPUT_FORMAT='json',
+    )
+    env.update(overrides)
+    return env, outputs, summary
+
+
+def _stats_path(env: dict[str, str]) -> Path:
+    return Path(env['RUNNER_TEMP_DIR']) / 'pdf-inspector-audit-stats.json'
+
+
+def test_run_step_audits_a_directory_to_the_default_json_and_stats(workspace, tmp_path):
+    env, outputs, summary = _directory_run_env(workspace, tmp_path)
+
+    result = _run_step(RUN_STEP, env=env, cwd=workspace['root'])
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    written = _outputs(outputs)
+    default_json = Path(env['RUNNER_TEMP_DIR']) / 'pdf-inspector-audit.json'
+    assert written['exit-code'] == '0'
+    assert written['json-path'] == str(default_json)
+    assert written['report-path'] == ''
+    # Directory mode has no SARIF output at all.
+    assert written['sarif-path'] == ''
+
+    data = json.loads(default_json.read_text(encoding='utf-8'))
+    assert list(data) == ['schemaVersion', 'tool', 'root', 'summary', 'files']
+    assert data['root']['name'] == 'docs'
+    assert data['files'], 'the fixture directory must be audited'
+    assert all(not Path(entry['path']).is_absolute() for entry in data['files'])
+    assert data['summary']['files'] == 2
+    assert data['summary']['audited'] == 1
+    assert data['summary']['failed'] == 1
+    assert data['summary']['errors'] == 1
+
+    stats = json.loads(_stats_path(env).read_text(encoding='utf-8'))
+    assert list(stats) == ['schemaVersion', 'tool', 'root', 'summary']
+    assert 'findings' not in stats
+    assert list(stats['summary']) == [
+        'files',
+        'audited',
+        'failed',
+        'findings',
+        'errors',
+        'warnings',
+        'info',
+    ]
+    assert stats['summary']['files'] == 2
+
+    summary_text = summary.read_text(encoding='utf-8')
+    assert '| mode | `directory` |' in summary_text
+    assert '| root | `docs` |' in summary_text
+    for key, value in (
+        ('files', 2),
+        ('audited', 1),
+        ('failed', 1),
+        ('errors', 1),
+    ):
+        assert f'| {key} | {value} |' in summary_text
+    assert f'| JSON | `{default_json}` |' in summary_text
+    assert '| SARIF |' not in summary_text
+
+
+def test_run_step_audits_a_directory_to_an_explicit_html_report(workspace, tmp_path):
+    report = tmp_path / 'audit-artifacts' / 'directory.html'
+    env, outputs, summary = _directory_run_env(
+        workspace, tmp_path, INPUT_FORMAT='html', INPUT_REPORT_PATH=str(report)
+    )
+
+    result = _run_step(RUN_STEP, env=env, cwd=workspace['root'])
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    written = _outputs(outputs)
+    assert written['report-path'] == str(report)
+    assert written['json-path'] == ''
+
+    body = report.read_text(encoding='utf-8')
+    assert body.startswith('<!DOCTYPE html>')
+    assert '<title>PDF audit report - 2 files</title>' in body
+    assert '<script' not in body
+    assert body.count('<div class="error-block">') == 1
+
+    summary_text = summary.read_text(encoding='utf-8')
+    assert f'| HTML | `{report}` |' in summary_text
+    assert '| failed | 1 |' in summary_text
+
+
+def test_run_step_writes_the_secondary_directory_json_report(workspace, tmp_path):
+    json_path = tmp_path / 'audit-artifacts' / 'directory.json'
+    env, outputs, summary = _directory_run_env(
+        workspace, tmp_path, INPUT_FORMAT='summary', INPUT_JSON_PATH=str(json_path)
+    )
+
+    result = _run_step(RUN_STEP, env=env, cwd=workspace['root'])
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    written = _outputs(outputs)
+    assert written['json-path'] == str(json_path)
+    assert json.loads(json_path.read_text(encoding='utf-8'))['summary']['files'] == 2
+    assert _stats_path(env).is_file()
+
+    summary_text = summary.read_text(encoding='utf-8')
+    assert '| mode | `directory` |' in summary_text
+    assert '| files | 2 |' in summary_text
+    assert f'| JSON | `{json_path}` |' in summary_text
+
+
+def test_run_step_still_fails_the_step_on_a_directory_threshold(workspace, tmp_path):
+    env, outputs, _summary = _directory_run_env(
+        workspace, tmp_path, INPUT_FAIL_ON='error'
+    )
+
+    result = _run_step(RUN_STEP, env=env, cwd=workspace['root'])
+
+    # The damaged file counts as one aggregate error, so --fail-on error fails.
+    assert result.returncode == 1, result.stdout + result.stderr
+    written = _outputs(outputs)
+    assert written['exit-code'] == '1'
+    assert json.loads(
+        Path(written['json-path']).read_text(encoding='utf-8')
+    )['summary']['failed'] == 1
+    assert _stats_path(env).is_file()
+
+
+def test_run_step_directory_mode_never_passes_baseline_or_waivers(
+    workspace, tmp_path
+):
+    # The validation step rejects these inputs for a directory; the run step
+    # must not hand them to ``audit-dir`` either (it would exit 2 on the flags).
+    comparison = tmp_path / 'audit-artifacts' / 'comparison.json'
+    env, outputs, _summary = _directory_run_env(
+        workspace,
+        tmp_path,
+        INPUT_BASELINE_PATH='does-not-exist.json',
+        INPUT_BASELINE_OUTPUT_PATH=str(comparison),
+        INPUT_WAIVERS_PATH='does-not-exist-waivers.json',
+        INPUT_SARIF_URI='docs/a.pdf',
+    )
+
+    result = _run_step(RUN_STEP, env=env, cwd=workspace['root'])
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not comparison.exists()
+    assert _outputs(outputs)['sarif-path'] == ''
+
+
+def test_run_step_rejects_a_path_that_is_not_a_file_or_directory(workspace, tmp_path):
+    env, _outputs_file, _summary = _directory_run_env(
+        workspace, tmp_path, INPUT_PATH=str(tmp_path / 'missing')
+    )
+
+    result = _run_step(RUN_STEP, env=env, cwd=workspace['root'])
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "must be a regular PDF file or a directory" in result.stdout
+    assert not _stats_path(env).exists()
+
+
+def test_action_documents_the_directory_mode():
+    text = ACTION.read_text(encoding='utf-8')
+
+    assert 'directory of PDFs' in text
+    assert 'audit-dir' in text
+    assert 'summary, json or html' in text
+    assert 'pdf-inspector-audit-stats.json' in text
+    assert "'baseline-path' is not supported when 'path' is a directory" in text
+    assert 'Always empty in directory mode.' in text
+    # Validation (which rejects directory + baseline/waivers/SARIF) is the first
+    # step, so an unsupported combination fails before Python is installed.
+    assert text.index('- name: Validate inputs') < text.index('- name: Set up Python')
