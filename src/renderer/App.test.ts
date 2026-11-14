@@ -6,6 +6,7 @@ import { buildAuditReport, type AuditFinding } from '../shared/audit-types';
 import { useI18nStore } from './i18n/store';
 import { useAuditStore } from './store/audit-store';
 import { useDiffStore } from './store/diff-store';
+import { usePageOverviewStore } from './store/page-overview-store';
 import { usePdfStore } from './store/pdf-store';
 import { useRawStore } from './store/raw-store';
 import { useSessionRestoreStore } from './store/session-restore-store';
@@ -101,6 +102,9 @@ beforeEach(() => {
   useDiffStore.getState().reset();
   useAuditStore.getState().reset();
   useRawStore.getState().reset();
+  // The overview is a shell-level dialog; leaving it open would leak into the
+  // next test's render.
+  usePageOverviewStore.setState({ open: false });
   useThemeStore.setState({ theme: 'dark', resolvedTheme: 'dark' });
   // The default language stays English so the existing English assertions hold.
   useI18nStore.setState({ locale: 'en' });
@@ -913,5 +917,189 @@ describe('App recent documents and session commands', () => {
     act(() => {
       useI18nStore.setState({ locale: 'en' });
     });
+  });
+});
+
+describe('App page overview entry', () => {
+  const command = (id: string) => listCommands().find((entry) => entry.id === id);
+  const overviewDialog = () => screen.queryByRole('dialog', { name: 'Page overview' });
+
+  beforeEach(() => {
+    usePageOverviewStore.setState({ open: false });
+  });
+
+  it('opens and closes the overview with P', () => {
+    render(React.createElement(App));
+    expect(overviewDialog()).toBeNull();
+
+    fireEvent.keyDown(window, { key: 'p' });
+    expect(usePageOverviewStore.getState().open).toBe(true);
+    expect(overviewDialog()).toBeTruthy();
+
+    // The dialog itself ignores P; the shell owns the toggle so it works whether
+    // focus is on a card, the close button or the document.
+    fireEvent.keyDown(window, { key: 'P' });
+    expect(usePageOverviewStore.getState().open).toBe(false);
+    expect(overviewDialog()).toBeNull();
+  });
+
+  it('keeps Ctrl/Cmd+P and P typed into an editable element for the browser', () => {
+    render(React.createElement(App));
+
+    fireEvent.keyDown(window, { key: 'p', ctrlKey: true });
+    fireEvent.keyDown(window, { key: 'P', metaKey: true });
+    expect(usePageOverviewStore.getState().open).toBe(false);
+
+    // Once open, a modified P must not close it either (it is the print shortcut).
+    act(() => {
+      usePageOverviewStore.getState().openOverview();
+    });
+    fireEvent.keyDown(window, { key: 'p', ctrlKey: true });
+    expect(usePageOverviewStore.getState().open).toBe(true);
+
+    act(() => {
+      usePageOverviewStore.getState().closeOverview();
+    });
+
+    // A caret inside a text field types a letter, it does not open a dialog.
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    try {
+      fireEvent.keyDown(input, { key: 'p' });
+    } finally {
+      input.remove();
+    }
+    expect(usePageOverviewStore.getState().open).toBe(false);
+  });
+
+  it('leaves the Inspect shortcuts alone while the overview is open', () => {
+    const selectedWord: PdfWord = {
+      type: 'word',
+      page: 2,
+      x0: 10,
+      y0: 20,
+      x1: 30,
+      y1: 32,
+      text: 'Hello',
+      fontname: 'Helvetica',
+      size: 11,
+    };
+    usePdfStore.setState({
+      selectedObject: selectedWord,
+      filterCriteria: { types: ['word'] },
+      textSelectionMode: false,
+      regionMode: false,
+    });
+
+    render(React.createElement(App));
+    act(() => {
+      usePageOverviewStore.getState().openOverview();
+    });
+
+    fireEvent.keyDown(window, { key: 't' });
+    fireEvent.keyDown(window, { key: 'r' });
+    fireEvent.keyDown(window, { key: 'f' });
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.keyDown(window, { key: 'F', ctrlKey: true });
+
+    const pdf = usePdfStore.getState();
+    expect(pdf.selectedObject).toBe(selectedWord);
+    expect(pdf.filterCriteria).toEqual({ types: ['word'] });
+    expect(pdf.textSelectionMode).toBe(false);
+    expect(pdf.regionMode).toBe(false);
+    expect(pdf.searchOpen).toBe(false);
+    expect(useWorkspaceStore.getState().focusMode).toBe(false);
+    // Escape belongs to the dialog: the shell must not close it behind its back.
+    expect(usePageOverviewStore.getState().open).toBe(true);
+  });
+
+  it('registers the Navigate command and opens the overview from the palette', () => {
+    render(React.createElement(App));
+
+    const pageOverview = command('navigate.page-overview');
+    expect(pageOverview).toBeTruthy();
+    expect(pageOverview?.title).toBe('Page overview…');
+    expect(pageOverview?.group).toBe('Navigate');
+    expect(pageOverview?.keywords).toEqual(['pages', 'thumbnails', 'overview']);
+    expect(pageOverview?.shortcut).toBe('P');
+    expect(pageOverview?.isEnabled?.()).toBe(true);
+
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    expect(screen.getByRole('dialog', { name: 'Command palette' })).toBeTruthy();
+
+    fireEvent.click(screen.getByText('Page overview…'));
+
+    // The palette closes first, the overview is the only modal left.
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull();
+    expect(usePageOverviewStore.getState().open).toBe(true);
+
+    act(() => {
+      usePageOverviewStore.getState().closeOverview();
+      usePdfStore.setState({ pageCount: 0 });
+    });
+    expect(command('navigate.page-overview')?.isEnabled?.()).toBe(false);
+  });
+
+  it('closes the overview when Diff, Audit or Raw takes over the workspace', () => {
+    render(React.createElement(App));
+
+    act(() => {
+      usePageOverviewStore.getState().openOverview();
+    });
+    expect(usePageOverviewStore.getState().open).toBe(true);
+
+    act(() => {
+      useDiffStore.getState().applyResult(makeSampleResult());
+      useDiffStore.getState().enterWorkspace();
+    });
+    expect(usePageOverviewStore.getState().open).toBe(false);
+    expect(overviewDialog()).toBeNull();
+
+    // Leaving the workspace does not reopen it.
+    act(() => {
+      useDiffStore.getState().exitWorkspace();
+    });
+    expect(usePageOverviewStore.getState().open).toBe(false);
+
+    act(() => {
+      usePageOverviewStore.getState().openOverview();
+    });
+    act(() => {
+      useAuditStore.setState({
+        active: true,
+        filePath: '/docs/inspecting.pdf',
+        fileName: 'inspecting.pdf',
+      });
+    });
+    expect(usePageOverviewStore.getState().open).toBe(false);
+
+    act(() => {
+      useAuditStore.getState().close();
+    });
+    act(() => {
+      usePageOverviewStore.getState().openOverview();
+    });
+    expect(usePageOverviewStore.getState().open).toBe(true);
+
+    act(() => {
+      useRawStore.setState({
+        active: true,
+        filePath: '/docs/inspecting.pdf',
+        fileName: 'inspecting.pdf',
+      });
+    });
+    expect(usePageOverviewStore.getState().open).toBe(false);
+  });
+
+  it('does not open the overview from P while a workspace owns the keyboard', () => {
+    render(React.createElement(App));
+
+    act(() => {
+      useDiffStore.getState().enterWorkspace();
+    });
+
+    fireEvent.keyDown(window, { key: 'p' });
+
+    expect(usePageOverviewStore.getState().open).toBe(false);
   });
 });

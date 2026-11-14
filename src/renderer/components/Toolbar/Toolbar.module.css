@@ -73,6 +73,46 @@
   white-space: nowrap;
 }
 
+/*
+ * Page counter, which is also the page-overview entry. It replaces the old
+ * read-only `.value` span, so it keeps that element's box (min-width 40px, no
+ * horizontal padding, muted, centered) instead of the bordered `.button`
+ * chrome: the toolbar is budgeted for 1280px and this entry may not cost any
+ * width there. The vertical padding of the plain `.value` is replaced by
+ * `min-height` so the hover highlight and the click target reach the height of
+ * the Prev/Next buttons without changing the group's width.
+ */
+.pageIndicator {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  min-height: 22px;
+  padding: 0;
+  color: var(--pi-text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--pi-radius-md);
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+}
+
+.pageIndicator:hover:not(:disabled) {
+  background: var(--pi-bg-hover);
+}
+
+.pageIndicator:focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 1px;
+}
+
+.pageIndicator:disabled {
+  color: var(--pi-text-disabled);
+  cursor: not-allowed;
+}
+
 .spacer {
   flex: 1;
   min-width: 0;

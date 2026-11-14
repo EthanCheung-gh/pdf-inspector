@@ -8,6 +8,7 @@ import { usePdfStore } from '../../store/pdf-store';
 import { useAuditStore } from '../../store/audit-store';
 import { useDiffStore } from '../../store/diff-store';
 import { useDocumentTabsStore } from '../../store/document-tabs-store';
+import { usePageOverviewStore } from '../../store/page-overview-store';
 import { useRawStore } from '../../store/raw-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
 import { useI18nStore } from '../../i18n/store';
@@ -1323,5 +1324,96 @@ describe('Toolbar command registrations', () => {
     expect(state.leftTab).toBe('layers');
     expect(state.leftCollapsed).toBe(false);
     expect(state.focusMode).toBe(false);
+  });
+});
+
+describe('Toolbar page overview entry', () => {
+  // The accessible name starts with the visible counter, so query it by the
+  // action hint instead of the full string.
+  const pageCountButton = (): HTMLButtonElement =>
+    screen.getByRole('button', { name: /Open the page overview/ }) as HTMLButtonElement;
+
+  beforeEach(() => {
+    useDiffStore.getState().reset();
+    useAuditStore.getState().reset();
+    useRawStore.getState().reset();
+    usePageOverviewStore.setState({ open: false });
+    usePdfStore.setState({
+      filePath: '/docs/report.pdf',
+      sourceUrl: null,
+      documentName: null,
+      metadata,
+      pageCount: 4,
+      currentPage: 1,
+      isLoading: false,
+    });
+    useWorkspaceStore.setState({ leftCollapsed: false, rightCollapsed: false, focusMode: false });
+  });
+
+  afterEach(cleanup);
+
+  it('keeps the page counter text and opens the overview when clicked', () => {
+    render(React.createElement(Toolbar));
+
+    const button = pageCountButton();
+    // The counter is still the visible `1 / 4`; only its role changed.
+    expect(button.textContent).toBe('1 / 4');
+    expect(button.disabled).toBe(false);
+    expect(button.getAttribute('title')).toBe('Open the page overview (P)');
+    expect(usePageOverviewStore.getState().open).toBe(false);
+
+    fireEvent.click(button);
+
+    expect(usePageOverviewStore.getState().open).toBe(true);
+  });
+
+  it('keeps the visible count in the accessible name (Label in Name)', () => {
+    usePdfStore.setState({ currentPage: 3, pageCount: 9 });
+    render(React.createElement(Toolbar));
+
+    const button = pageCountButton();
+    // The visible `3 / 9` is part of the name so voice control can still target
+    // the counter; the short hint stays in `title`.
+    expect(button.getAttribute('aria-label')).toBe('3 / 9 — Open the page overview (P)');
+    expect(button.getAttribute('aria-label')).toContain('3 / 9');
+    expect(button.getAttribute('aria-label')).toContain('Open the page overview (P)');
+    expect(button.getAttribute('title')).toBe('Open the page overview (P)');
+  });
+
+  it('disables the counter without pages but stays usable while a page loads', () => {
+    usePdfStore.setState({ filePath: null, pageCount: 0, currentPage: 1 });
+    render(React.createElement(Toolbar));
+
+    expect(pageCountButton().disabled).toBe(true);
+    fireEvent.click(pageCountButton());
+    expect(usePageOverviewStore.getState().open).toBe(false);
+
+    // A card click in the dialog navigates (which sets `isLoading`) before the
+    // dialog closes, so the opener must stay enabled: the dialog restores focus
+    // to it, and a disabled button cannot take focus.
+    act(() => {
+      usePdfStore.setState({ filePath: '/docs/report.pdf', pageCount: 4, isLoading: true });
+    });
+    expect(pageCountButton().disabled).toBe(false);
+    expect(pageCountButton().textContent).toBe('1 / 4');
+
+    fireEvent.click(pageCountButton());
+    expect(usePageOverviewStore.getState().open).toBe(true);
+
+    act(() => {
+      usePageOverviewStore.getState().closeOverview();
+      usePdfStore.setState({ isLoading: false });
+    });
+    expect(pageCountButton().disabled).toBe(false);
+  });
+
+  it('translates the counter tooltip with the rest of the toolbar', () => {
+    useI18nStore.setState({ locale: 'zh-CN' });
+    render(React.createElement(Toolbar));
+
+    const button = screen.getByRole('button', { name: /打开页面总览/ });
+    expect(button.getAttribute('title')).toBe('打开页面总览 (P)');
+    expect(button.getAttribute('aria-label')).toBe('1 / 4 — 打开页面总览 (P)');
+    expect(button.textContent).toBe('1 / 4');
   });
 });

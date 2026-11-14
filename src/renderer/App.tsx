@@ -5,6 +5,7 @@ import { DiffSetupDialog } from './components/Diff/DiffSetupDialog';
 import { DiffWorkspace } from './components/Diff/DiffWorkspace';
 import { InspectorPanel } from './components/InspectorPanel/InspectorPanel';
 import { LeftPanel } from './components/LeftPanel/LeftPanel';
+import { PageOverview } from './components/PageOverview/PageOverview';
 import { PdfViewport } from './components/PdfViewport/PdfViewport';
 import { RawWorkspace } from './components/Raw/RawWorkspace';
 import { StatusBar } from './components/StatusBar/StatusBar';
@@ -23,6 +24,7 @@ import { LOCALES, applyLocale, useI18nStore, useT } from './i18n';
 import { themeLabelKey } from './components/Toolbar/ThemePicker';
 import { useAuditStore } from './store/audit-store';
 import { useDiffStore } from './store/diff-store';
+import { usePageOverviewStore } from './store/page-overview-store';
 import { usePdfStore } from './store/pdf-store';
 import { useRawStore } from './store/raw-store';
 import { useSessionStore } from './store/session-store';
@@ -37,6 +39,14 @@ import {
 import styles from './App.module.css';
 
 const SIDECAR_STATUS_POLL_INTERVAL_MS = 5_000;
+
+/**
+ * `P` toggles the page overview, including while the overview itself is open.
+ * Modifier combinations (notably the browser's Ctrl/Cmd+P print dialog) are left
+ * untouched.
+ */
+const isPageOverviewShortcut = (event: KeyboardEvent): boolean =>
+  (event.key === 'p' || event.key === 'P') && !event.ctrlKey && !event.metaKey && !event.altKey;
 
 const App = (): JSX.Element => {
   // Startup restore runs in an effect, so the empty shell paints first. It only
@@ -207,6 +217,17 @@ const App = (): JSX.Element => {
         run: () => usePdfStore.getState().setSearchOpen(true),
       },
       {
+        // The overview only describes an open document: with no pages there is
+        // nothing to show and the dialog would close itself immediately.
+        id: 'navigate.page-overview',
+        title: t('command.pageOverview'),
+        group: 'Navigate',
+        keywords: ['pages', 'thumbnails', 'overview'],
+        shortcut: 'P',
+        isEnabled: () => usePdfStore.getState().pageCount > 0,
+        run: () => usePageOverviewStore.getState().openOverview(),
+      },
+      {
         id: 'view.clear-selection',
         title: t('command.clearSelection'),
         group: 'View',
@@ -273,6 +294,17 @@ const App = (): JSX.Element => {
 
   const workspaceActive = diffActive || auditActive || rawActive;
 
+  // The page overview belongs to the Inspect document. Diff, Audit and Raw
+  // replace those panes, so a grid of thumbnails would float over a workspace
+  // that does not show the pages it navigates. Closing on the way in (and not
+  // on the way out) keeps the dialog closed after the workspace is left too.
+  const closeOverview = usePageOverviewStore((state) => state.closeOverview);
+
+  useEffect(() => {
+    if (!workspaceActive) return;
+    closeOverview();
+  }, [closeOverview, workspaceActive]);
+
   useEffect(() => {
     const updateSidecarStatus = async (): Promise<void> => {
       try {
@@ -303,6 +335,17 @@ const App = (): JSX.Element => {
         return;
       }
 
+      // While the page overview is open it owns the keyboard like the other
+      // workspaces do: `P` still toggles it (the dialog itself ignores P), but
+      // the Inspect shortcuts must not fire behind the modal. Escape, arrows
+      // and Tab are handled by the dialog.
+      if (usePageOverviewStore.getState().open) {
+        if (isPageOverviewShortcut(event) && usePdfStore.getState().pageCount > 0) {
+          usePageOverviewStore.getState().toggleOverview();
+        }
+        return;
+      }
+
       if ((event.ctrlKey || event.metaKey) && (event.key === 'f' || event.key === 'F')) {
         event.preventDefault();
         if (usePdfStore.getState().pageCount > 0) {
@@ -314,6 +357,14 @@ const App = (): JSX.Element => {
       // form controls such as the Filter dropdowns.
       const target = event.target;
       if (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select'))) {
+        return;
+      }
+      // Page overview: the same entry as the toolbar page counter and the
+      // command palette. Ctrl/Cmd+P stays the browser/print shortcut.
+      if (isPageOverviewShortcut(event)) {
+        if (usePdfStore.getState().pageCount > 0) {
+          usePageOverviewStore.getState().toggleOverview();
+        }
         return;
       }
       // The search results popover is the topmost layer: Escape closes it first
@@ -445,6 +496,10 @@ const App = (): JSX.Element => {
         {!diffActive && !rawActive && auditActive && <AuditWorkspace />}
       </main>
       <StatusBar />
+      {/* Mounted once, below the command palette: both can be open at the same
+          time, and the palette (z-index 1100) must stay on top of the overview
+          (z-index 1000). */}
+      <PageOverview />
       <CommandPalette />
       {/* One shared instance: the empty state and the File commands both open it
           through `session-ui-store`. */}

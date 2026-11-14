@@ -8,6 +8,7 @@ import type { CommandDefinition } from '../../services/command-registry';
 import { useAuditStore } from '../../store/audit-store';
 import { useDiffStore } from '../../store/diff-store';
 import { supportsDocumentTabs, useDocumentTabsStore } from '../../store/document-tabs-store';
+import { usePageOverviewStore } from '../../store/page-overview-store';
 import { usePdfStore } from '../../store/pdf-store';
 import { useRawStore } from '../../store/raw-store';
 import { useWorkspaceStore } from '../../store/workspace-store';
@@ -354,7 +355,26 @@ export const Toolbar: React.FC = () => {
             >
               {t('toolbar.prev')}
             </button>
-            <span className={styles.value}>{currentPage} / {pageCount}</span>
+            {/* The page counter doubles as the page overview entry: the button
+                keeps the `1 / 4` text so the row looks unchanged and stays
+                narrow at 1280px. Only the missing document disables it, never
+                `isLoading`: a card click in the dialog starts a page extraction
+                (which sets `isLoading`) and then closes the dialog, so a
+                loading-disabled opener would be unfocusable exactly when the
+                dialog restores focus to it. `P` and the palette command also
+                work while a page loads. */}
+            <button
+              className={styles.pageIndicator}
+              type="button"
+              onClick={() => usePageOverviewStore.getState().openOverview()}
+              disabled={pageCount < 1}
+              title={t('toolbar.pageOverviewTitle')}
+              // The visible count must stay part of the accessible name
+              // (Label in Name); the hint only says what the click does.
+              aria-label={`${currentPage} / ${pageCount} — ${t('toolbar.pageOverviewTitle')}`}
+            >
+              {currentPage} / {pageCount}
+            </button>
             <button
               className={styles.button}
               type="button"
