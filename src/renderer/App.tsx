@@ -14,14 +14,17 @@ import { PanelRail } from './components/Workspace/PanelRail';
 import { PanelSplitter } from './components/Workspace/PanelSplitter';
 import { DocumentTabs } from './components/Workspace/DocumentTabs';
 import { RecentDocumentsDialog } from './components/Workspace/RecentDocumentsDialog';
+import { annotationDocumentKey } from './hooks/useAnnotationIndex';
 import { usePageNavigation } from './hooks/usePageNavigation';
 import { useRegisterCommands } from './hooks/useRegisterCommands';
 import { useSessionRestore } from './hooks/useSessionRestore';
 import { ipc } from './services/ipc-client';
+import { buildPageMarkers } from './services/page-markers';
 import { resetSessionRestoreGuard, restoreSession } from './services/session-restore';
 import type { CommandDefinition } from './services/command-registry';
 import { LOCALES, applyLocale, useI18nStore, useT } from './i18n';
 import { themeLabelKey } from './components/Toolbar/ThemePicker';
+import { useAnnotationIndexStore } from './store/annotation-index-store';
 import { useAuditStore } from './store/audit-store';
 import { useDiffStore } from './store/diff-store';
 import { usePageOverviewStore } from './store/page-overview-store';
@@ -47,6 +50,40 @@ const SIDECAR_STATUS_POLL_INTERVAL_MS = 5_000;
  */
 const isPageOverviewShortcut = (event: KeyboardEvent): boolean =>
   (event.key === 'p' || event.key === 'P') && !event.ctrlKey && !event.metaKey && !event.altKey;
+
+/**
+ * True when the open document has at least one page carrying a problem.
+ *
+ * Reads exactly what `PageOverview` reads, with the same identity checks, so the
+ * "pages with problems" entry can never open a grid that is empty because the
+ * markers belong to another file: the audit report only counts when it was
+ * produced for `pdf-store.filePath`, and the annotation index only when it is
+ * `ready` for this document's key. Nothing is started here — no report and no
+ * index means "no problems yet", never "run an analysis". A finding with
+ * `page: null` describes the document rather than a page, so it alone does not
+ * enable the command.
+ */
+const hasProblemPages = (): boolean => {
+  const { filePath, sourceUrl, pageCount } = usePdfStore.getState();
+  if (filePath === null || pageCount < 1) return false;
+
+  const audit = useAuditStore.getState();
+  const index = useAnnotationIndexStore.getState();
+  const annotationResult =
+    index.status === 'ready' &&
+    index.result !== null &&
+    index.documentKey !== null &&
+    index.documentKey === annotationDocumentKey(filePath, sourceUrl)
+      ? index.result
+      : null;
+
+  const pageMarkers = buildPageMarkers({
+    pageCount,
+    auditReport: audit.report !== null && audit.filePath === filePath ? audit.report : null,
+    annotationResult,
+  });
+  return pageMarkers.problemPages.length > 0;
+};
 
 const App = (): JSX.Element => {
   // Startup restore runs in an effect, so the empty shell paints first. It only
@@ -226,6 +263,19 @@ const App = (): JSX.Element => {
         shortcut: 'P',
         isEnabled: () => usePdfStore.getState().pageCount > 0,
         run: () => usePageOverviewStore.getState().openOverview(),
+      },
+      {
+        // The same dialog opened on the pages that already carry a problem: an
+        // audit finding or an annotation issue of the current file (see
+        // `hasProblemPages`). `P` keeps opening the unfiltered grid, and this
+        // entry only presets the view filter — it never touches the current page
+        // and never starts an audit or an index.
+        id: 'navigate.pages-with-problems',
+        title: t('command.pagesWithProblems'),
+        group: 'Navigate',
+        keywords: ['pages', 'problems', 'findings', 'warnings', 'errors'],
+        isEnabled: hasProblemPages,
+        run: () => usePageOverviewStore.getState().openOverview('problems'),
       },
       {
         id: 'view.clear-selection',

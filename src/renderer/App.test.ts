@@ -2,8 +2,10 @@
 import React from 'react';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildAuditReport, type AuditFinding } from '../shared/audit-types';
+import { buildAuditReport, type AuditFinding, type AuditReport } from '../shared/audit-types';
 import { useI18nStore } from './i18n/store';
+import type { AnnotationIndexResult } from './services/annotation-index';
+import { useAnnotationIndexStore } from './store/annotation-index-store';
 import { useAuditStore } from './store/audit-store';
 import { useDiffStore } from './store/diff-store';
 import { usePageOverviewStore } from './store/page-overview-store';
@@ -1101,5 +1103,268 @@ describe('App page overview entry', () => {
     fireEvent.keyDown(window, { key: 'p' });
 
     expect(usePageOverviewStore.getState().open).toBe(false);
+  });
+});
+
+/**
+ * The command palette's "pages with problems" entry.
+ *
+ * It is a *view* entry point: it opens the page overview already filtered, and
+ * is enabled only by analyses that already ran for the open document. These
+ * tests pin the same data rules the overview uses, so the command can never
+ * open an empty filtered grid.
+ */
+describe('App pages with problems command', () => {
+  const command = (id: string) => listCommands().find((entry) => entry.id === id);
+  const problemCommand = () => command('navigate.pages-with-problems');
+
+  const TOOL = { name: 'pdf-inspector', version: '0.0.0-test' };
+
+  const makeFinding = (overrides: Partial<AuditFinding> = {}): AuditFinding => ({
+    category: 'pages',
+    severity: 'warning',
+    page: null,
+    title: 'Finding',
+    detail: 'Finding detail.',
+    evidence: null,
+    recommendation: null,
+    ...overrides,
+  });
+
+  const makeReport = (findings: AuditFinding[]): AuditReport =>
+    buildAuditReport(
+      {
+        pages: 5,
+        version: '1.7',
+        encrypted: false,
+        title: 'Command fixture',
+        author: null,
+        producer: null,
+        language: 'en-US',
+        tagged: true,
+      },
+      findings,
+      TOOL,
+    );
+
+  /** Publish a finished report for `filePath` (the open document by default). */
+  const withReport = (findings: AuditFinding[], filePath = '/docs/inspecting.pdf'): void => {
+    act(() =>
+      useAuditStore.setState({
+        filePath,
+        fileName: 'inspecting.pdf',
+        report: makeReport(findings),
+      }),
+    );
+  };
+
+  const makeIndexResult = (
+    overrides: Partial<AnnotationIndexResult> = {},
+  ): AnnotationIndexResult => ({
+    annotations: [],
+    summary: {
+      annotations: 0,
+      pagesWithAnnotations: 0,
+      links: 0,
+      forms: 0,
+      markup: 0,
+      notes: 0,
+      stamps: 0,
+      other: 0,
+      hidden: 0,
+      unresolvedLinks: 0,
+      unsafeLinks: 0,
+      formFields: 0,
+    },
+    linkIssues: [],
+    formIssues: [],
+    formFields: [],
+    scannedPages: 5,
+    truncated: false,
+    ...overrides,
+  });
+
+  /** Publish an index result for `documentKey` (the open document by default). */
+  const withIndex = (
+    result: AnnotationIndexResult,
+    documentKey = '/docs/inspecting.pdf',
+    status: 'idle' | 'indexing' | 'ready' | 'error' = 'ready',
+  ): void => {
+    act(() =>
+      useAnnotationIndexStore.setState({
+        documentKey,
+        status,
+        progress: null,
+        result,
+        error: null,
+      }),
+    );
+  };
+
+  const unresolvedLinkIssue = {
+    annotationId: 'a1',
+    page: 3,
+    subtype: 'Link',
+    kind: 'unresolved' as const,
+    target: null,
+    message: 'Link target could not be resolved',
+  };
+
+  const duplicateFieldIssue = {
+    annotationId: null,
+    fieldName: 'name',
+    pages: [2],
+    fieldTypes: ['Tx'],
+    widgetCount: 2,
+    kind: 'duplicate-name' as const,
+    message: 'Duplicate field name',
+  };
+
+  beforeEach(() => {
+    useAnnotationIndexStore.getState().reset();
+    usePageOverviewStore.setState({ open: false, filter: 'all' });
+  });
+
+  it('registers a Navigate command with its title and keywords', () => {
+    render(React.createElement(App));
+
+    const entry = problemCommand();
+    expect(entry).toBeTruthy();
+    expect(entry?.group).toBe('Navigate');
+    expect(entry?.title).toBe('Pages with problems…');
+    expect(entry?.keywords).toEqual(['pages', 'problems', 'findings', 'warnings', 'errors']);
+    // Nothing has been analysed for this document yet: no pages to show.
+    expect(entry?.isEnabled?.()).toBe(false);
+  });
+
+  it('re-registers the command title in the active language', () => {
+    render(React.createElement(App));
+
+    act(() => {
+      useI18nStore.setState({ locale: 'zh-CN' });
+    });
+
+    expect(problemCommand()?.title).toBe('仅看问题页…');
+
+    act(() => {
+      useI18nStore.setState({ locale: 'en' });
+    });
+    expect(problemCommand()?.title).toBe('Pages with problems…');
+  });
+
+  it('is disabled without a document and without a report for the open one', () => {
+    render(React.createElement(App));
+
+    // No document at all: there are no pages to open.
+    act(() => usePdfStore.setState({ filePath: null, pageCount: 0 }));
+    expect(problemCommand()?.isEnabled?.()).toBe(false);
+
+    // A document, but no analysis has produced a page-level problem for it.
+    act(() => usePdfStore.setState({ filePath: '/docs/inspecting.pdf', pageCount: 5 }));
+    expect(problemCommand()?.isEnabled?.()).toBe(false);
+
+    // A report whose only finding describes the document, not a page.
+    withReport([makeFinding({ page: null, title: 'No language entry' })]);
+    expect(problemCommand()?.isEnabled?.()).toBe(false);
+
+    // A page-level finding in a report of another file.
+    withReport([makeFinding({ page: 2 })], '/docs/other.pdf');
+    expect(problemCommand()?.isEnabled?.()).toBe(false);
+  });
+
+  it('ignores a page-level report that belongs to another document', () => {
+    render(React.createElement(App));
+    const entry = problemCommand();
+
+    // The shell drops an audit of another document on sight (it watches both
+    // sides), so the stale report is published after unmounting: this exercises
+    // the command's own identity check instead of the shell's guard.
+    cleanup();
+    act(() => {
+      useAuditStore.setState({
+        filePath: '/docs/other.pdf',
+        fileName: 'other.pdf',
+        report: makeReport([makeFinding({ page: 2 })]),
+      });
+    });
+    expect(entry?.isEnabled?.()).toBe(false);
+
+    // The same finding reported for the open document does enable it.
+    act(() => {
+      useAuditStore.setState({
+        filePath: '/docs/inspecting.pdf',
+        fileName: 'inspecting.pdf',
+        report: makeReport([makeFinding({ page: 2 })]),
+      });
+    });
+    expect(entry?.isEnabled?.()).toBe(true);
+  });
+
+  it('is enabled when the open document has a page-level finding', () => {
+    render(React.createElement(App));
+
+    withReport([makeFinding({ page: 2, title: 'Low resolution image' })]);
+    expect(problemCommand()?.isEnabled?.()).toBe(true);
+  });
+
+  it('is enabled by link and form issues of a ready index of this document', () => {
+    render(React.createElement(App));
+
+    withIndex(makeIndexResult({ linkIssues: [unresolvedLinkIssue] }));
+    expect(problemCommand()?.isEnabled?.()).toBe(true);
+
+    withIndex(makeIndexResult({ formIssues: [duplicateFieldIssue] }));
+    expect(problemCommand()?.isEnabled?.()).toBe(true);
+
+    // An external link is information, not a problem.
+    withIndex(
+      makeIndexResult({
+        linkIssues: [
+          {
+            annotationId: 'a1',
+            page: 3,
+            subtype: 'Link',
+            kind: 'external',
+            target: 'https://example.com',
+            message: 'External link',
+          },
+        ],
+      }),
+    );
+    expect(problemCommand()?.isEnabled?.()).toBe(false);
+
+    // An index of another document, or one that is not ready, never counts.
+    withIndex(makeIndexResult({ linkIssues: [unresolvedLinkIssue] }), '/docs/other.pdf');
+    expect(problemCommand()?.isEnabled?.()).toBe(false);
+
+    withIndex(makeIndexResult({ linkIssues: [unresolvedLinkIssue] }), undefined, 'indexing');
+    expect(problemCommand()?.isEnabled?.()).toBe(false);
+  });
+
+  it('opens the overview on the problems filter and leaves the page alone', () => {
+    render(React.createElement(App));
+    withReport([makeFinding({ page: 2, title: 'Low resolution image' })]);
+
+    act(() => {
+      problemCommand()?.run();
+    });
+
+    const overview = usePageOverviewStore.getState();
+    expect(overview.open).toBe(true);
+    expect(overview.filter).toBe('problems');
+    // A view filter only: the Inspect document stays on the page it was on.
+    expect(usePdfStore.getState().currentPage).toBe(3);
+
+    // The grid holds exactly the problem page.
+    const grid = screen.getByTestId('page-overview-grid');
+    expect(
+      Array.from(grid.querySelectorAll('[data-page]'), (card) => card.getAttribute('data-page')),
+    ).toEqual(['2']);
+
+    // `P` still opens the unfiltered grid: closing forgets the preset filter.
+    act(() => usePageOverviewStore.getState().closeOverview());
+    fireEvent.keyDown(window, { key: 'p' });
+    expect(usePageOverviewStore.getState().open).toBe(true);
+    expect(usePageOverviewStore.getState().filter).toBe('all');
   });
 });
