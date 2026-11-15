@@ -763,15 +763,30 @@ export function pageGeometrySummary(
 }
 
 /**
- * `a.pdf` + `b.pdf` -> `a-vs-b-diff.json`.
+ * `a.pdf` + `b.pdf` -> `a-vs-b-diff`, the stem both export names share.
  *
  * Each side goes through the shared `exportStemFromName` helper, so Unicode
  * names survive, percent-encoded names/paths/URLs are decoded and only
  * portability-invalid characters are replaced. A missing side keeps its
  * `old`/`new` fallback.
  */
-export function suggestDiffJsonFilename(oldName: string | null, newName: string | null): string {
+function diffExportStem(oldName: string | null, newName: string | null): string {
   const strip = (name: string | null, fallback: string): string =>
     exportStemFromName(name) || fallback;
-  return `${strip(oldName, 'old')}-vs-${strip(newName, 'new')}-diff.json`;
+  return `${strip(oldName, 'old')}-vs-${strip(newName, 'new')}-diff`;
+}
+
+/** `a.pdf` + `b.pdf` -> `a-vs-b-diff.json`. */
+export function suggestDiffJsonFilename(oldName: string | null, newName: string | null): string {
+  return `${diffExportStem(oldName, newName)}.json`;
+}
+
+/**
+ * `a.pdf` + `b.pdf` -> `a-vs-b-diff.html`.
+ *
+ * The HTML report carries the same `DiffResult` as the JSON export, so the two
+ * suggestions differ only in their extension.
+ */
+export function suggestDiffHtmlFilename(oldName: string | null, newName: string | null): string {
+  return `${diffExportStem(oldName, newName)}.html`;
 }

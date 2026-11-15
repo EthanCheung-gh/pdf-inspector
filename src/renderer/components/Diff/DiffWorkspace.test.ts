@@ -45,14 +45,17 @@ interface VisualPaneProps {
   onRenderStats?: (stats: PixelDiffStats | null) => void;
 }
 
-const { paneProps, visualProps, saveFile, diffPdfs } = vi.hoisted(() => ({
+const { paneProps, visualProps, saveFile, diffPdfs, renderDiffReportHtml } = vi.hoisted(() => ({
   paneProps: [] as unknown[],
   visualProps: [] as unknown[],
   saveFile: vi.fn(),
   diffPdfs: vi.fn(),
+  renderDiffReportHtml: vi.fn(),
 }));
 
-vi.mock('../../services/ipc-client', () => ({ ipc: { saveFile, diffPdfs } }));
+vi.mock('../../services/ipc-client', () => ({
+  ipc: { saveFile, diffPdfs, renderDiffReportHtml },
+}));
 
 // The real panes load PDF.js into a canvas; the workspace test only needs to
 // see which pages/boxes they are handed.
@@ -101,6 +104,9 @@ function renderWorkspace(): void {
   render(React.createElement(DiffWorkspace));
 }
 
+/** What the mocked renderer returns; only the caller's use of it matters here. */
+const DIFF_REPORT_HTML = '<!doctype html><html><body><h1>Diff report</h1></body></html>';
+
 beforeEach(() => {
   store().reset();
   // A Chinese test must not leak its locale into the English assertions.
@@ -110,6 +116,8 @@ beforeEach(() => {
   saveFile.mockReset();
   saveFile.mockResolvedValue({ canceled: false });
   diffPdfs.mockReset();
+  renderDiffReportHtml.mockReset();
+  renderDiffReportHtml.mockResolvedValue({ html: DIFF_REPORT_HTML });
 });
 
 afterEach(cleanup);
@@ -483,14 +491,95 @@ describe('DiffWorkspace actions', () => {
     expect(screen.queryByTestId('diff-page-list')?.textContent).not.toContain('modified');
   });
 
-  it('hints at the CLI for the HTML report', () => {
+  it('exports the full result as a standalone HTML document', async () => {
     act(() => {
+      store().setSource('old', '/docs/old pdf', 'old pdf.pdf');
+      store().setSource('new', '/docs/new.pdf', 'new.pdf');
       store().applyResult(makeSampleResult());
     });
 
     renderWorkspace();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Export HTML' }));
+    });
 
-    expect(screen.getByText(/--format html/)).toBeTruthy();
+    // The render step sees the applied result itself, not a serialized copy.
+    expect(renderDiffReportHtml).toHaveBeenCalledTimes(1);
+    expect(renderDiffReportHtml.mock.calls[0][0]).toBe(store().result);
+
+    expect(saveFile).toHaveBeenCalledTimes(1);
+    const request = saveFile.mock.calls[0][0] as {
+      defaultPath: string;
+      content: string;
+      filterName: string;
+      extensions: string[];
+    };
+    expect(request.defaultPath).toBe('old pdf-vs-new-diff.html');
+    expect(request.filterName).toBe('HTML');
+    expect(request.extensions).toEqual(['html']);
+    // The renderer's document is saved verbatim.
+    expect(request.content).toBe(DIFF_REPORT_HTML);
+    expect(store().error).toBeNull();
+  });
+
+  it('disables both exports without a comparison result', () => {
+    renderWorkspace();
+
+    const html = screen.getByRole('button', { name: 'Export HTML' }) as HTMLButtonElement;
+    const json = screen.getByRole('button', { name: 'Export JSON' }) as HTMLButtonElement;
+    expect(html.disabled).toBe(true);
+    expect(json.disabled).toBe(true);
+    // The old CLI hint is gone: the header button is the only HTML entry point.
+    expect(screen.queryByText(/--format html/)).toBeNull();
+  });
+
+  it('reports a failed HTML render through the workspace error', async () => {
+    act(() => {
+      store().applyResult(makeSampleResult());
+    });
+    renderDiffReportHtml.mockRejectedValueOnce(new Error('renderer unavailable'));
+
+    renderWorkspace();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Export HTML' }));
+    });
+
+    expect(store().error).toBe('Export failed: renderer unavailable');
+    expect(screen.getByRole('alert').textContent).toContain('renderer unavailable');
+    expect(saveFile).not.toHaveBeenCalled();
+  });
+
+  it('disables the HTML button and says so while the render is running', async () => {
+    act(() => {
+      store().applyResult(makeSampleResult());
+    });
+    let finishRender!: (value: { html: string }) => void;
+    renderDiffReportHtml.mockImplementationOnce(
+      () =>
+        new Promise<{ html: string }>((resolve) => {
+          finishRender = resolve;
+        }),
+    );
+
+    renderWorkspace();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Export HTML' }));
+    });
+
+    const pending = screen.getByRole('button', { name: 'Exporting…' }) as HTMLButtonElement;
+    expect(pending.disabled).toBe(true);
+    // A second click must not start a second render or dialog.
+    fireEvent.click(pending);
+    expect(renderDiffReportHtml).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      finishRender({ html: DIFF_REPORT_HTML });
+    });
+
+    expect(saveFile).toHaveBeenCalledTimes(1);
+    expect(
+      (screen.getByRole('button', { name: 'Export HTML' }) as HTMLButtonElement).disabled,
+    ).toBe(false);
   });
 });
 

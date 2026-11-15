@@ -34,6 +34,7 @@ import {
   pageGeometrySummary,
   projectDiffBBox,
   resolveDiffPageJump,
+  suggestDiffHtmlFilename,
   suggestDiffJsonFilename,
   tableCellChanges,
   type DiffBoxSpec,
@@ -392,6 +393,25 @@ describe('change details', () => {
     ).toBe('测试 old-vs-new file-diff.json');
     expect(suggestDiffJsonFilename('_____.pdf', 'new:file?.pdf')).toBe(
       'old-vs-new_file_-diff.json',
+    );
+  });
+
+  it('suggests the same portable stem for the HTML report', () => {
+    expect(suggestDiffHtmlFilename('/docs/old report.pdf', 'new.pdf')).toBe(
+      'old report-vs-new-diff.html',
+    );
+    expect(suggestDiffHtmlFilename(null, null)).toBe('old-vs-new-diff.html');
+    expect(suggestDiffHtmlFilename('测试 报告.pdf', '新 版本.pdf')).toBe(
+      '测试 报告-vs-新 版本-diff.html',
+    );
+    expect(
+      suggestDiffHtmlFilename(
+        'https://example.com/%E6%B5%8B%E8%AF%95%20old.pdf?token=abc',
+        '/tmp/new%20file.pdf',
+      ),
+    ).toBe('测试 old-vs-new file-diff.html');
+    expect(suggestDiffHtmlFilename('_____.pdf', 'new:file?.pdf')).toBe(
+      'old-vs-new_file_-diff.html',
     );
   });
 });

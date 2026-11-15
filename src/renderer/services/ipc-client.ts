@@ -1,6 +1,7 @@
 import { IpcApi, SaveFileRequest } from '../types/ipc-protocol';
 import type { RawRef } from '../types/raw-pdf';
-import type { DiffOptionsInput, DiffSide, DiffSource } from '../../shared/diff-types';
+import type { DiffOptionsInput, DiffSide, DiffResult, DiffSource } from '../../shared/diff-types';
+import type { AuditBaselineComparison, AuditReport } from '../../shared/audit-types';
 import type { OpenExternalResult } from '../../shared/external-url';
 import {
   ACCESSIBILITY_RENDERER_TIMEOUT_MS,
@@ -10,6 +11,7 @@ import {
   OPEN_PDF_RENDERER_TIMEOUT_MS,
   OPEN_PDF_URL_TIMEOUT_MS,
   RAW_RENDERER_TIMEOUT_MS,
+  REPORT_RENDER_TIMEOUT_MS,
   SECURITY_RENDERER_TIMEOUT_MS,
 } from '../../shared/constants';
 
@@ -22,6 +24,17 @@ declare global {
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_RESTARTS = 3;
 const RESTART_WINDOW_MS = 60_000;
+
+/**
+ * Renderer budget for one report render, one hop above main's own budget.
+ *
+ * Main applies `REPORT_RENDER_TIMEOUT_MS` to the sidecar request; like every
+ * other sidecar-backed method the renderer waits a little longer, so a slow
+ * render surfaces main's clear `Request "render_audit_report_html" timed out
+ * after 60s` error instead of a renderer timeout that would restart a healthy
+ * sidecar and hide the cause.
+ */
+const REPORT_RENDER_RENDERER_TIMEOUT_MS = REPORT_RENDER_TIMEOUT_MS + 5_000;
 
 let restartTimestamps: number[] = [];
 
@@ -260,6 +273,22 @@ export const ipc = {
       () => window.pdfInspector.accessibilityDocument(),
       'accessibilityDocument',
       ACCESSIBILITY_RENDERER_TIMEOUT_MS,
+    ),
+  // Report rendering (audit + diff HTML) only formats a payload the renderer
+  // already holds, so it never opens or re-parses a PDF and cannot disturb the
+  // Inspect document or the Diff/Audit inputs. It is still a sidecar request, so
+  // it goes through the usual timeout/restart path with its own budget.
+  renderAuditReportHtml: (report: AuditReport, baseline?: AuditBaselineComparison | null) =>
+    callWithTimeout(
+      () => window.pdfInspector.renderAuditReportHtml(report, baseline),
+      'renderAuditReportHtml',
+      REPORT_RENDER_RENDERER_TIMEOUT_MS,
+    ),
+  renderDiffReportHtml: (result: DiffResult) =>
+    callWithTimeout(
+      () => window.pdfInspector.renderDiffReportHtml(result),
+      'renderDiffReportHtml',
+      REPORT_RENDER_RENDERER_TIMEOUT_MS,
     ),
   // No renderer timer: a diff's budget is an INACTIVITY budget in the backend
   // (main process / web server), rearmed by every progress report the sidecar

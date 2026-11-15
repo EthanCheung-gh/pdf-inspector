@@ -71,6 +71,16 @@ export function suggestAuditJsonFilename(fileName: string | null): string {
 }
 
 /**
+ * `report.pdf` -> `report.audit.html`.
+ *
+ * The HTML report is the same `AuditReport` as the JSON export plus its
+ * baseline section, so the two suggestions differ only in their extension.
+ */
+export function suggestAuditHtmlFilename(fileName: string | null): string {
+  return `${exportStemFromName(fileName) || 'document'}.audit.html`;
+}
+
+/**
  * `report.pdf` -> `report.security.json` for the `SecurityReport` export.
  *
  * Same stem rules as `suggestAuditJsonFilename`: the two exports describe the
@@ -404,6 +414,9 @@ export const AuditWorkspace: React.FC = () => {
   // the run, not the save dialog, and its error would wrongly look like a
   // failed audit.
   const [exportError, setExportError] = useState<string | null>(null);
+  // Rendering the HTML report is a second async step before the dialog opens;
+  // the button reports it so a double click cannot start two exports.
+  const [htmlExporting, setHtmlExporting] = useState(false);
 
   /**
    * Point the lazily loaded views at the audited document.
@@ -490,16 +503,16 @@ export const AuditWorkspace: React.FC = () => {
     [loadBaselineFile],
   );
 
-  const saveJson = useCallback(
-    async (defaultPath: string, content: string) => {
+  const saveFile = useCallback(
+    async (
+      defaultPath: string,
+      content: string,
+      filterName: string,
+      extensions: string[],
+    ) => {
       setExportError(null);
       try {
-        const response = await ipc.saveFile({
-          defaultPath,
-          content,
-          filterName: 'JSON',
-          extensions: ['json'],
-        });
+        const response = await ipc.saveFile({ defaultPath, content, filterName, extensions });
         // A dismissed dialog is not an error; the user simply changed their mind.
         if (response.canceled) return;
         if (response.error) {
@@ -516,6 +529,12 @@ export const AuditWorkspace: React.FC = () => {
     [t],
   );
 
+  const saveJson = useCallback(
+    (defaultPath: string, content: string) =>
+      saveFile(defaultPath, content, 'JSON', ['json']),
+    [saveFile],
+  );
+
   const handleExportJson = useCallback(async () => {
     const state = useAuditStore.getState();
     if (!state.report) return;
@@ -524,6 +543,38 @@ export const AuditWorkspace: React.FC = () => {
       JSON.stringify(state.report, null, 2),
     );
   }, [saveJson]);
+
+  /**
+   * Export the report as one standalone HTML document.
+   *
+   * The renderer owns the markup (the sidecar renders it from the same report),
+   * so this only has to hand the result to the save dialog. The current
+   * baseline comparison travels with the report: a report exported with a
+   * baseline must not silently lose its `new`/`fixed` section.
+   */
+  const handleExportHtml = useCallback(async () => {
+    const state = useAuditStore.getState();
+    if (!state.report || htmlExporting) return;
+
+    setHtmlExporting(true);
+    try {
+      const rendered = await ipc.renderAuditReportHtml(state.report, state.comparison);
+      await saveFile(
+        suggestAuditHtmlFilename(state.fileName),
+        rendered.html,
+        'HTML',
+        ['html'],
+      );
+    } catch (err) {
+      setExportError(
+        err instanceof Error
+          ? t('export.failedDetail', { error: err.message })
+          : t('export.failed'),
+      );
+    } finally {
+      setHtmlExporting(false);
+    }
+  }, [htmlExporting, saveFile, t]);
 
   // The security export is independent of the audit run: its failures show as
   // a local alert and never touch the audit store's error.
@@ -701,6 +752,16 @@ export const AuditWorkspace: React.FC = () => {
                 title={t('audit.exportTitle')}
               >
                 {t('common.exportJson')}
+              </button>
+
+              <button
+                className={styles.button}
+                type="button"
+                onClick={() => void handleExportHtml()}
+                disabled={!report || htmlExporting}
+                title={t('audit.exportHtmlTitle')}
+              >
+                {htmlExporting ? t('common.exporting') : t('common.exportHtml')}
               </button>
 
               {/* A native file input is the only way to pick a local file

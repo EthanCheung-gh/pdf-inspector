@@ -671,22 +671,6 @@
   white-space: nowrap;
 }
 
-.cliHint {
-  flex: 0 0 auto;
-  margin: 0;
-  padding: 6px 8px;
-  overflow: hidden;
-  color: var(--pi-text-dim);
-  border-top: 1px solid var(--pi-border-muted);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cliHint code {
-  color: var(--pi-text-subtle);
-}
-
 .emptyState {
   margin: 0;
   padding: 8px;

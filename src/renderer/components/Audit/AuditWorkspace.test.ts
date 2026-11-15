@@ -22,6 +22,7 @@ import type {
 
 const auditIpc = vi.hoisted(() => ({
   saveFile: vi.fn(),
+  renderAuditReportHtml: vi.fn(),
   auditDocument: vi.fn(),
   auditPages: vi.fn(),
   securityDocument: vi.fn(),
@@ -141,6 +142,9 @@ function makeReport(
 ): AuditReport {
   return buildAuditReport(makeDocument(document), findings, TOOL);
 }
+
+/** What the mocked renderer returns; only the caller's use of it matters here. */
+const AUDIT_REPORT_HTML = '<!doctype html><html><body><h1>Audit report</h1></body></html>';
 
 /** A valid 32-character lowercase hex fingerprint, distinct per `seed`. */
 function fingerprint(seed: number | string): string {
@@ -574,6 +578,7 @@ beforeEach(() => {
   useSecurityStore.getState().reset();
   useAccessibilityStore.getState().reset();
   auditIpc.saveFile.mockResolvedValue({ canceled: false });
+  auditIpc.renderAuditReportHtml.mockResolvedValue({ html: AUDIT_REPORT_HTML });
   auditIpc.auditDocument.mockResolvedValue({
     tool: TOOL,
     document: makeDocument({ pages: 0 }),
@@ -793,6 +798,126 @@ describe('AuditWorkspace actions', () => {
     expect(screen.getByRole('alert').textContent).toContain('Export failed: save channel closed');
   });
 
+  it('exports the full report as a standalone HTML document', async () => {
+    showReport(makeReport(FINDINGS));
+    useAuditStore.setState({ fileName: 'My Report.pdf' });
+    renderWorkspace();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Export HTML' }));
+    });
+
+    // The render step sees the report the workspace shows, not a serialized copy.
+    expect(auditIpc.renderAuditReportHtml).toHaveBeenCalledTimes(1);
+    expect(auditIpc.renderAuditReportHtml.mock.calls[0][0]).toBe(store().report);
+    // No baseline is loaded here, so the comparison is explicitly absent.
+    expect(auditIpc.renderAuditReportHtml.mock.calls[0][1]).toBeNull();
+
+    expect(auditIpc.saveFile).toHaveBeenCalledTimes(1);
+    const request = auditIpc.saveFile.mock.calls[0][0] as {
+      defaultPath: string;
+      content: string;
+      filterName: string;
+      extensions: string[];
+    };
+    expect(request.defaultPath).toBe('My Report.audit.html');
+    expect(request.filterName).toBe('HTML');
+    expect(request.extensions).toEqual(['html']);
+    // The renderer's document is saved verbatim: no wrapper, no re-serializing.
+    expect(request.content).toBe(AUDIT_REPORT_HTML);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('passes the loaded baseline comparison to the HTML render', async () => {
+    await showBaseline();
+    renderWorkspace();
+
+    const comparison = store().comparison;
+    expect(comparison).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Export HTML' }));
+    });
+
+    expect(auditIpc.renderAuditReportHtml).toHaveBeenCalledTimes(1);
+    expect(auditIpc.renderAuditReportHtml.mock.calls[0][1]).toBe(comparison);
+  });
+
+  it('reports a failed HTML render locally and never saves', async () => {
+    showReport();
+    auditIpc.renderAuditReportHtml.mockRejectedValueOnce(new Error('renderer unavailable'));
+    renderWorkspace();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Export HTML' }));
+    });
+
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Export failed: renderer unavailable',
+    );
+    expect(auditIpc.saveFile).not.toHaveBeenCalled();
+    // An export failure must not look like a failed audit run.
+    expect(store().error).toBeNull();
+  });
+
+  it('treats a cancelled HTML save as a no-op', async () => {
+    showReport();
+    auditIpc.saveFile.mockResolvedValueOnce({ canceled: true });
+    renderWorkspace();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Export HTML' }));
+    });
+
+    expect(auditIpc.saveFile).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('disables the HTML button and says so while the render is running', async () => {
+    showReport();
+    let finishRender!: (value: { html: string }) => void;
+    auditIpc.renderAuditReportHtml.mockImplementationOnce(
+      () =>
+        new Promise<{ html: string }>((resolve) => {
+          finishRender = resolve;
+        }),
+    );
+    renderWorkspace();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Export HTML' }));
+    });
+
+    const pending = screen.getByRole('button', {
+      name: 'Exporting…',
+    }) as HTMLButtonElement;
+    expect(pending.disabled).toBe(true);
+    // A second click must not start a second render or dialog.
+    fireEvent.click(pending);
+    expect(auditIpc.renderAuditReportHtml).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      finishRender({ html: AUDIT_REPORT_HTML });
+    });
+
+    expect(auditIpc.saveFile).toHaveBeenCalledTimes(1);
+    const button = screen.getByRole('button', { name: 'Export HTML' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+  });
+
+  it('offers the HTML export in Findings only', async () => {
+    showReport();
+    showStructureReport();
+    renderWorkspace();
+
+    expect(screen.getByRole('button', { name: 'Export HTML' })).toBeTruthy();
+
+    await showStructure();
+
+    expect(screen.queryByRole('button', { name: 'Export HTML' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Export JSON' })).toBeNull();
+  });
+
   it('re-runs the audit from the header', async () => {
     showReport();
     renderWorkspace();
@@ -838,6 +963,9 @@ describe('AuditWorkspace states', () => {
     expect(screen.queryByTestId('audit-summary')).toBeNull();
     expect(within(list()).queryAllByRole('button')).toHaveLength(0);
     expect((screen.getByRole('button', { name: 'Export JSON' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect((screen.getByRole('button', { name: 'Export HTML' }) as HTMLButtonElement).disabled).toBe(
       true,
     );
     expect(screen.getByRole('button', { name: 'Run' })).toBeTruthy();

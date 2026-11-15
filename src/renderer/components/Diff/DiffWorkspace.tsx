@@ -41,6 +41,7 @@ import {
   matchesDocumentChangeFilter,
   pageGeometrySummary,
   resolveDiffPageJump,
+  suggestDiffHtmlFilename,
   suggestDiffJsonFilename,
   tableCellChanges,
 } from '../../services/diff-view';
@@ -403,6 +404,9 @@ export const DiffWorkspace: React.FC = () => {
   const [documentExpanded, setDocumentExpanded] = useState(true);
   /** Raw text of the "Go to page" field; only digits are acted on. */
   const [pageJump, setPageJump] = useState('');
+  // Rendering the HTML report is a second async step before the dialog opens;
+  // the button reports it so a double click cannot start two exports.
+  const [htmlExporting, setHtmlExporting] = useState(false);
   const fittedResultRef = useRef<DiffResult | null>(null);
   // Informational only: exact seconds spent comparing, no invented percentage.
   // Resets whenever `loading` turns off (a new run starts again at 0s).
@@ -604,6 +608,41 @@ export const DiffWorkspace: React.FC = () => {
       );
     }
   }, [t]);
+
+  /**
+   * Export the comparison as one standalone HTML document.
+   *
+   * The renderer owns the markup, so this only renders the current result and
+   * hands it to the save dialog; a failure lands in the store's error like a
+   * failed JSON export.
+   */
+  const handleExportHtml = useCallback(async () => {
+    const state = useDiffStore.getState();
+    if (!state.result || htmlExporting) return;
+
+    setHtmlExporting(true);
+    try {
+      const rendered = await ipc.renderDiffReportHtml(state.result);
+      const response = await ipc.saveFile({
+        defaultPath: suggestDiffHtmlFilename(state.oldName, state.newName),
+        content: rendered.html,
+        filterName: 'HTML',
+        extensions: ['html'],
+      });
+      if (response.canceled) return;
+      if (response.error) {
+        useDiffStore.getState().setError(t('export.failedDetail', { error: response.error }));
+      }
+    } catch (err) {
+      useDiffStore.getState().setError(
+        err instanceof Error
+          ? t('export.failedDetail', { error: err.message })
+          : t('export.failed'),
+      );
+    } finally {
+      setHtmlExporting(false);
+    }
+  }, [htmlExporting, t]);
 
   /**
    * Re-run the comparison with the drawn regions.
@@ -838,6 +877,15 @@ export const DiffWorkspace: React.FC = () => {
             title={t('diff.workspace.exportJsonTitle')}
           >
             {t('common.exportJson')}
+          </button>
+          <button
+            className={styles.button}
+            type="button"
+            onClick={() => void handleExportHtml()}
+            disabled={!result || htmlExporting}
+            title={t('diff.workspace.exportHtmlTitle')}
+          >
+            {htmlExporting ? t('common.exporting') : t('common.exportHtml')}
           </button>
         </div>
       </header>
@@ -1231,10 +1279,6 @@ export const DiffWorkspace: React.FC = () => {
               );
             })}
           </ul>
-
-          <p className={styles.cliHint} title={t('diff.workspace.cliTitle')}>
-            {t('diff.workspace.cliLabel')} <code>pdf-inspector diff --format html</code>
-          </p>
         </aside>
 
         <div className={styles.center} ref={setCenterEl} data-testid="diff-center">
