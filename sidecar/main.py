@@ -17,6 +17,8 @@ from audit import (
     security_report,
 )
 from raw import RawError, raw_document, raw_object, raw_page_content
+from audit_report import render_audit_html
+from report import render_html
 
 
 class RpcError(Exception):
@@ -171,6 +173,21 @@ def _parse_diff_options(raw: Any) -> DiffOptions:
         raise RpcError(str(exc)) from exc
 
 
+def _json_object_param(params: Any, name: str) -> Mapping[str, Any]:
+    """Return ``params[name]`` as a JSON object, or raise a readable ``RpcError``.
+
+    The report methods render a payload the caller already holds, so a missing
+    or non-object value is a user error: it has to reach the renderer as one
+    message instead of a traceback from inside a renderer.
+    """
+    if not isinstance(params, Mapping):
+        raise RpcError('"params" must be an object')
+    value = params.get(name)
+    if not isinstance(value, Mapping):
+        raise RpcError(f'"{name}" must be a JSON object')
+    return value
+
+
 class SidecarSession:
     """State of one sidecar process: the open document, its page cache, request handling.
 
@@ -290,6 +307,15 @@ class SidecarSession:
         if method == 'raw_page_content':
             return self._raw_dispatch(raw_page_content, params.get('page'))
 
+        # Report rendering works on a payload the renderer already holds: it
+        # never opens a document, never touches the page cache and never changes
+        # the session's state.
+        if method == 'render_audit_report_html':
+            return self._render_audit_report_html(params)
+
+        if method == 'render_diff_report_html':
+            return self._render_diff_report_html(params)
+
         if method == 'shutdown':
             self.close_extractor()
             self.should_exit = True
@@ -349,6 +375,39 @@ class SidecarSession:
             )
         except (AuditError, ValueError) as exc:
             raise RpcError(str(exc)) from exc
+
+    def _render_audit_report_html(self, params: Any) -> dict[str, Any]:
+        """Render an ``AuditReport`` (plus an optional baseline) as standalone HTML.
+
+        The renderer already holds the report: an earlier request produced it, so
+        this only formats it. Nothing is opened, nothing is cached and the
+        session's document is untouched — the same payload always renders the
+        same HTML.
+        """
+        report = _json_object_param(params, 'report')
+        baseline = params.get('baseline')
+        if baseline is not None and not isinstance(baseline, Mapping):
+            raise RpcError('"baseline" must be a JSON object or null')
+        try:
+            html_text = render_audit_html(report, baseline=baseline)
+        except (TypeError, ValueError, AttributeError, KeyError) as exc:
+            # A malformed report is a user error, not a protocol failure: report
+            # the message instead of a traceback from inside the renderer.
+            raise RpcError(f'Cannot render audit report: {exc}') from exc
+        return {'html': html_text}
+
+    def _render_diff_report_html(self, params: Any) -> dict[str, Any]:
+        """Render a ``DiffResult`` the renderer already holds as standalone HTML.
+
+        Like ``render_audit_report_html`` this is read-only: the diff was
+        computed by an earlier request, so no PDF is opened and no state changes.
+        """
+        result = _json_object_param(params, 'result')
+        try:
+            html_text = render_html(result)
+        except (TypeError, ValueError, AttributeError, KeyError) as exc:
+            raise RpcError(f'Cannot render diff report: {exc}') from exc
+        return {'html': html_text}
 
     def _require_extractor(self) -> PdfExtractor:
         if self._extractor is None:
