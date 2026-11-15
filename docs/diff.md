@@ -432,6 +432,22 @@ python sidecar/cli.py diff web-samples/diff-resources-old.pdf web-samples/diff-r
 （title、author、page label）。默认 `--fail-on any` 因此返回 `1`；同时加上五类
 `--ignore-*` 后返回 `0` 并输出 `documents match`。
 
+## 工作区导出
+
+Diff 工作区头部的 `Export JSON` 与 `Export HTML` 相邻，导出的都是**已经算完**的
+`DiffResult`，不会重新比较：
+
+- `Export JSON`：保存完整 `DiffResult` JSON（`schemaVersion: 1`），建议文件名
+  `<旧名>-vs-<新名>-diff.json`。
+- `Export HTML`：调用侧车现有的 `report.render_html`（与 CLI `diff --format html`
+  同一个渲染器）渲染成单文件 HTML，建议文件名 `<旧名>-vs-<新名>-diff.html`，
+  保存对话框按 HTML 过滤（`html` 扩展名）。内容与 CLI 报告相同：内联 CSS、无脚本、
+  无外部资源，含文档 SHA-256、变更汇总、diff 选项与逐页变更表。
+- 两者都只读：不重新运行比较、不打开或修改两侧 PDF、不改变 Inspect 中的文档与
+  视图。没有结果时按钮禁用，`Export HTML` 在渲染期间同样禁用。
+- 失败沿用既有的导出错误提示；取消保存不提示。
+- 桌面端与 Web 端都通过同一套 IPC / Web RPC 调用侧车，行为一致。
+
 ## CLI 与 Action
 
 ### 阈值

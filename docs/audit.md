@@ -6,7 +6,7 @@
 
 同一套审计引擎（`sidecar/audit.py`）被三个入口复用：
 
-- **Web / 桌面界面**：工具栏 `Audit` 打开独立的审计工作区，可筛选、查看证据与建议、跳转到对应页面、加载基线只显示新增，并导出 JSON。
+- **Web / 桌面界面**：工具栏 `Audit` 打开独立的审计工作区，可筛选、查看证据与建议、跳转到对应页面、加载基线只显示新增，并导出 JSON 或单文件 HTML 报告。
 - **CLI**：`python sidecar/cli.py audit FILE.pdf`，适合本地检查与脚本；支持基线、豁免与 SARIF。`python sidecar/cli.py audit-dir ROOT` 审计整棵目录并输出批量汇总，见[目录批量审计](#目录批量审计)。
 - **Composite action**：[`audit/action.yml`](../audit/action.yml)，在 GitHub Actions 中安装依赖、运行审计、写步骤摘要并按 `fail-on` 决定步骤成败。`path` 可以是单个 PDF，也可以是一棵目录。
 
@@ -22,7 +22,7 @@
 - **详情**：标题、类别、严重级别、页码、说明、`Evidence` 与 `Recommendation`。带页码的发现提供 `Open page`，点击后关闭 Audit 并在 Inspect 中导航到该页；当前阶段不在审计工作区内嵌 PDF 预览。
 - **基线对比**：`Findings` 头部的 `Baseline…` 选择一个本地 `AuditReport` JSON，加载后摘要区显示 `Baseline: 2 new · 5 existing · 1 moved · 3 fixed`，`New only` 只保留新增与升级的发现，列表行显示 `New` / `Moved` / `Escalated` 徽标，`Clear` 清除基线。基线只在本机内存中解析，见[工作区基线](#工作区基线)。
 - **分批进度**：文档级检查完成后，页面检查按每 10 页一批顺序执行，界面显示 `Auditing pages N/M…`，批次之间保持可交互。
-- **导出 JSON**：`Export JSON` 通过保存对话框写出完整 `AuditReport`，建议文件名为 `<pdf 文件名>.audit.json`。
+- **导出 JSON / 导出 HTML**：`Findings` 头部的 `Export JSON` 与 `Export HTML` 并排。`Export JSON` 通过保存对话框写出完整 `AuditReport`，建议文件名为 `<pdf 文件名>.audit.json`；`Export HTML` 用侧车现有的 `audit_report.render_audit_html`（与 CLI `audit --format html` 同一个渲染器）把同一份报告渲染成单文件 HTML，建议文件名为 `<pdf 文件名>.audit.html`，保存对话框按 HTML 过滤（`html` 扩展名）。当前已加载的基线比较会一起传给渲染器，所以带基线导出的 HTML 与界面摘要一致地包含 `Baseline` 小节，而 `Export JSON` 仍只写报告本身。两个导出都是可选的只读操作：只读当前内存中的报告，不重新审计、不修改 PDF、不改变 Inspect 状态；失败沿用既有的导出错误提示，取消保存不提示；没有报告时 `Export HTML` 禁用，渲染期间同样禁用。
 - **重新运行**：`Re-run` 重新执行整档审计；失败会显示错误信息，不会清空已打开文档的 Inspect 状态。
 
 ## 检查项与严重级别
@@ -157,6 +157,8 @@
 `evidence` 与 `recommendation` 在没有内容时为 `null`。
 `fingerprint` 是**新增的可选字段**：`schemaVersion` 仍是 `1`，旧消费者可以忽略它；旧版报告可能没有这个字段，见[发现指纹](#发现指纹)。
 
+`--format html`（CLI）与工作区的 `Export HTML` 渲染同一份报告，见[工作区](#工作区)。
+
 ## 基线与豁免
 
 ### 发现指纹
@@ -204,7 +206,7 @@ python sidecar/cli.py audit docs/report.pdf \
 - `--baseline-output PATH` 写出独立的 `BaselineComparison`，必须与 `--baseline` 同时使用，否则退出 2。
 - `--output` 与 `--baseline-output` 不能是同一个文件（退出 2）；两者也都不允许覆盖输入 PDF、基线文件或豁免文件，避免一次运行把自己的输入或另一个产物改掉。
 - 没有 `--baseline` 时，摘要、JSON、HTML 与退出码与引入基线之前逐字节一致。
-- 人类摘要在严重级别计数之后追加一行，例如 `baseline: 0 new, 3 existing, 0 moved, 0 escalated, 0 fixed, 0 waived`；HTML 报告增加 `Baseline` 小节，列出六种状态的计数和逐条状态徽标（换页项显示 `p.3 → p.5`）。没有基线时不渲染这些内容。
+- 人类摘要在严重级别计数之后追加一行，例如 `baseline: 0 new, 3 existing, 0 moved, 0 escalated, 0 fixed, 0 waived`；HTML 报告增加 `Baseline` 小节，列出六种状态的计数和逐条状态徽标（换页项显示 `p.3 → p.5`）。没有基线时不渲染这些内容。CLI 的 `--format html` 与工作区的 `Export HTML` 都调用 `audit_report.render_audit_html`，所以带基线导出的界面报告与 CLI 报告内容一致。
 
 ### 六种状态
 
@@ -327,7 +329,7 @@ python sidecar/cli.py audit docs/report.pdf \
 - 列表行显示 `New` / `Moved` / `Escalated` 徽标。
 - 基线在 `Re-run` 后保留并重新计算；切换文档或 `reset()` 会清空；关闭工作区后返回仍保留。
 - 界面不读取豁免文件，因此 `waived` 始终为 `0`；豁免只在 CLI / action 中生效。
-- 基线内容只在本机内存中：不写入 localStorage、不上传服务端、不进入 `Export JSON`、不随会话恢复。
+- 基线内容只在本机内存中：不写入 localStorage、不上传服务端、不进入 `Export JSON`，只有工作区的 `Export HTML` 会把它渲染成 HTML 里的 `Baseline` 小节，也不随会话恢复。
 
 ## SARIF
 
@@ -737,7 +739,7 @@ jobs:
 
 - **确定性**：相同 PDF 产生相同的发现集合、顺序、指纹与 JSON/HTML/SARIF 字节；相同目录产生相同的批量 `summary` / `BatchReport` / `--stats` / 批量 HTML 字节。报告、比较产物与 SARIF 都不含时间戳、机器信息或工具生成的绝对路径（目录模式只写相对 POSIX 路径与 root 名）。
 - **安全**：审计引擎只读取本地文件；CLI 与 action 拒绝 URL，因此没有 SSRF 面；HTML 报告内联 CSS、无脚本、无外部资源，所有 PDF 元数据与发现文本都经过 HTML 转义；SARIF 只做格式映射，不上传、不联网。
-- **基线与豁免的只读边界**：基线、豁免和比较产物都只描述“当前结果与策略”，不修改 PDF、不修改 `AuditReport`、不回写基线。比较产物与 SARIF 只记录策略事实（状态、原因、到期日），不记录基线/豁免文件的路径；界面加载基线只在本机内存中进行，不写 localStorage、不上传、不进入导出 JSON。
+- **基线与豁免的只读边界**：基线、豁免和比较产物都只描述“当前结果与策略”，不修改 PDF、不修改 `AuditReport`、不回写基线。比较产物与 SARIF 只记录策略事实（状态、原因、到期日），不记录基线/豁免文件的路径；界面加载基线只在本机内存中进行，不写 localStorage、不上传、不进入导出 JSON（`Export HTML` 只把它渲染为 `Baseline` 小节）。
 - **本地优先**：CLI 与 action 需要 Python 3.10+ 与 `sidecar/requirements.txt`（`pdfplumber`、`Pillow`）；打包后的桌面应用不包含 CLI。
 - **非目标**：
   - 不做 OCR，也不识别扫描页中的文字；扫描页只能得到“有图片但无可提取文本”的提示。

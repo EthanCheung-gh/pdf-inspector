@@ -23,7 +23,7 @@
 | ![中文界面：工具栏、文档标签、面板标签、画布、状态栏与主题选择器均为简体中文](docs/images/i18n-zh.png) | **English / 简体中文**<br>工具栏语言按钮在 `EN` 与 `中文` 之间切换；默认英文，选择会持久化。UI 文案会翻译，命令名、JSON/CSV 字段与 sidecar/CLI 错误保持英文。 |
 | ![表格单元格网格与选中单元格](docs/images/table-cells.png) | **表格单元格**<br>选中表格后显示单元格网格、合并/缺失标记与选中单元格的 BBox；悬停或点击单元格时画布同步高亮。 |
 | ![页面几何：五个页面框与标尺](docs/images/page-geometry.png) | **页面几何**<br>`Page` 标签页列出 MediaBox / CropBox / TrimBox / BleedBox / ArtBox，可切换 pt/mm 并显示标尺。 |
-| ![Diff 工作区：并排旧/新页面、变更摘要与列表、右侧选中变更详情](docs/images/diff-workspace.png) | **PDF Diff**<br>并排查看旧/新页面；左侧按页汇总变更，选中条目后右侧显示旧/新文本、BBox 与字段差异，顶部可重新选择旧/新文件或导出 JSON。 |
+| ![Diff 工作区：并排旧/新页面、变更摘要与列表、右侧选中变更详情](docs/images/diff-workspace.png) | **PDF Diff**<br>并排查看旧/新页面；左侧按页汇总变更，选中条目后右侧显示旧/新文本、BBox 与字段差异，顶部可重新选择旧/新文件，或导出 JSON 与单文件 HTML 报告。 |
 | ![叠加模式：同一页上叠加旧/新对象框](docs/images/diff-overlay.png) | **叠加模式**<br>在同一页叠加旧/新对象框（移除红、新增绿、移动橙、修改蓝），适合定位同一区域的改动。 |
 | ![Visual 模式：像素热力图叠加在页面上，顶部显示 changed / total 像素统计](docs/images/diff-visual.png) | **Visual 像素对比**<br>在 Diff 工作区切到 `Visual`，以新页为底叠加旧页（`Blend`）或逐像素热力图（`Heatmap`），并在页面栏显示 `changed / total px`；`Boxes` 不做像素叠加，只显示变更框。 |
 | ![忽略区域：在并排页面上拖动矩形后显示虚线框、区域列表与重新运行按钮](docs/images/diff-regions.png) | **忽略区域**<br>打开 `Ignore region` 后在任一页拖动矩形，左侧列出页码/侧/bbox，虚线框同步绘制；`Apply & re-run` 重新比较并过滤相交的变更。 |
@@ -31,7 +31,7 @@
 | ![Diff 页列表：按页折叠的变更组、Go to page 输入与 Expand all/Collapse all](docs/images/diff-page-groups.png) | **按页分组的 Diff 结果**<br>左侧每个页面是独立可折叠组，标题保留状态与变更数；`Go to page` 输入支持夹取跳转并自动展开目标页，`Expand all` / `Collapse all` 批量控制。 |
 | ![Diff 资源变更：Document changes 组列出元数据与页面标签、页级注释/链接/表单行、资源虚线框与只读的旧/新详情](docs/images/diff-resources.png) | **Diff 资源变更**<br>Diff 除了对象也比较注释、链接、表单字段、文档元数据与页面标签：类型过滤与计数、`Document changes` 组、有 BBox 的资源虚线框与只读旧/新详情；不打开链接、不执行 Launch、不填写表单。 |
 | ![文档体检工作区：严重级别汇总、筛选器、发现列表与右侧选中发现详情](docs/images/audit-workspace.png) | **文档体检**<br>跨字体、页面、图片、元数据、结构与安全的整档审计；按严重级别汇总，可按严重级别/类别筛选，选中条目查看证据与修复建议，并可跳转到对应页面。切换到 `Structure` 可查看标记结构树，切换到 `Resources` 可查看附件、JavaScript、动作、签名、加密与权限。 |
-| ![PDF 审计 HTML 报告：文档信息、严重级别汇总与逐条发现](docs/images/audit-report.png) | **审计报告（HTML）**<br>CLI `audit --format html` 生成单文件报告：文档信息、严重级别汇总与逐条发现（证据、建议）；内联 CSS、无脚本、无外部资源。 |
+| ![PDF 审计 HTML 报告：文档信息、严重级别汇总与逐条发现](docs/images/audit-report.png) | **审计报告（HTML）**<br>审计工作区的 `Export HTML`（或 CLI `audit --format html`）生成单文件报告：文档信息、严重级别汇总与逐条发现（证据、建议），加载了基线时还包含 `Baseline` 小节；内联 CSS、无脚本、无外部资源。 |
 | ![文档安全资源：Audit 的 Resources 视图，包含附件、JavaScript、动作、签名、加密与 XFA 汇总卡、notes.txt 附件、脚本预览、风险动作、签名字段与安全发现](docs/images/security-resources.png) | **文档安全资源**<br>Audit 顶部可在 `发现` 与 `资源` 之间切换。`资源` 显示附件、JavaScript、动作、签名、加密与 XFA 汇总卡，并列出 `notes.txt` 附件、只读脚本预览、风险动作、未验证签名字段与安全发现计数；附件仅展示元数据，不能打开或下载。 |
 | ![Audit 结构视图：发现 / 结构 / 资源切换、带角色与 MCID 占位符的结构树、问题徽标与选中 Figure 的详情（缺少 Alt）](docs/images/accessibility-structure.png) | **Audit 结构视图**<br>Audit 顶部可在 `发现` / `结构` / `资源` 之间切换。`结构` 显示标记结构树与角色、Alt/ActualText、阅读顺序、页码与 MCID，并提供搜索与 `仅显示问题`；详情只读，可 `打开页面` 或 `在发现中查看`，不编辑 tag，也不在页面上高亮元素。 |
 | ![注释、链接与表单：Annots 列表、画布框选与 Inspector 只读表单详情](docs/images/annotations.png) | **注释、链接与表单（当前页）**<br>`Annots` 的 `Current page` 模式列出当前页的链接、表单字段、标记与注释；画布同步绘制只读框，选中后在 Inspector 查看字段值、选项与链接目标。 |
@@ -215,7 +215,7 @@
 - **按页折叠与跳页**：左侧每个页面是独立可折叠组，标题显示 `Old/New` 页码、状态与变更数；默认展开当前/首个变更页，`Go to page` 输入 `1..页数` 后跳转并自动展开，`Expand all` / `Collapse all` 批量控制。过滤不会合并不同页。
 - **大文件快速路径**：未改动页需要页面签名与页面资源摘要都相同才直接判为 `unchanged`，不触发 pdfplumber 布局与对象抽取；只有资源不同时页面为 `changed`，但不抽取对象。长时间运行每 5 秒有心跳，修改页数很多时可显示 `Comparing documents… Ns`，并受 50k 变更上限保护。
 - **叠加配色**：叠加模式以页面所属文档为底图（有旧页用旧页，新增页用新页），绘制旧/新对象框——移除红、新增绿、移动橙、修改蓝，便于在同一位置快速定位改动。
-- **Export JSON**：把当前结果导出为 `DiffResult` JSON（`schemaVersion: 1`）。
+- **导出 JSON / 导出 HTML**：工作区头部并排提供这两个入口。`Export JSON` 把当前结果导出为 `DiffResult` JSON（`schemaVersion: 1`）；`Export HTML` 通过侧车现有的 `report.render_html`（与 CLI `diff --format html` 同一个渲染器）把同一份结果渲染成单文件 HTML，建议文件名 `<旧名>-vs-<新名>-diff.html`。两者都只读：不重新比较、不修改两侧 PDF；取消保存不提示，失败沿用既有导出错误提示；没有结果时与渲染期间 `Export HTML` 禁用。
 - **不影响当前检查**：Diff 在独立的旧/新文档上运行，Inspect 中打开的文档、页码、缩放与选中状态保持不变；`Back to Inspect` 返回原文档。
 
 #### PDF Diff 2.0
@@ -267,7 +267,7 @@ python sidecar/cli.py diff old.pdf new.pdf --fail-on modified \
 - **独立工作区**：工具栏 `Audit` 打开文档体检工作区（与 Diff 互斥），顶部显示文件与 `Run` / `Re-run`，左侧按严重级别汇总并可按严重级别/类别筛选，中间为发现列表，右侧显示选中发现的说明、证据与修复建议。
 - **基线对比**：每条发现都带稳定指纹（哈希前会归一化指向自身页码的引用），`Baseline…` 可加载上一份 `AuditReport` JSON，摘要区显示 `Baseline: 2 new · 5 existing · 1 fixed`；`New only` 只保留新增与升级的发现，列表行显示 `New` / `Moved` / `Escalated` 徽标，`Clear` 恢复全量。基线只在本机内存中解析；`--baseline-output` 的比较产物与缺少指纹的旧报告都会给出内联错误，而不是被错误比较。
 - **跳转到页面**：带页码的发现提供 `Open page`，点击后关闭 Audit 并在 Inspect 中导航到该页；Inspect 中打开的文档、页码、缩放与选中状态保持不变，`Back to Inspect` 可随时返回。
-- **JSON 导出**：`Export JSON` 保存完整的 `AuditReport`（`schemaVersion: 1`），包含 tool、document、summary 与 findings；每条发现还带 `fingerprint`（新增可选字段，`schemaVersion` 仍为 `1`）。CLI `audit --format json` 输出同一 schema。
+- **JSON 与 HTML 导出**：`Export JSON` 保存完整的 `AuditReport`（`schemaVersion: 1`），包含 tool、document、summary 与 findings；每条发现还带 `fingerprint`（新增可选字段，`schemaVersion` 仍为 `1`）。CLI `audit --format json` 输出同一 schema。`Findings` 头部紧邻的 `Export HTML` 用侧车现有的 `audit_report.render_audit_html`（与 CLI `audit --format html` 同一个渲染器）把同一份报告渲染成单文件 HTML，建议文件名 `<文件名>.audit.html`；当前已加载的基线比较会一起传入，因此 HTML 保留 `Baseline` 小节而不会丢失。两个入口都只读，不修改 PDF、不重新审计；没有报告时与渲染期间 `Export HTML` 禁用。
 - **质量门禁**：CLI 与 action 支持 `summary` / `json` / `html` / `sarif`，以及基线（`--baseline`、`--baseline-output`）与可过期豁免（`--waivers`）。有基线时只有 `new` 与 `escalated` 会触发 `--fail-on`，因此存量有问题的 PDF 不必先修完才能接入门禁；只是换了页的发现报为 `moved`，不会让门禁失败。`--format sarif` 输出 SARIF 2.1.0，带 `pdfInspectorFinding/v1` 部分指纹、`baselineState`，并把豁免映射为 `suppressions`。详见 [docs/audit.md](docs/audit.md) 与 [docs/ci.md](docs/ci.md)。
 - **目录批量审计**：`audit-dir ROOT` 一条命令审计目录下的所有 PDF，把逐文件报告聚合成确定性的 `summary` / `json`（`BatchReport`）/ 单文件 HTML，并用 `--stats` 额外写一份小计数产物给 CI 步骤摘要。发现规则固定：递归但**不跟随符号链接**，跳过隐藏条目与 `node_modules` / `.git` / `.hg` / `.svn` / `__pycache__`，只收大小写不敏感的 `.pdf`，按相对 POSIX 路径排序；`--include` / `--exclude` 按相对路径过滤，`--max-files`（默认 500，上限 5000）超限直接退出 2 而不是悄悄只审计子集。损坏文件记为一条 `status: "error"` 而不中断其余文件，且计入 errors，因此 `--fail-on error` 仍会失败。基线、豁免与 SARIF 仍只属于单文件模式。
 - **启发式检查**：审计基于提取出的对象、字体信息、页面框与 catalog 元数据，不做 PDF/A 或 PDF/UA 认证、不做签名验证、也不做 OCR；它不会上传报告，也不会修改 PDF。旋转页或 CropBox 偏移页上的发现只到页面级。
@@ -398,8 +398,8 @@ Diff 的示例文件成对生成，可在对比对话框中分别选择 Old/New�
 6. **查看页面几何**：在 Inspector → `Page` 标签页查看页面尺寸、旋转角与五个页面框，切换 pt/mm，并按需开关各框叠加与画布标尺。
 7. **控制叠加层**：在左侧 `Layers` 标签页开关七类对象、查看当前页计数、使用 Solo 或调整透明度；`F` 可进入专注模式，隐藏左右面板。
 8. **搜索与导出**：`Ctrl/Cmd+F` 打开搜索，输入查询后可用 `Aa` / `W` / `.*` 切换大小写、整词与正则，在结果面板中按页查看 `p.N` 与上下文并点击跳转；`Ctrl/Cmd+K` 打开命令面板执行打开、跳页、主题、语言、面板、Diff/Audit/Raw 等命令。`Export` 导出当前页/整档 JSON/CSV；工具栏的 `视图…`（命令面板中的 `Export view…`）把当前页或选中区域导出为 PNG/SVG；`报告…`（命令面板中的 `Share report…`）生成自包含 HTML 检查报告。
-9. **比较版本**：点击工具栏 `Diff` 选择 Old/New 两份 PDF，按需设置位置容差、忽略项与 `Content` 资源开关后 Compare；在左侧变更列表（含 `Document changes` 行）选择条目查看详情，或在 Side by side / Overlay / Visual 间切换（Visual 可切 Blend/Heatmap/Boxes 并查看像素统计），`Ignore region` 可拖框屏蔽区域后再 `Apply & re-run`；`Export JSON` 保存结果。
-10. **文档体检**：点击工具栏 `Audit` 对当前文档执行整档审计，查看严重级别汇总，按严重级别/类别筛选，选中发现查看证据与建议；需要时点击 `Open page` 跳转到对应页面，或用 `Export JSON` 保存完整报告。`Baseline…` 可加载上一份报告，显示 `new` / `existing` / `moved` / `escalated` / `fixed` 计数，`New only` 只保留新增与升级的发现，`Clear` 清除基线。切换到 `Resources` 可查看附件、JavaScript、动作、签名、加密与权限；`Refresh` 重新读取，`Export security JSON` 保存完整 `SecurityReport`，`View in Findings` 切回并自动套用 `security` 类别筛选。
+9. **比较版本**：点击工具栏 `Diff` 选择 Old/New 两份 PDF，按需设置位置容差、忽略项与 `Content` 资源开关后 Compare；在左侧变更列表（含 `Document changes` 行）选择条目查看详情，或在 Side by side / Overlay / Visual 间切换（Visual 可切 Blend/Heatmap/Boxes 并查看像素统计），`Ignore region` 可拖框屏蔽区域后再 `Apply & re-run`；头部的 `Export JSON` / `Export HTML` 把结果保存为 JSON 或单文件 HTML 报告。
+10. **文档体检**：点击工具栏 `Audit` 对当前文档执行整档审计，查看严重级别汇总，按严重级别/类别筛选，选中发现查看证据与建议；需要时点击 `Open page` 跳转到对应页面，或用 `Export JSON` / `Export HTML` 保存完整报告（HTML 会带上已加载的基线）。`Baseline…` 可加载上一份报告，显示 `new` / `existing` / `moved` / `escalated` / `fixed` 计数，`New only` 只保留新增与升级的发现，`Clear` 清除基线。切换到 `Resources` 可查看附件、JavaScript、动作、签名、加密与权限；`Refresh` 重新读取，`Export security JSON` 保存完整 `SecurityReport`，`View in Findings` 切回并自动套用 `security` 类别筛选。
 11. **查看无障碍与结构树**：在 Audit 中切换到 `Structure` 读取标记结构树与文档事实。使用 `Expand all` / `Collapse all`、`Issues only`，或按角色/Alt 文本搜索；选中节点查看角色、Alt/ActualText、页码与 MCID 详情，再用 `Open page` 跳转到该页，或 `View in Findings` 查看 `structure` 类别的问题。`Refresh` 重新解析，`Export accessibility JSON` 保存完整报告。
 12. **检查注释、链接与表单**：切换到左侧 `Annots`，默认 `Current page` 查看当前页；切到 `Whole document` 建立整档索引（显示 `Indexing annotations N/M…`），用搜索与全局 Kind/Subtype 过滤定位条目，点击行跳页并尽力选中。`Issues` 区汇总断链与表单问题，`External links` 列出可打开的 `http(s)` 目标；`Export` 可把整档索引导出为 JSON/CSV。外部链接需点击 `Open link` 才会打开，内部链接使用 `Go to page N` 跳转；表单字段不能编辑或提交。
 13. **查看原始对象与内容流**：点击工具栏 `Raw` 打开只读工作区，在左侧对象树展开 `Catalog` → `Pages` → 页面 → `Resources`，点击引用在右侧查看对象值；切换到 `Content stream` 按页查看解码后的操作符与操作数。`Back to Inspect` 返回原文档，页码与缩放保持不变。
@@ -408,7 +408,7 @@ Diff 的示例文件成对生成，可在对比对话框中分别选择 Old/New�
 
 ## CLI 与 CI
 
-Diff 也可以脱离界面运行。CLI 只接受本地 PDF 路径（拒绝 `http(s)` URL），输出摘要、JSON 或自包含 HTML，并按 `--fail-on` 映射退出码。
+Diff 也可以脱离界面运行。CLI 只接受本地 PDF 路径（拒绝 `http(s)` URL），输出摘要、JSON 或自包含 HTML，并按 `--fail-on` 映射退出码。工作区的 `Export HTML` 调用同一个渲染器，两个入口产出的报告一致。
 
 ```bash
 # 直接使用 Python CLI；需要 Python 3.10+ 与 sidecar/requirements.txt
@@ -507,7 +507,7 @@ node bin/pdf-inspector.mjs audit-dir docs --fail-on warning
 
 退出码：`0` 表示没有严重级别命中 `--fail-on`；`1` 表示 `--fail-on` 命中；`2` 表示参数、输入、读取、审计、基线、豁免或输出错误。`--fail-on none` 永不返回 1，但输入错误仍返回 2。页面提取失败是当前唯一的 `error` 来源，因此 `--fail-on error` 只会拦截真正不可读的页面。
 
-`--format json` 输出 `AuditReport`（`schemaVersion: 1`），包含 `tool` / `document` / `summary` / `findings`；每条发现带类别、严重级别、页码（文档级为 `null`）、标题、说明、证据、建议，以及跨运行标识同一问题的 `fingerprint`（哈希前会归一化指向自身页码的引用，因此换页仍是同一个发现，报为 `moved`）。带 `--baseline` 时摘要追加一行 `baseline: N new, N existing, N moved, N escalated, N fixed, N waived`，HTML 报告增加 `Baseline` 小节；带 `--waivers` 时追加 `waivers: N applied, N expired, N unused`。`--format sarif` 把同一份报告映射为 SARIF 2.1.0（`pdfInspectorFinding/v1` 部分指纹、`baselineState`、`suppressions`）。输出不含时间戳与绝对路径、顺序稳定，相同 PDF 产生逐字节一致的 JSON、HTML 与 SARIF。HTML 报告为单文件、内联 CSS、无脚本、无外部资源，所有 PDF 文本均转义。完整 schema、检查项、基线、豁免与阈值见 [docs/audit.md](docs/audit.md)，CI 接法见 [docs/ci.md](docs/ci.md)。
+`--format json` 输出 `AuditReport`（`schemaVersion: 1`），包含 `tool` / `document` / `summary` / `findings`；每条发现带类别、严重级别、页码（文档级为 `null`）、标题、说明、证据、建议，以及跨运行标识同一问题的 `fingerprint`（哈希前会归一化指向自身页码的引用，因此换页仍是同一个发现，报为 `moved`）。带 `--baseline` 时摘要追加一行 `baseline: N new, N existing, N moved, N escalated, N fixed, N waived`，HTML 报告增加 `Baseline` 小节；带 `--waivers` 时追加 `waivers: N applied, N expired, N unused`。`--format sarif` 把同一份报告映射为 SARIF 2.1.0（`pdfInspectorFinding/v1` 部分指纹、`baselineState`、`suppressions`）。输出不含时间戳与绝对路径、顺序稳定，相同 PDF 产生逐字节一致的 JSON、HTML 与 SARIF。HTML 报告为单文件、内联 CSS、无脚本、无外部资源，所有 PDF 文本均转义；工作区的 `Export HTML` 通过同一个 `audit_report.render_audit_html` 渲染同一份文档（包含已加载基线的 `Baseline` 小节）。完整 schema、检查项、基线、豁免与阈值见 [docs/audit.md](docs/audit.md)，CI 接法见 [docs/ci.md](docs/ci.md)。
 
 #### 目录批量审计
 
@@ -577,7 +577,7 @@ node bin/pdf-inspector.mjs security report.pdf --format json --output report.sec
 
 action 默认 `fail-on: any`，支持 `summary` / `json` / `html`；`json-path` / `report-path` 指定 JSON/HTML payload 的文件路径（`format` 选中对应格式且未指定路径时写入 runner 临时目录），payload 不写入步骤日志。`fail-on` 可选 `any` / `added` / `removed` / `modified` / `page-count` / `reordered` / `none`；`ignore-regions` 接收与 CLI 相同的区域 JSON 路径并透传。五类资源开关同样是输入：`ignore-annotations`、`ignore-links`、`ignore-forms`、`ignore-metadata`、`ignore-page-labels`。完整输入、输出、artifact 约定见 [docs/ci.md](docs/ci.md)，Diff 的页面对齐、视觉视图、区域语义与文档资源比较见 [docs/diff.md](docs/diff.md)。
 
-HTML 报告是单文件、内联 CSS、无脚本、无外部资源：
+HTML 报告——工作区 `Export HTML` 与 CLI `--format html` 共用——是单文件、内联 CSS、无脚本、无外部资源：
 
 <img src="docs/images/diff-report.png" alt="PDF diff HTML 报告：文档 SHA-256、变更汇总、diff 选项与逐页变更表" width="560">
 
