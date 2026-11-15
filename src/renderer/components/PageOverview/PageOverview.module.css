@@ -90,6 +90,119 @@
   font-size: 11.5px;
 }
 
+/*
+ * Document-map header: one wrapping row of counts (problems per severity,
+ * document-level findings, annotations) followed by the filter group. Both are
+ * outside the scroller, wrap instead of overflowing at 1280, and never push the
+ * grid sideways.
+ */
+.summary {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  min-width: 0;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+.summaryLine {
+  min-width: 0;
+  color: var(--pi-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.summaryProblems {
+  color: var(--pi-text);
+}
+
+.summaryDocument {
+  color: var(--pi-text-subtle);
+}
+
+.summaryAnnotations {
+  color: var(--pi-text-secondary);
+}
+
+/* No audit report yet: an explanation, not an action (never auto-run). */
+.summaryHint {
+  color: var(--pi-text-subtle);
+  font-style: italic;
+}
+
+.filters {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pi-gap-xs) var(--pi-gap-sm);
+  min-width: 0;
+}
+
+.filterGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  min-width: 0;
+}
+
+.filterButton {
+  padding: 3px 8px;
+  overflow: hidden;
+  color: var(--pi-text-subtle);
+  white-space: nowrap;
+  background: var(--pi-bg-app);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+}
+
+.filterButton:hover:enabled {
+  color: var(--pi-text-inverse);
+  background: var(--pi-bg-control-hover);
+}
+
+.filterButton:focus-visible {
+  outline: 2px solid var(--pi-focus);
+  outline-offset: 1px;
+}
+
+/* A filter with nothing to show stays visible but explains itself. */
+.filterButton:disabled {
+  color: var(--pi-text-disabled);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-border-disabled);
+  cursor: not-allowed;
+}
+
+.filterButtonActive,
+.filterButtonActive:hover:enabled {
+  color: var(--pi-text-strong);
+  background: var(--pi-bg-control-disabled);
+  border-color: var(--pi-accent);
+}
+
+.filterCount {
+  color: var(--pi-text-subtle);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.empty {
+  margin: 0;
+  padding: 28px 8px;
+  color: var(--pi-text-subtle);
+  font-size: 12px;
+  text-align: center;
+}
+
 .scroller {
   flex: 1 1 auto;
   min-width: 0;
@@ -171,6 +284,64 @@
   height: 100%;
   object-fit: contain;
   background: var(--pi-bg-raised);
+}
+
+/*
+ * Page markers overlay the thumbnail instead of taking part in the card
+ * layout: `position: absolute` inside the frame, fixed height, capped width and
+ * wrapping, so a badge never resizes a card. The letters plus the `title` and
+ * `aria-label` carry the meaning; colour is only a second cue. Clicks on a badge
+ * still bubble to the card button.
+ */
+.badges {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-width: calc(100% - 6px);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  height: 14px;
+  padding: 0 3px;
+  color: var(--pi-text-secondary);
+  background: var(--pi-bg-deep);
+  border: 1px solid var(--pi-border-muted);
+  border-radius: var(--pi-radius-xs);
+  font-size: 9px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  line-height: 12px;
+}
+
+.badgeError {
+  color: var(--pi-danger-text-bright);
+  border-color: var(--pi-danger-border-soft);
+}
+
+.badgeWarning {
+  color: var(--pi-warning-text);
+  border-color: var(--pi-warning-border-soft);
+}
+
+.badgeInfo {
+  color: var(--pi-info-text);
+  border-color: var(--pi-border-muted);
+}
+
+.badgeAnnotation {
+  color: var(--pi-accent-text);
+  border-color: var(--pi-accent-soft-border);
+}
+
+.badgeIssue {
+  color: var(--pi-danger-text);
+  border-color: var(--pi-danger-border-soft);
 }
 
 .thumbnailSkeleton {
