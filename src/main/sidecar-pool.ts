@@ -7,8 +7,9 @@ import type { SidecarManager } from './sidecar';
  * The interactive lane owns the calls a user is waiting on: opening a document,
  * extracting the current page's metadata and serving image data. The background
  * lane owns expensive, whole-document work (font analysis, audit, security
- * resources, the accessibility structure tree, raw reads and diff) so it cannot
- * queue in front of a page extraction.
+ * resources, the accessibility structure tree, raw reads, diff) and the report
+ * renders (which serialize a whole `AuditReport`/`DiffResult` to HTML), so none
+ * of it can queue in front of a page extraction.
  *
  * The table below is the single source of truth for that split; the web backend
  * imports it so desktop and browser route identically.
@@ -33,6 +34,14 @@ export const BACKGROUND_METHODS = [
   'raw_object',
   'raw_page_content',
   'diff_documents',
+  // Report rendering: the payload comes from the caller, but serializing a whole
+  // report (potentially thousands of findings, or every diffed page) is CPU work
+  // that can take seconds on a large document, so it must never block page
+  // navigation on the interactive lane. The lane syncs/opens the tracked document
+  // exactly like every other background request; the render itself ignores it, so
+  // a render works with no document open at all.
+  'render_audit_report_html',
+  'render_diff_report_html',
 ] as const;
 
 const BACKGROUND_METHOD_SET: ReadonlySet<string> = new Set<string>(BACKGROUND_METHODS);
@@ -101,7 +110,8 @@ export interface SidecarPoolOptions {
  *
  * - interactive: the existing `SidecarManager`, started by `index.ts` at boot.
  * - background: created lazily on the first background request, so a document
- *   that never uses Analyze/Audit/Raw/Diff keeps paying for one process only.
+ *   that never uses Analyze/Audit/Raw/Diff/report rendering keeps paying for one
+ *   process only.
  *
  * Both lanes open the same document. `open` is authoritative on the interactive
  * lane; a *running* background lane is re-opened in the background and can never

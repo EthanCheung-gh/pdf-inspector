@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC_CHANNELS } from '../shared/constants';
 import type { SaveFileRequest } from '../shared/constants';
-import type { DiffOptionsInput, DiffSide, DiffSource } from '../shared/diff-types';
+import type { DiffOptionsInput, DiffSide, DiffResult, DiffSource } from '../shared/diff-types';
+import type { AuditBaselineComparison, AuditReport } from '../shared/audit-types';
 
 /**
  * Structural mirror of the renderer's `RawRef` (src/renderer/types/raw-pdf.ts).
@@ -28,6 +29,13 @@ contextBridge.exposeInMainWorld('pdfInspector', {
   auditDocument: () => ipcRenderer.invoke(IPC_CHANNELS.AUDIT_DOCUMENT),
   auditPages: (startPage: number, endPage: number) =>
     ipcRenderer.invoke(IPC_CHANNELS.AUDIT_PAGES, startPage, endPage),
+  // Report rendering is pure formatting of a payload the renderer already holds:
+  // main forwards it to the sidecar and returns the HTML. No document is opened,
+  // so the Inspect workspace (and the Diff/Audit inputs) stay untouched.
+  renderAuditReportHtml: (report: AuditReport, baseline?: AuditBaselineComparison | null) =>
+    ipcRenderer.invoke(IPC_CHANNELS.RENDER_AUDIT_REPORT_HTML, report, baseline),
+  renderDiffReportHtml: (result: DiffResult) =>
+    ipcRenderer.invoke(IPC_CHANNELS.RENDER_DIFF_REPORT_HTML, result),
   // Document security resources: read-only, and it inspects the document the
   // sidecar already has open instead of opening or replacing it.
   securityDocument: () => ipcRenderer.invoke(IPC_CHANNELS.SECURITY_DOCUMENT),

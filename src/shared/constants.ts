@@ -123,6 +123,21 @@ export const AUDIT_TIMEOUT_MS = 120_000;
 export const AUDIT_RENDERER_TIMEOUT_MS = AUDIT_TIMEOUT_MS + 5_000;
 
 /**
+ * Timeout for one `render_audit_report_html` / `render_diff_report_html` request.
+ *
+ * Rendering is pure text work on a payload main already holds (the audit report
+ * or diff result), so it is nowhere near as expensive as the audit/diff pass
+ * that produced that payload: no document is opened, no page is extracted and
+ * the sidecar's extractor state is never touched. It still walks potentially
+ * thousands of findings and serializes a large HTML document, which a very big
+ * report can stretch past the generic 30s budget, so it gets its own dedicated
+ * budget instead of inheriting the default. Deliberately BELOW
+ * `AUDIT_TIMEOUT_MS`/`DIFF_TIMEOUT_MS`: a render that needs two minutes is a
+ * sidecar fault, not a slow report.
+ */
+export const REPORT_RENDER_TIMEOUT_MS = 60_000;
+
+/**
  * Timeout for one `raw_document` / `raw_object` / `raw_page_content` request.
  *
  * The raw reads are lazy and bounded (one object, one page's content streams,
@@ -253,6 +268,23 @@ export const IPC_CHANNELS = {
   ACCESSIBILITY_DOCUMENT: 'pdf:accessibility-document',
   DIFF_PDFS: 'pdf:diff',
   PICK_DIFF_PDF: 'pdf:pick-diff',
+  /**
+   * Render an audit report (and optional baseline comparison) as standalone HTML.
+   *
+   * Pure formatting: the report is passed in by the caller, so the handler never
+   * sends `open`, never reads the current document and cannot disturb the
+   * Inspect workspace, its caches or the Diff/Audit inputs. Separate from the
+   * audit channels so a failed render cannot affect an audit report.
+   */
+  RENDER_AUDIT_REPORT_HTML: 'pdf:render-audit-report-html',
+  /**
+   * Render a diff result as standalone HTML.
+   *
+   * Same contract as `RENDER_AUDIT_REPORT_HTML`: the `DiffResult` is supplied by
+   * the caller and main only forwards it, so no document is opened and the
+   * interactive sidecar document stays exactly as it is.
+   */
+  RENDER_DIFF_REPORT_HTML: 'pdf:render-diff-report-html',
   /**
    * Raw PDF reading (see src/renderer/types/raw-pdf.ts).
    *

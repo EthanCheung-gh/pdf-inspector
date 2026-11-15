@@ -3,12 +3,13 @@ import { writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { deleteDownloadedFile, downloadPdfToFile, parsePdfUrl } from './pdf-url';
 import { isDiffTimeoutError, type SidecarTransport } from './sidecar-pool';
-import { IPC_CHANNELS, ACCESSIBILITY_TIMEOUT_MS, ANALYZE_FONTS_TIMEOUT_MS, AUDIT_TIMEOUT_MS, DIFF_TIMEOUT_MS, EXTRACT_PAGE_TIMEOUT_MS, OPEN_PDF_TIMEOUT_MS, RAW_TIMEOUT_MS, SECURITY_TIMEOUT_MS } from '../shared/constants';
+import { IPC_CHANNELS, ACCESSIBILITY_TIMEOUT_MS, ANALYZE_FONTS_TIMEOUT_MS, AUDIT_TIMEOUT_MS, DIFF_TIMEOUT_MS, EXTRACT_PAGE_TIMEOUT_MS, OPEN_PDF_TIMEOUT_MS, RAW_TIMEOUT_MS, REPORT_RENDER_TIMEOUT_MS, SECURITY_TIMEOUT_MS } from '../shared/constants';
 import type { SaveFileRequest } from '../shared/constants';
 import { UNSAFE_EXTERNAL_URL_ERROR, toSafeExternalUrl } from '../shared/external-url';
 import type { OpenExternalResult } from '../shared/external-url';
 import { diffOptionsToRpc } from '../shared/diff-types';
-import type { DiffOptionsInput } from '../shared/diff-types';
+import type { DiffOptionsInput, DiffResult } from '../shared/diff-types';
+import type { AuditBaselineComparison, AuditReport } from '../shared/audit-types';
 
 /** Tracks the open PDF so a restarted sidecar can restore its document state. */
 let currentFilePath: string | null = null;
@@ -237,6 +238,54 @@ export function registerIpcHandlers(sidecar: SidecarTransport): void {
       'audit_pages',
       { start_page: startPage, end_page: endPage },
       AUDIT_TIMEOUT_MS,
+    );
+  });
+
+  // Report rendering (audit + diff HTML). Both channels are pure formatting of a
+  // payload the renderer already holds, so neither handler sends `open`: the
+  // interactive document, its page cache and the Diff/Audit inputs stay exactly
+  // as they are, and a failed render cannot disturb them. Rendering walks a
+  // whole report (potentially thousands of findings) and serializes a large HTML
+  // document, so it gets its own budget instead of the 30s default — but a
+  // smaller one than the audit/diff pass that produced the payload, because no
+  // PDF is opened or parsed here.
+  ipcMain.handle(
+    IPC_CHANNELS.RENDER_AUDIT_REPORT_HTML,
+    async (_event, report: unknown, baseline?: unknown) => {
+      // The report is the renderer's merged `AuditReport` (document pass plus
+      // page batches), which main cannot re-derive; it only guarantees that the
+      // request carries an object, so a malformed argument cannot reach the
+      // sidecar as `{ report: undefined }` and fail with an opaque message.
+      if (typeof report !== 'object' || report === null || Array.isArray(report)) {
+        throw new Error('renderAuditReportHtml requires the AuditReport to render');
+      }
+
+      const params: { report: AuditReport; baseline?: AuditBaselineComparison | null } = {
+        report: report as AuditReport,
+      };
+      // `undefined` means "no baseline was loaded", so the key is omitted; an
+      // explicit `null` is forwarded unchanged so the sidecar formats exactly
+      // what the UI asked for.
+      if (baseline !== undefined) {
+        params.baseline = baseline as AuditBaselineComparison | null;
+      }
+
+      return sidecar.send('render_audit_report_html', params, REPORT_RENDER_TIMEOUT_MS);
+    },
+  );
+
+  ipcMain.handle(IPC_CHANNELS.RENDER_DIFF_REPORT_HTML, async (_event, result: unknown) => {
+    // Same guarantee as the audit render: the completed `DiffResult` is supplied
+    // by the renderer, so rendering never re-runs the diff or re-opens either
+    // compared PDF.
+    if (typeof result !== 'object' || result === null || Array.isArray(result)) {
+      throw new Error('renderDiffReportHtml requires the DiffResult to render');
+    }
+
+    return sidecar.send(
+      'render_diff_report_html',
+      { result: result as DiffResult },
+      REPORT_RENDER_TIMEOUT_MS,
     );
   });
 

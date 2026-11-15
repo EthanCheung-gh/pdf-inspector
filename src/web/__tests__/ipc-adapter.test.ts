@@ -184,6 +184,8 @@ describe('web ipc adapter', () => {
         'rawDocument',
         'rawObject',
         'rawPageContent',
+        'renderAuditReportHtml',
+        'renderDiffReportHtml',
         'restartSidecar',
         'saveFile',
         'securityDocument',

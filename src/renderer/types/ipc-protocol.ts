@@ -2,7 +2,12 @@ import { PdfMetadata, PageData } from './pdf-objects';
 import type { RawDocument, RawObject, RawPageContent, RawRef } from './raw-pdf';
 import type { SaveFileRequest } from '../../shared/constants';
 import type { OpenExternalResult } from '../../shared/external-url';
-import type { AuditDocumentResult, AuditPagesResult } from '../../shared/audit-types';
+import type {
+  AuditBaselineComparison,
+  AuditDocumentResult,
+  AuditPagesResult,
+  AuditReport,
+} from '../../shared/audit-types';
 import type { SecurityReport } from '../../shared/security-types';
 import type { AccessibilityReport } from '../../shared/accessibility-types';
 import type {
@@ -27,6 +32,13 @@ export type {
   RawValue,
 } from './raw-pdf';
 export type {
+  AuditBaselineComparison,
+  AuditBaselineCounts,
+  AuditBaselineFinding,
+  AuditBaselineSideSummary,
+  AuditBaselineStatus,
+  AuditBaselineWaiver,
+  AuditBaselineWaiverCounts,
   AuditCategory,
   AuditDocumentInfo,
   AuditDocumentResult,
@@ -110,6 +122,16 @@ export type SaveFileResult =
   | { canceled: true }
   | { canceled: false; filePath?: string; error?: string };
 
+/**
+ * One rendered standalone HTML document, ready to be saved or opened.
+ *
+ * `html` is the complete document (inline styles, no external assets), so the
+ * caller can hand it straight to `saveFile` without post-processing.
+ */
+export interface RenderReportHtmlResult {
+  html: string;
+}
+
 export interface IpcApi {
   openPdf(): Promise<OpenPdfResult>;
   openPdfUrl(url: string): Promise<OpenPdfResult>;
@@ -175,6 +197,27 @@ export interface IpcApi {
   auditDocument(): Promise<AuditDocumentResult>;
   /** Audit pages `startPage`..`endPage` (1-based, inclusive). */
   auditPages(startPage: number, endPage: number): Promise<AuditPagesResult>;
+  /**
+   * Render an audit report — and optionally a baseline comparison — as HTML.
+   *
+   * The report is the caller's own `AuditReport` (the renderer merges
+   * `auditDocument` + `auditPages` into it), so this call is pure formatting: it
+   * inspects no document, never sends `open` and cannot change the Inspect
+   * workspace, its caches or the Diff/Audit inputs. `baseline` is `null`/omitted
+   * when the report is rendered without a comparison.
+   */
+  renderAuditReportHtml(
+    report: AuditReport,
+    baseline?: AuditBaselineComparison | null,
+  ): Promise<RenderReportHtmlResult>;
+  /**
+   * Render a `DiffResult` as HTML.
+   *
+   * Same contract as `renderAuditReportHtml`: the diff result is supplied by the
+   * caller, so rendering never re-runs the diff, opens a PDF or replaces the
+   * sidecar's current document.
+   */
+  renderDiffReportHtml(result: DiffResult): Promise<RenderReportHtmlResult>;
   /**
    * Read the document's security resources (attachments, JavaScript, actions,
    * signatures, encryption, permissions).

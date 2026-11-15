@@ -7,6 +7,7 @@ import {
   EXTRACT_PAGE_TIMEOUT_MS,
   OPEN_PDF_TIMEOUT_MS,
   RAW_TIMEOUT_MS,
+  REPORT_RENDER_TIMEOUT_MS,
   SECURITY_TIMEOUT_MS,
 } from '../../shared/constants';
 import type { SidecarManager } from '../sidecar';
@@ -132,6 +133,58 @@ describe('sidecar lane routing', () => {
       'security_document',
       {},
       SECURITY_TIMEOUT_MS,
+    );
+  });
+
+  it('routes both report renders to the background lane', async () => {
+    // Serializing a whole report is CPU work in the sidecar: it must not queue in
+    // front of page navigation on the interactive lane.
+    expect(laneForMethod('render_audit_report_html')).toBe('background');
+    expect(laneForMethod('render_diff_report_html')).toBe('background');
+
+    const { pool, interactive, backgrounds } = createPool({ backgroundRunning: true });
+    const report = { schemaVersion: 1, findings: [] };
+    const diff = { schemaVersion: 1, pages: [] };
+
+    await pool.send('render_audit_report_html', { report }, REPORT_RENDER_TIMEOUT_MS);
+    await pool.send('render_diff_report_html', { result: diff }, REPORT_RENDER_TIMEOUT_MS);
+
+    expect(interactive.send).not.toHaveBeenCalled();
+    expect(backgrounds).toHaveLength(1);
+    expect(backgrounds[0].send).toHaveBeenNthCalledWith(
+      1,
+      'render_audit_report_html',
+      { report },
+      REPORT_RENDER_TIMEOUT_MS,
+    );
+    expect(backgrounds[0].send).toHaveBeenNthCalledWith(
+      2,
+      'render_diff_report_html',
+      { result: diff },
+      REPORT_RENDER_TIMEOUT_MS,
+    );
+  });
+
+  it('renders a report with no document open at all', async () => {
+    // The render payload comes from the caller, so the lane must not need a
+    // document: it starts on its own and sends the request without an `open`.
+    const { pool, interactive, backgrounds } = createPool();
+
+    const report = { schemaVersion: 1, findings: [] };
+    await pool.send('render_audit_report_html', { report }, REPORT_RENDER_TIMEOUT_MS);
+
+    expect(interactive.send).not.toHaveBeenCalled();
+    expect(backgrounds).toHaveLength(1);
+    expect(backgrounds[0].start).toHaveBeenCalledTimes(1);
+    expect(backgrounds[0].send).not.toHaveBeenCalledWith(
+      'open',
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(backgrounds[0].send).toHaveBeenCalledWith(
+      'render_audit_report_html',
+      { report },
+      REPORT_RENDER_TIMEOUT_MS,
     );
   });
 });

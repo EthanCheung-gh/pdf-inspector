@@ -20,6 +20,7 @@ import type {
   FontStat,
   IpcApi,
   OpenPdfResult,
+  RenderReportHtmlResult,
   SaveFileResult,
 } from '../renderer/types/ipc-protocol';
 import type { PageData, PdfMetadata } from '../renderer/types/pdf-objects';
@@ -33,7 +34,12 @@ import type { SaveFileRequest } from '../shared/constants';
 import { PdfDocumentNotFoundError } from '../shared/document-errors';
 import { UNSAFE_EXTERNAL_URL_ERROR, toSafeExternalUrl } from '../shared/external-url';
 import type { OpenExternalResult } from '../shared/external-url';
-import type { AuditDocumentResult, AuditPagesResult } from '../shared/audit-types';
+import type {
+  AuditBaselineComparison,
+  AuditDocumentResult,
+  AuditPagesResult,
+  AuditReport,
+} from '../shared/audit-types';
 import type { SecurityReport } from '../shared/security-types';
 import type { AccessibilityReport } from '../shared/accessibility-types';
 import { isFileSource } from '../shared/diff-types';
@@ -537,6 +543,23 @@ export function createWebIpc(): IpcApi {
 
     auditPages: (startPage: number, endPage: number) =>
       rpc<AuditPagesResult>('audit_pages', { start_page: startPage, end_page: endPage }),
+
+    // Report rendering: plain allowlisted RPCs that format a payload the caller
+    // already holds. The backend never re-reads a document for them, so they
+    // cannot replace or disturb the document it has open. `baseline` is sent only
+    // when the caller supplied it (`null` included), matching the desktop
+    // handler's params exactly.
+    renderAuditReportHtml: (
+      report: AuditReport,
+      baseline?: AuditBaselineComparison | null,
+    ) => {
+      const params: Record<string, unknown> = { report };
+      if (baseline !== undefined) params.baseline = baseline;
+      return rpc<RenderReportHtmlResult>('render_audit_report_html', params);
+    },
+
+    renderDiffReportHtml: (result: DiffResult) =>
+      rpc<RenderReportHtmlResult>('render_diff_report_html', { result }),
 
     // Document security resources: a plain allowlisted RPC on the document the
     // backend already has open. Read-only, and independent of the audit.

@@ -51,6 +51,7 @@ import {
   EXTRACT_PAGE_TIMEOUT_MS,
   OPEN_PDF_TIMEOUT_MS,
   RAW_TIMEOUT_MS,
+  REPORT_RENDER_TIMEOUT_MS,
   SECURITY_TIMEOUT_MS,
   SIDECAR_SCRIPT,
 } from '../src/shared/constants';
@@ -82,6 +83,40 @@ const SHUTDOWN_TIMEOUT_MS = 3_000;
 
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
+
+/**
+ * Body cap for the `/api/rpc` methods that render a whole report artefact.
+ *
+ * Every other JSON route carries tiny params (page numbers, ids, tokens), so the
+ * 1 MiB `MAX_JSON_BODY_BYTES` above is generous for them. A report render is
+ * different in kind: the browser posts the artefact it already holds — an
+ * `AuditReport` plus its optional baseline comparison, or a complete
+ * `DiffResult` with every page and change — which legitimately reaches several
+ * MiB on a large document even before the comparison doubles it.
+ *
+ * Why a bounded 32 MiB is safe for this single-user local backend:
+ * - The render request is issued by one UI action at a time, so at most one such
+ *   body is in flight; the transient cost is the buffered body plus its parsed
+ *   object (roughly 2-3x the body), i.e. under ~100 MiB in the worst case.
+ * - The cap still bounds that cost: a body above it is refused before parsing,
+ *   so a runaway client cannot grow the process without limit.
+ * - It is NOT an upload limit and is not shared with one: `/api/open`,
+ *   `/api/open-url`, `/api/diff/file` keep `MAX_UPLOAD_BYTES` (100 MiB) plus
+ *   their magic-byte and registry checks, and every other JSON route keeps
+ *   `MAX_JSON_BODY_BYTES`.
+ */
+const MAX_REPORT_RENDER_BODY_BYTES = 32 * 1024 * 1024;
+
+/**
+ * `/api/rpc` methods whose body is a full report artefact.
+ *
+ * The only methods allowed to exceed `MAX_JSON_BODY_BYTES`; kept next to that
+ * cap so widening it always means touching this list.
+ */
+const REPORT_RENDER_METHODS: ReadonlySet<string> = new Set([
+  'render_audit_report_html',
+  'render_diff_report_html',
+]);
 const PDF_HEADER_WINDOW_BYTES = 1024;
 const PDF_MAGIC = '%PDF-';
 
@@ -115,6 +150,12 @@ const RPC_ALLOWLIST = new Set([
   'raw_document',
   'raw_object',
   'raw_page_content',
+  // Report rendering: pure formatting of a payload the browser already holds
+  // (an `AuditReport` plus optional baseline, or a `DiffResult`). Nothing is read
+  // from the open document, so a render cannot disturb it, the diff inputs or an
+  // audit results view.
+  'render_audit_report_html',
+  'render_diff_report_html',
 ]);
 
 /**
@@ -139,6 +180,11 @@ const RPC_TIMEOUTS: Record<string, number> = {
   raw_document: RAW_TIMEOUT_MS,
   raw_object: RAW_TIMEOUT_MS,
   raw_page_content: RAW_TIMEOUT_MS,
+  // Rendering walks a whole report and serializes a large HTML document, so it
+  // gets its own budget instead of the 30s default — but less than the audit/diff
+  // pass that produced the payload, because no PDF is opened or parsed.
+  render_audit_report_html: REPORT_RENDER_TIMEOUT_MS,
+  render_diff_report_html: REPORT_RENDER_TIMEOUT_MS,
 };
 
 const MIME_TYPES: Record<string, string> = {
@@ -773,8 +819,9 @@ export interface SidecarPoolOptions {
  *
  * Mirrors `src/main/sidecar-pool.ts`: the interactive lane owns page
  * navigation/opening, the background lane owns fonts/audit/security/
- * accessibility/raw/diff and is created lazily. Route selection comes from the
- * shared `laneForMethod`, so the desktop and web backends cannot drift.
+ * accessibility/raw/diff and the report renders, and is created lazily. Route
+ * selection comes from the shared `laneForMethod`, so the desktop and web
+ * backends cannot drift.
  *
  * Difference from desktop: the web `SidecarManager` restores the tracked
  * document itself (`setDocumentPath` + `restoreDocument`), so the pool only has
@@ -1669,26 +1716,56 @@ function sendText(res: ServerResponse, statusCode: number, message: string): voi
   res.end(payload);
 }
 
-async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+/**
+ * Buffer a request body, refusing more than `limit` bytes.
+ *
+ * The body is read into memory because every caller needs the whole payload (a
+ * JSON document or, for the PDF routes, a streamed file with its own reader).
+ * The limit is checked on the bytes actually received, so a missing or lying
+ * `Content-Length` cannot grow the buffer past it. Returns `null` for an empty
+ * body so callers can keep their "no body means {}" default.
+ *
+ * An over-limit body is DISCARDED but still drained: closing the request early
+ * can reset the connection before the client reads the 400, exactly like the
+ * upload path's `req.resume()`. Draining never buffers, so the limit still
+ * bounds memory.
+ */
+async function readBodyBuffer(req: IncomingMessage, limit: number): Promise<Buffer | null> {
   const chunks: Buffer[] = [];
   let total = 0;
+  let tooLarge = false;
 
   for await (const chunk of req) {
+    if (tooLarge) continue;
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += buffer.length;
-    if (total > MAX_JSON_BODY_BYTES) {
-      throw new HttpError(400, 'Request body is too large');
+    if (total > limit) {
+      tooLarge = true;
+      chunks.length = 0;
+      continue;
     }
     chunks.push(buffer);
   }
 
-  if (total === 0) return {};
+  if (tooLarge) {
+    throw new HttpError(400, 'Request body is too large');
+  }
 
+  return total === 0 ? null : Buffer.concat(chunks);
+}
+
+/** Parse a buffered JSON body, or fail with a clear client error. */
+function parseJsonBody(body: Buffer): unknown {
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    return JSON.parse(body.toString('utf8'));
   } catch {
     throw new HttpError(400, 'Invalid JSON body');
   }
+}
+
+async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  const body = await readBodyBuffer(req, MAX_JSON_BODY_BYTES);
+  return body === null ? {} : parseJsonBody(body);
 }
 
 /**
@@ -2404,26 +2481,46 @@ async function handleRpc(
   res: ServerResponse,
   context: ApiContext,
 ): Promise<void> {
-  const body = await readJsonBody(req);
-  if (!isRecord(body)) throw new HttpError(400, 'Expected a JSON object');
+  // The method lives inside the body, so the payload has to be buffered before
+  // the server knows which cap applies. Read with the larger report cap, then
+  // re-check the bytes actually received: only a REPORT_RENDER_METHODS request
+  // may exceed MAX_JSON_BODY_BYTES, and nothing above
+  // MAX_REPORT_RENDER_BODY_BYTES is ever buffered.
+  const body = await readBodyBuffer(req, MAX_REPORT_RENDER_BODY_BYTES);
+  const payload = body === null ? {} : parseJsonBody(body);
+  if (!isRecord(payload)) throw new HttpError(400, 'Expected a JSON object');
 
-  const method = body.method;
+  const method = payload.method;
   if (typeof method !== 'string' || !RPC_ALLOWLIST.has(method)) {
     throw new HttpError(400, `Method not allowed: ${typeof method === 'string' ? method : '(missing)'}`);
   }
 
-  const params = body.params ?? {};
+  // Every ordinary RPC keeps the small cap; only a full report artefact is
+  // allowed to be bigger, so widening the buffer above never widens the other
+  // methods.
+  if (body !== null && body.length > MAX_JSON_BODY_BYTES && !REPORT_RENDER_METHODS.has(method)) {
+    throw new HttpError(400, 'Request body is too large');
+  }
+
+  const params = payload.params ?? {};
   if (!isRecord(params)) throw new HttpError(400, '"params" must be an object');
 
   // Page extraction, raw reads, font analysis, both audit passes, the document
-  // security scan and the accessibility structure parse walk or decode large
-  // parts of the document; every other allowlisted method keeps the default
-  // budget.
+  // security scan, the accessibility structure parse and both report renders
+  // walk, decode or serialize large parts of a document/report; every other
+  // allowlisted method keeps the default budget.
   const timeoutMs = RPC_TIMEOUTS[method] ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
   // The sidecar holds one document. Once the last one is closed (or a restore
   // failed) there is nothing to query, so fail explicitly instead of letting a
   // stale sidecar answer for a document the browser no longer has.
+  //
+  // The report renders do NOT read that document (the report/diff payload comes
+  // from the request body), yet they keep this guard on purpose: a render is only
+  // ever offered next to an open audit/diff, the sidecar process lives in the
+  // same session as that document, and a narrow bypass here would be a general
+  // weakening of the only "is there a live sidecar for this session" check. The
+  // UI therefore renders reports only while a document is open.
   if (!context.registry.getActive()) {
     throw new HttpError(409, 'No active document');
   }

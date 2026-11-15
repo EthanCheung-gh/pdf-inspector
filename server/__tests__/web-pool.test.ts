@@ -17,6 +17,7 @@ import {
   EXTRACT_PAGE_TIMEOUT_MS,
   OPEN_PDF_TIMEOUT_MS,
   RAW_TIMEOUT_MS,
+  REPORT_RENDER_TIMEOUT_MS,
   SECURITY_TIMEOUT_MS,
 } from '../../src/shared/constants';
 import { BACKGROUND_METHODS, INTERACTIVE_METHODS, laneForMethod } from '../../src/main/sidecar-pool';
@@ -122,6 +123,41 @@ describe('web sidecar lane routing', () => {
       'security_document',
       {},
       SECURITY_TIMEOUT_MS,
+    );
+  });
+
+  it('routes both report renders to the background lane', async () => {
+    // Same table as the desktop: a report render must not queue in front of page
+    // navigation in the browser build either.
+    expect(laneForMethod('render_audit_report_html')).toBe('background');
+    expect(laneForMethod('render_diff_report_html')).toBe('background');
+
+    const { pool, interactive, backgrounds } = createPool();
+    const report = { schemaVersion: 1, findings: [] };
+    const diff = { schemaVersion: 1, pages: [] };
+
+    await pool.send('render_audit_report_html', { report }, REPORT_RENDER_TIMEOUT_MS);
+    await pool.send('render_diff_report_html', { result: diff }, REPORT_RENDER_TIMEOUT_MS);
+
+    expect(interactive.send).not.toHaveBeenCalled();
+    expect(backgrounds).toHaveLength(1);
+    expect(backgrounds[0].send).toHaveBeenNthCalledWith(
+      1,
+      'render_audit_report_html',
+      { report },
+      REPORT_RENDER_TIMEOUT_MS,
+    );
+    expect(backgrounds[0].send).toHaveBeenNthCalledWith(
+      2,
+      'render_diff_report_html',
+      { result: diff },
+      REPORT_RENDER_TIMEOUT_MS,
+    );
+    // The payload is the caller's, so no document had to be opened first.
+    expect(backgrounds[0].send).not.toHaveBeenCalledWith(
+      'open',
+      expect.anything(),
+      expect.anything(),
     );
   });
 
