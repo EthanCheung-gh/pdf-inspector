@@ -285,7 +285,7 @@ python sidecar/cli.py audit docs/report.pdf \
 ```json
 {
   "schemaVersion": 1,
-  "tool": { "name": "pdf-inspector", "version": "0.4.0" },
+  "tool": { "name": "pdf-inspector", "version": "0.4.1" },
   "current": { "pages": 12, "findings": 9 },
   "baseline": { "pages": 12, "findings": 11 },
   "summary": {
@@ -503,7 +503,7 @@ audit-dir ROOT [--include GLOB]... [--exclude GLOB]...
 ### 摘要输出
 
 ```text
-pdf-inspector 0.4.0 - PDF audit directory
+pdf-inspector 0.4.1 - PDF audit directory
 root: docs
 files: 3 (2 audited, 1 failed)
 findings: 1 error, 5 warnings, 0 info (6 total)
@@ -522,7 +522,7 @@ findings: 1 error, 5 warnings, 0 info (6 total)
 ```json
 {
   "schemaVersion": 1,
-  "tool": { "name": "pdf-inspector", "version": "0.4.0" },
+  "tool": { "name": "pdf-inspector", "version": "0.4.1" },
   "root": { "name": "docs", "files": 3, "bytes": 123456 },
   "summary": {
     "files": 3,
