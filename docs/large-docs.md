@@ -81,13 +81,14 @@ SidecarPool
 
 ## 页面总览与缩略图
 
-页面总览是一个独立模态框（不是第六个左栏标签），用于在几十到上千页的文档里靠缩略图定位页面。左栏仍是 Objects / Outline / Fonts / Layers / Annots 五个标签。
+页面总览是一个独立模态框（不是第六个左栏标签），用于在几十到上千页的文档里靠缩略图定位页面。左栏仍是 Objects / Outline / Fonts / Layers / Annots 五个标签。当当前文件已有审计报告或整档注释索引时，同一个网格还会显示每页标记，成为一张“文档地图”：既能定位页面，也能直接看到问题分布（见下方“标记与筛选”）。
 
 **入口：**
 
 - 点击工具栏页码按钮 `1 / 4`（无文档时禁用，`title` 为“打开页面总览 (P)”）；
 - 按 `P`（焦点在 `input` / `textarea` / `select` 或 `contenteditable` 内时不触发；`Ctrl/Cmd+P` 保留给浏览器打印）；
-- 命令面板 `Navigate: Page overview…`（分组 `Navigate`，关键词 `pages` / `thumbnails` / `overview`）。
+- 命令面板 `Navigate: Page overview…`（分组 `Navigate`，关键词 `pages` / `thumbnails` / `overview`）；
+- 命令面板 `Navigate: Pages with problems…`（`仅看问题页…`）：打开同一对话框并预设 `Problems only`；当前文件没有页级问题时禁用。
 
 **交互：**
 
@@ -105,26 +106,38 @@ SidecarPool
 - 只为视口附近的卡片请求渲染：单个 IntersectionObserver（`root` 为滚动容器，`rootMargin: 300px`）把进入范围的页标记为可见；打开时再围绕当前页预置种子（前 2 页、后 5 页，当前页为第 1 页时即 1–6 共 6 张），避免 1000 格网格首帧全是占位。
 - 打开总览不取消、也不阻塞当前页的 `extract_page`；关闭后页码、缩放与滚动位置都不变。
 
+**标记与筛选（文档地图）：**
+
+- **数据来源：** 只使用当前文件的审计报告（`audit-store.filePath === pdf-store.filePath`）与整档注释索引（`status === 'ready'` 且 `documentKey === annotationDocumentKey(filePath, sourceUrl)`）；不匹配的报告/索引直接丢弃，切换文档后旧标记不会画到新页面上。
+- **聚合：** `src/renderer/services/page-markers.ts` 的 `buildPageMarkers()` 对同一份 `AuditReport` + `AnnotationIndexResult` 单次遍历，得到每页计数、文档级计数与 `problemPages` / `annotatedPages`；纯函数、无 React/Zustand、不修改输入，1000 页仍是线性开销，只在打开总览或报告/索引变化时重算。
+- **卡片徽标：** 审计 `E1` / `W1` / `I1`（只显示非零级别）、注释 `A3`、链接/表单问题 `!1`；徽标绝对定位在缩略图框内，不改变卡片尺寸；徽标保留 `title` 并设为 `aria-hidden`（避免与卡片名称重复朗读），计数统一由卡片的可访问名称给出（页码 + 全部非零计数），不只靠颜色。`external` 链接属于信息，不算问题。
+- **头部汇总：** 有报告且有页级发现时显示 `Problems: 1 page · 0 errors · 1 warning · 0 info`（只统计页级发现），文档级发现非零时显示 `Document-level: 2`；有索引时显示 `Annotations: N pages · N marks · N issues`；筛选后右侧显示 `1 of 4 pages`。中文界面分别为 `问题：…`、`文档级：…`、`注释：…` 与 `1 / 4 页`。
+- **文档级发现：** `page: null` 的发现只进入 `Document-level` 汇总，不会落到第 1 页；只有文档级发现时既不显示 `Problems` 行，也不会让“仅看问题页”命令变为可用。
+- **筛选：** `All pages` / `Problems only` / `Annotated only`（`全部页面` / `仅问题页` / `仅有注释页`）只影响当前网格，不写 localStorage；`Problems only` 包含任一页级审计发现与注释问题（unresolved/unsafe link、form issue），`Annotated only` 只要有注释即可。没有对应数据的选项禁用；结果为空时显示 `No pages with problems.` / `No annotated pages.`（`没有带问题的页面。` / `没有带注释的页面。`），不会只留一片空白；方向键与 `Home` / `End` 在筛选后的列表内移动，不会跳到被隐藏的页。
+- **命令入口：** 命令面板 `Navigate: Pages with problems…`（`仅看问题页…`）以 `Problems only` 打开同一对话框；没有任何问题页时禁用。`P`、工具栏页码与 `Navigate: Page overview…` 始终打开全部页面，关闭时筛选复位为 `all`，重开不残留上次选择。
+- **不自动分析：** 总览从不启动审计或整档注释索引。没有审计报告时头部显示 `Run Audit to mark pages.`（`运行 Audit 后可在页面显示标记。`），不提供“建索引”按钮；没有索引时不显示注释计数。审计或索引在总览打开期间完成时，徽标与汇总在原位置更新，对话框保持打开。
+- **只读：** 不能在卡片上编辑、忽略或豁免发现，不打开链接、不填表单、不改变当前页/缩放/选择；标记不持久化，也不写入 PDF 或 sidecar。
+
 **1000 页实测（`web-samples/huge.pdf`）：** 打开总览后 DOM 中有 1000 张卡片，但只请求约 27 张图片；滚动到第 170 页附近后累计约 57 张，滚动与跳页没有卡死。
 
 **只读边界：**
 
-- 缩略图里不叠加对象框、注释或审计/差异标记。
-- 不写 localStorage（总览开关不持久化，刷新后关闭），不改 PDF，不发网络请求，不做 sidecar 页面提取（缩略图完全在渲染进程生成），也不生成临时文件。
+- 缩略图本身不叠加对象框或注释框，只在卡片框内显示审计/注释标记徽标（见上）；Diff 结果不出现在总览。
+- 不写 localStorage（总览开关与筛选都不持久化，刷新后关闭），不改 PDF，不发网络请求，不做 sidecar 页面提取（缩略图完全在渲染进程生成），也不生成临时文件。
 - 缩略图失败只在该卡片显示占位与“缩略图不可用”，卡片仍保留页码并可点击跳页；错误不冒泡成全局错误。
 
 **布局：** 对话框宽 `min(1100px, 100vw - 48px)`、`max-height: 85vh`，网格为 `repeat(auto-fill, minmax(132px, 1fr))`，颜色全部走 `--pi-*` token，适配 Dark / Islands / Light / System；1280 / 1440 / 1600 实测无横向溢出。
 
-![页面总览：basic.pdf 共 4 页，第 4 页高亮并居中](images/page-overview.png)
+![页面总览：选中“仅问题页”，只有一张第 3 页卡片带 W1 警告徽标](images/page-overview.png)
 
-*截图来自真实 Web 构建（1440×900）：打开 4 页的 `basic.pdf`，当前页为第 4 页。*
+*截图来自真实 Web 构建（1440×900）：打开 4 页的 `basic.pdf`，运行 Audit 后打开总览并切到“仅问题页”；顶部为 `Problems: 1 page · 0 errors · 1 warning · 0 info` 与 `Document-level: 2`，网格只剩第 3 页一张卡片（`W1`），右侧显示 `1 of 4 pages`。*
 
 **已知限制：**
 
 - **不是虚拟列表：** 1000 页仍有 1000 个卡片 DOM，只靠 `content-visibility: auto` + `contain-intrinsic-size: auto 232px` 减少布局/绘制；更大规模若出现滚动卡顿，再评估真正的虚拟列表。
 - **不预渲染、不落盘：** 未滚动到的页面保持占位；缓存只在内存中，同一文档在本次会话内重新打开总览会命中缓存，但刷新/重启或切换文档后需要重新渲染。
 - **无重试 UI：** 失败卡片在本次打开期间不自动重试（装载器已移除 pending，重新打开会再次请求）；损坏页或加密页没有专用提示。
-- **缩略图是独立的轻量渲染：** 不携带 Inspector 的选中/筛选状态，也不反映 Diff 或 Audit 结果。
+- **缩略图是独立的轻量渲染：** 不携带 Inspector 的选中/筛选状态；审计/注释标记只在当前文件的报告/索引存在时叠加，Diff 结果不反映。
 
 ## 文档标签页（桌面与 Web）
 
